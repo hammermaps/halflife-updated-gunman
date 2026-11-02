@@ -145,6 +145,8 @@ public:
 	static TYPEDESCRIPTION m_SaveData[];
 	void Spawn() override;
 	void Precache() override;
+	void HandleAnimEvent(MonsterEvent_t* pEvent) override;
+	void EXPORT LeapTouch(CBaseEntity* pOther);
 	int Classify() override
 	{
 		// Retail FUN_100c9bd0 compares the current render alpha against
@@ -187,7 +189,10 @@ public:
 	}
 
 private:
+	void ShootAtEnemy(int iSide);
+	void LeapAttack();
 	float m_flNextJump = 0;
+	int m_iVoicePitch = PITCH_NORM;
 };
 LINK_ENTITY_TO_CLASS(monster_xenome, CXenome);
 
@@ -211,6 +216,7 @@ void CXenome::Spawn()
 	m_flFieldOfView = -0.7f;
 	pev->renderamt = 0; // confirmed spawn-invisible, see file header
 	m_flNextJump = gpGlobals->time; // Retail +0x2b4 / m_flNextJump.
+	m_iVoicePitch = RANDOM_LONG(-10, 10) + 90; // Retail +0x2a8; range 80..100.
 
 	MonsterInit();
 	// Retail (Capability-Schreibzugriff +0x220 nach MonsterInit): gleiche Bitoperation wie im Dekompilat.
@@ -225,7 +231,122 @@ void CXenome::Precache()
 	PrecacheModel("models/xenome.mdl");
 	PrecacheModel("sprites/gibxeno.spr");
 	PrecacheModel("sprites/gorexeno.spr");
+	PrecacheSound("xenome/xenome_shoot.wav");
+	PrecacheSound("xenome/xenome_clawattack_1.wav");
+	PrecacheSound("xenome/xenome_clawattack_2.wav");
 	UTIL_PrecacheOther("xenomeshot");
+}
+
+void CXenome::ShootAtEnemy(int iSide)
+{
+	CBaseMonster* pEnemy = m_hEnemy ? m_hEnemy->MyMonsterPointer() : nullptr;
+	if (!pEnemy)
+		return;
+
+	// Retail FUN_100c9e10 selects the left/right launch point from the
+	// event's 0/1 argument: origin + right*20 +/- up*25.
+	const Vector vecStart = pev->origin + gpGlobals->v_right * 20.0f +
+		gpGlobals->v_up * (iSide != 0 ? 25.0f : -25.0f);
+	Vector vecDirection;
+	if (!pEnemy->IsAlive())
+	{
+		// Retail falls back to the current forward vector if the resolved enemy
+		// handle points to a dead monster.
+		vecDirection = gpGlobals->v_forward;
+	}
+	else if (pEnemy->m_hTargetEnt)
+	{
+		// Retail aims at the enemy's BodyTarget with its observed target-handle
+		// branch's random point perturbation, then normalizes the result.
+		vecDirection = pEnemy->BodyTarget(vecStart) - vecStart;
+		vecDirection.x += RANDOM_LONG(-32, 32);
+		vecDirection.y += RANDOM_LONG(-32, 32);
+		vecDirection.z += RANDOM_LONG(0, 64);
+		vecDirection = vecDirection.Normalize();
+	}
+	else
+	{
+		// Without that handle, Retail combines the enemy's BodyTarget offset
+		// with the Xenome's last-known enemy point before normalizing.
+		const Vector vecBodyOffset = pEnemy->BodyTarget(vecStart) - pEnemy->pev->origin;
+		vecDirection = (m_vecEnemyLKP + vecBodyOffset - vecStart).Normalize();
+	}
+
+	CXenomeShot::Shoot(pev, vecStart, vecDirection * 2000.0f);
+	EMIT_SOUND_DYN(ENT(pev), CHAN_VOICE, "xenome/xenome_shoot.wav", 0.5f, 0.8f, 0, m_iVoicePitch);
+}
+
+void CXenome::LeapAttack()
+{
+	// Retail vtable slot +0x20c selects one claw attack sound before the hull trace.
+	EMIT_SOUND_DYN(ENT(pev), CHAN_WEAPON,
+		RANDOM_LONG(0, 1) ? "xenome/xenome_clawattack_2.wav" : "xenome/xenome_clawattack_1.wav",
+		1.0f, 0.8f, 0, 80);
+
+	TraceResult tr;
+	CBaseEntity* pHurt = CheckTraceHullAttack(64.0f, gSkillData.xenomeMeleeDamage, DMG_SLASH, &tr);
+	if (!pHurt)
+		return;
+
+	// Retail assigns integer view punch values from [-10, 10] on both axes.
+	pHurt->pev->punchangle.z = RANDOM_LONG(-10, 10);
+	pHurt->pev->punchangle.x = RANDOM_LONG(-10, 10);
+	if (CBaseMonster* pVictim = pHurt->MyMonsterPointer())
+	{
+		const Vector vecSource = BodyTarget(g_vecZero);
+		const Vector vecTarget = pHurt->BodyTarget(g_vecZero);
+		const Vector vecAttackDir = (vecTarget - vecSource).Normalize();
+		pVictim->TraceBleed(gSkillData.xenomeMeleeDamage, vecAttackDir, &tr, DMG_SLASH);
+	}
+	// Retail's Xenome vtable slot +0x224 points to a no-op callback.
+
+	// Retail launches after resolving the melee hit and arms the contact callback.
+	UTIL_MakeVectors(pev->angles);
+	pev->flags &= ~FL_ONGROUND;
+	pev->velocity = gpGlobals->v_forward * 500.0f;
+	pev->velocity.z += CVAR_GET_FLOAT("sv_gravity") * 0.625f * 0.7f;
+	SetTouch(&CXenome::LeapTouch);
+	m_flNextJump = gpGlobals->time + 3.0f;
+}
+
+void CXenome::LeapTouch(CBaseEntity* pOther)
+{
+	if (!pOther || pOther->pev->velocity.z == 0.0f ||
+		pOther->Classify() == Classify() || FBitSet(pev->flags, FL_ONGROUND))
+		return;
+
+	pOther->TakeDamage(pev, pev, gSkillData.xenomeMeleeDamage, DMG_SLASH);
+	if (CBaseMonster* pVictim = pOther->MyMonsterPointer())
+	{
+		const Vector vecSource = BodyTarget(g_vecZero);
+		const Vector vecTarget = pOther->BodyTarget(g_vecZero);
+		const Vector vecAttackDir = (vecTarget - vecSource).Normalize();
+		TraceResult tr;
+		UTIL_TraceLine(vecSource, vecTarget, dont_ignore_monsters, edict(), &tr);
+		pVictim->TraceBleed(gSkillData.xenomeMeleeDamage, vecAttackDir, &tr, DMG_SLASH);
+	}
+	// Retail clears m_pfnTouch after a successful leap contact.
+	SetTouch(nullptr);
+}
+
+void CXenome::HandleAnimEvent(MonsterEvent_t* pEvent)
+{
+	switch (pEvent->event)
+	{
+	case 2:
+		ShootAtEnemy(0);
+		break;
+	case 3:
+		ShootAtEnemy(1);
+		break;
+	case 6:
+	case 7:
+		LeapAttack();
+		break;
+	default:
+		CBaseMonster::HandleAnimEvent(pEvent);
+		break;
+	}
 }
 
 //=========================================================
