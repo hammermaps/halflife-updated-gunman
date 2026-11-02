@@ -35,15 +35,12 @@
 //     established random_speaker/player_speaker sentence-group
 //     idiom).
 //
-// Simplified relative to the original: neither class's real
-// interactive behavior (CXenome's full combat/AI beyond the
-// visibility-linked Classify, CAiWallPlug's actual Use-driven
-// activate/deactivate state machine and its sentence-group playback)
-// was decompiled in full this session - both rely on the confirmed
-// Spawn/Precache/Classify/ObjectCaps behavior plus a straightforward
-// toggle-and-fire-targets Use() for the wall plug, same
-// simplification level used throughout this project for secondary
-// interactive props and creatures.
+// Current limits (2026-11-02): CXenome now has its confirmed animation
+// event and LeapTouch paths, but the target-direction branch, complete
+// leap vector and some Touch follow-up remain incomplete. Its broader AI
+// schedule is also not fully ported. CAiWallPlug still uses a simplified
+// toggle-and-fire-targets Use() pending its exact sentence-group and state
+// transition mapping.
 //=========================================================
 
 #include "extdll.h"
@@ -243,10 +240,10 @@ void CXenome::ShootAtEnemy(int iSide)
 	if (!pEnemy)
 		return;
 
-	// Retail FUN_100c9e10 selects the left/right launch point from the
-	// event's 0/1 argument: origin + right*20 +/- up*25.
-	const Vector vecStart = pev->origin + gpGlobals->v_right * 20.0f +
-		gpGlobals->v_up * (iSide != 0 ? 25.0f : -25.0f);
+	// Retail FUN_100c9e10 uses origin + up*20 and offsets event 2/3
+	// by right*-25/+25 respectively.
+	const Vector vecStart = pev->origin + gpGlobals->v_up * 20.0f +
+		gpGlobals->v_right * (iSide != 0 ? 25.0f : -25.0f);
 	Vector vecDirection;
 	if (!pEnemy->IsAlive())
 	{

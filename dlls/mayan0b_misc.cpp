@@ -323,8 +323,7 @@ void CHatchetFish::ChooseState()
 }
 
 // Retail @0x10072bc0: Vorwaertstrace 45 Einheiten; liefert den Bruchteil.
-// Die beiden Seitenproben (origin + 2*forward45 -/+ right10) sind aus dem
-// Disassembly rekonstruiert, das Vorzeichen der zweiten ist abgeleitet.
+// Die Seitenproben liegen 45 Einheiten voraus und je 20 Einheiten seitlich.
 float CHatchetFish::CheckObstacle(CBaseEntity* pEnemy)
 {
 	TraceResult tr;
@@ -346,10 +345,11 @@ float CHatchetFish::CheckObstacle(CBaseEntity* pEnemy)
 
 	if (m_flProbeTime < gpGlobals->time)
 	{
-		UTIL_TraceLine(pev->origin, pev->origin + vecFwd * 2 + vecRight, missile, edict(), &tr);
+		// Retail checks a point 45 units ahead and 20 units to either side.
+		UTIL_TraceLine(pev->origin, pev->origin + vecFwd + vecRight * 2, missile, edict(), &tr);
 		if (tr.flFraction != 1.0f)
 			return tr.flFraction;
-		UTIL_TraceLine(pev->origin, pev->origin + vecFwd * 2 - vecRight, missile, edict(), &tr);
+		UTIL_TraceLine(pev->origin, pev->origin + vecFwd - vecRight * 2, missile, edict(), &tr);
 		if (tr.flFraction != 1.0f)
 			return tr.flFraction;
 		m_flProbeTime = RANDOM_FLOAT(0.5, 1.0) + gpGlobals->time;
