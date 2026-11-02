@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="gunman_chronicles_originalgetreu.svg" alt="Gunman Chronicles SDK" width="100%">
+</p>
+
 # Gunman Chronicles SDK
 
 🇬🇧 [English version](README.en.md)
