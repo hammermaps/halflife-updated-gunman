@@ -902,14 +902,30 @@ void CBeak::Melee(float flReach, float flDamage)
 {
 	CSoundEnt::InsertSound(bits_SOUND_COMBAT, pev->origin, 1024, 0.2f);
 
-	CBaseEntity* pHurt = CheckTraceHullAttack(flReach, flDamage, DMG_SLASH);
+	TraceResult trace;
+	CBaseEntity* pHurt = CheckTraceHullAttack(flReach, flDamage, DMG_SLASH, &trace);
 	if (pHurt)
 	{
 		// Retail applies a random view punch of +-5 degrees.
 		pHurt->pev->punchangle.z = RANDOM_FLOAT(-5, 5);
 		pHurt->pev->punchangle.x = RANDOM_FLOAT(-5, 5);
-		// Not ported: retail's knockback call (virtual slot 15) and the follow-up call
-		// on slot 0x224 for clients/monsters (@0x100c0b61..0x100c0b72).
+
+		// Retail calls victim virtual slot 15 (TraceBleed) for monster victims,
+		// using the vector between the attacker/victim BodyTarget points.
+		if (CBaseMonster* pVictimMonster = pHurt->MyMonsterPointer())
+		{
+			const Vector vecSource = BodyTarget(pev->origin);
+			const Vector vecTarget = pHurt->BodyTarget(pHurt->pev->origin);
+			const Vector vecAttackDir = (vecTarget - vecSource).Normalize();
+			pVictimMonster->TraceBleed(flDamage, vecAttackDir, &trace, DMG_SLASH);
+		}
+
+		// Retail's attacker-vtable +0x224 callback plays the impact vocalization
+		// on players/monsters on two of three random outcomes.
+		if ((pHurt->pev->flags & (FL_CLIENT | FL_MONSTER)) != 0 && RANDOM_LONG(0, 2) < 2)
+		{
+			EMIT_SOUND_DYN(ENT(pHurt->pev), CHAN_VOICE, "lg_scorp/lg_scorp_attackb.wav", 0.25f, 2.0f, 0, 60);
+		}
 	}
 }
 
@@ -1283,6 +1299,7 @@ void CBeak::Precache()
 	PrecacheSound("beak/die2.wav");
 	PrecacheSound("beak/eating.wav");
 	PrecacheSound("beak/roar.wav");
+	PrecacheSound("lg_scorp/lg_scorp_attackb.wav");
 	PrecacheModel("sprites/gibbeak.spr");
 	PrecacheModel("sprites/gorebeak.spr");
 }

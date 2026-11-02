@@ -766,7 +766,7 @@ void ClientCommand(edict_t* pEntity)
 	else if (FStrEq(pcmd, "dbg_anim") || FStrEq(pcmd, "dbg_sched"))
 	{
 		// Debug hook (sv_cheats only, not part of the retail game): drives the
-		// monster under the crosshair directly, for testing animations and behavior.
+		// explicitly focused monster, or falls back to the monster under the crosshair.
 		//   dbg_anim <activity number | sequence name>  -> SetActivity / SetSequenceByName
 		//   dbg_sched <schedule type number>            -> ChangeSchedule(GetScheduleOfType(n))
 		// Use with a map that contains the monster, e.g. END1 for monster_endboss.
@@ -776,13 +776,17 @@ void ClientCommand(edict_t* pEntity)
 			return;
 		}
 
-		UTIL_MakeVectors(pev->v_angle);
-		const Vector vecSrc = pev->origin + pev->view_ofs;
-		TraceResult tr;
-		UTIL_TraceLine(vecSrc, vecSrc + gpGlobals->v_forward * 2048, dont_ignore_monsters, pEntity, &tr);
+		CBaseMonster* pMonster = player->m_hDbgFocus ? player->m_hDbgFocus->MyMonsterPointer() : nullptr;
+		if (pMonster == nullptr)
+		{
+			UTIL_MakeVectors(pev->v_angle);
+			const Vector vecSrc = pev->origin + pev->view_ofs;
+			TraceResult tr;
+			UTIL_TraceLine(vecSrc, vecSrc + gpGlobals->v_forward * 2048, dont_ignore_monsters, pEntity, &tr);
 
-		CBaseEntity* pHit = tr.pHit ? CBaseEntity::Instance(tr.pHit) : nullptr;
-		CBaseMonster* pMonster = pHit ? pHit->MyMonsterPointer() : nullptr;
+			CBaseEntity* pHit = tr.pHit ? CBaseEntity::Instance(tr.pHit) : nullptr;
+			pMonster = pHit ? pHit->MyMonsterPointer() : nullptr;
+		}
 		if (pMonster == nullptr)
 		{
 			ClientPrint(pev, HUD_PRINTCONSOLE, "dbg: no monster in the crosshair\n");

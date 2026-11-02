@@ -18,11 +18,13 @@
 #include "util.h"
 #include "cbase.h"
 #include "flightsteer.h"
+#include "gunman_sphere_explosion.h"
 #include "gamerules.h"
 #include "monsters.h"
 #include "effects.h"
 #include "weapons.h"
 #include "explode.h"
+#include "soundent.h"
 
 class CTargSpeaker : public CBaseEntity
 {
@@ -117,9 +119,26 @@ void CTargSpeaker::Use(CBaseEntity* pActivator, CBaseEntity* pCaller, USE_TYPE u
 #define RUSTBOT_AE_BEAM_OFF 2
 #define RUSTBOT_AE_BEAM_ON 3
 
-// Rustbot schedule records whose task streams use only task IDs implemented
-// by the SDK base monster. Range/cover paths with Retail custom tasks are
-// kept out until their StartTask/RunTask state is mapped.
+// Retail Rustbot range attack (schedule type 0x18, record 0x1012c610).
+// Private tasks 0x64 (arm/power up) and 0x63 (plasma shot) are handled below.
+#define TASK_RUSTBOT_PLASMA 0x63
+#define TASK_RUSTBOT_POWERUP 0x64
+
+static Task_t tlRustbotRangeAttack[] =
+{
+	{TASK_FACE_ENEMY, 0},
+	{TASK_SET_ACTIVITY, ACT_RANGE_ATTACK1},
+	{TASK_RUSTBOT_POWERUP, 0},
+	{TASK_RUSTBOT_PLASMA, 0},
+	{TASK_SET_ACTIVITY, ACT_DISARM},
+};
+static Schedule_t slRustbotRangeAttack =
+{
+	tlRustbotRangeAttack, ARRAYSIZE(tlRustbotRangeAttack), 0, 0, "Rustbot Range Attack",
+};
+
+// Other Rustbot schedule records whose task streams use only SDK tasks.
+// Cover and line-of-fire paths with unresolved private tasks remain deferred.
 static Task_t tlRustbotCombatFace[] =
 {
 	{TASK_WAIT_FOR_MOVEMENT, 0}, {TASK_SET_ACTIVITY, ACT_IDLE}, {TASK_FACE_ENEMY, 0},
@@ -181,6 +200,8 @@ public:
 	int MonsterProfile() override { return 13; } // retail slot 59
 	void Spawn() override;
 	void Precache() override;
+	void StartTask(Task_t* pTask) override;
+	void RunTask(Task_t* pTask) override;
 	Schedule_t* GetSchedule() override;
 	Schedule_t* GetScheduleOfType(int Type) override;
 	int Classify() override { return CLASS_ALIEN_MONSTER; }
@@ -241,18 +262,31 @@ Schedule_t* CRustbot::GetScheduleOfType(int Type)
 		return &slRustbotWaitInCover;
 	case 0x34:
 		return &slRustbotBorg;
-	case 0x12: // Retail TakeCover contains unresolved custom tasks 0x65/0x59.
-	case 0x18: // Retail Range Attack contains unresolved custom tasks 0x63/0x64.
-	case 0x2e: // Retail Establish Line Of Fire contains custom task 0x65/0x59.
-	case 0x2f:
-	default:
-		// Retail's default result is selected from enemy-handle presence.
-		// Keep the four incomplete task paths on the SDK schedules until their
-		// custom StartTask/RunTask completion semantics are ported.
-		if (Type == 0x12 || Type == 0x18 || Type == 0x2e || Type == 0x2f)
-			return CBaseMonster::GetScheduleOfType(Type);
+	case 0x12: // Retail TakeCover has unresolved custom tasks 0x65/0x59.
+		return CBaseMonster::GetScheduleOfType(Type);
+	case 0x18:
+		return &slRustbotRangeAttack;
+	case 0x29:
+		// Retail's failed-schedule record depends on whether the enemy handle
+		// still resolves; this is the only custom fallback case.
 		return m_hEnemy ? &slRustbotCombatFail : &slRustbotFail;
+	case 0x32:
+		// Retail retries the range attack when that condition is available,
+		// otherwise it requests its failed-schedule case (0x29).
+		return GetScheduleOfType(HasConditions(bits_COND_CAN_RANGE_ATTACK1) ? 0x18 : 0x29);
+	case 0x2e: // Retail Establish Line Of Fire has unresolved custom tasks.
+	case 0x2f:
+		return CBaseMonster::GetScheduleOfType(Type);
+	case 0x33:
+		// Retail compares gpGlobals->time against +0x29c to choose 0x29/0x18.
+		// That field has not been mapped or save-verified; keep this path on
+		// the SDK fallback until its semantics are established.
+		return CBaseMonster::GetScheduleOfType(Type);
 	}
+
+	// Retail delegates unhandled schedule types to CBaseMonster. Only 0x29
+	// uses the enemy-handle-specific Rustbot failure records above.
+	return CBaseMonster::GetScheduleOfType(Type);
 }
 
 Schedule_t* CRustbot::GetSchedule()
@@ -296,6 +330,43 @@ void CRustbot::Precache()
 	PrecacheModel("models/rustbot.mdl");
 	PrecacheModel("sprites/xbeam1.spr");
 	PrecacheModel("sprites/rustbeam_end.spr");
+	PRECACHE_SOUND("rustbot/P-up.wav");
+	PRECACHE_SOUND("rustbot/Plasma1.wav");
+}
+
+void CRustbot::StartTask(Task_t* pTask)
+{
+	switch (pTask->iTask)
+	{
+	case TASK_RUSTBOT_POWERUP:
+		TaskBegin();
+		m_IdealActivity = ACT_ARM;
+		CSoundEnt::InsertSound(bits_SOUND_COMBAT, pev->origin, 1024, 0.3f);
+		EMIT_SOUND_DYN(ENT(pev), CHAN_WEAPON, "rustbot/P-up.wav", 0.6f, 0.8f, 0, PITCH_NORM);
+		break;
+	case TASK_RUSTBOT_PLASMA:
+		TaskBegin();
+		m_IdealActivity = ACT_RANGE_ATTACK1;
+		EMIT_SOUND_DYN(ENT(pev), CHAN_WEAPON, "rustbot/Plasma1.wav", 0.6f, 0.8f, 0, PITCH_NORM);
+		break;
+	default:
+		CBaseMonster::StartTask(pTask);
+		break;
+	}
+}
+
+void CRustbot::RunTask(Task_t* pTask)
+{
+	if (pTask->iTask == TASK_RUSTBOT_POWERUP || pTask->iTask == TASK_RUSTBOT_PLASMA)
+	{
+		// Retail completes both custom activity tasks after their sequence,
+		// unless TASK_FAILED is set; otherwise the task keeps waiting.
+		if (m_fSequenceFinished && !HasConditions(bits_COND_TASK_FAILED))
+			TaskComplete();
+		return;
+	}
+
+	CBaseMonster::RunTask(pTask);
 }
 
 void CRustbot::HandleAnimEvent(MonsterEvent_t* pEvent)
@@ -1014,23 +1085,11 @@ void CRustFlier::TraceAttack(entvars_t* pevAttacker, float flDamage, Vector vecD
 	}
 }
 
-// Retail FUN_100b3c00: start of the scripted crash. Simplification: retail
-// spawns a CSphereExplosion here (constructor 0x10067970, parameters not
-// typed in the decompile); an ordinary TE_EXPLOSION + RadiusDamage(60) is used.
+// Retail FUN_100b3c00 creates a CSphereExplosion with parameters recovered
+// from its constructor call; see cbasebird_huntthink_2026-10-31.md Nachtrag 14.
 void CRustFlier::StartCrash()
 {
-	MESSAGE_BEGIN(MSG_PAS, SVC_TEMPENTITY, pev->origin);
-	WRITE_BYTE(TE_EXPLOSION);
-	WRITE_COORD(pev->origin.x);
-	WRITE_COORD(pev->origin.y);
-	WRITE_COORD(pev->origin.z);
-	WRITE_SHORT(g_sModelIndexFireball);
-	WRITE_BYTE(40);
-	WRITE_BYTE(15);
-	WRITE_BYTE(TE_EXPLFLAG_NONE);
-	MESSAGE_END();
-	UTIL_ExplosionEffects(pev->origin, 250.0f);
-	RadiusDamage(pev->origin, pev, pev, 60, CLASS_NONE, DMG_BLAST);
+	GunmanFireSphereExplosion(pev->origin, 200.0f, 8.0f, 255, 5, 1, 0, 0, 2.5f, 1.0f, 0.5f);
 
 	CBaseEntity* pGlow = m_hGlow;
 	if (pGlow)

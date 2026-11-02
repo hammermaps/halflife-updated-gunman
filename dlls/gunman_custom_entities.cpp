@@ -22,6 +22,7 @@
 #include "items.h"
 #include "soundent.h"
 #include "customentity.h" // BEAM_F* Render-Flags (nicht die SF_BEAM_*-Spawnflags aus effects.h)
+#include "gunman_sphere_explosion.h"
 
 //=========================================================
 // decore_asteroid - a spinning decorative rock prop. Used in CITY1A (and
@@ -1559,6 +1560,15 @@ void CSphereExplosion::ExplodeEvent()
 		UTIL_ScreenFadeAll(Vector(0, 0, 0), m_flFadeTime, m_flFadeHoldTime, 150, FFADE_IN);
 
 	UTIL_Remove(this);
+}
+
+void GunmanFireSphereExplosion(const Vector& origin, float maxRadius, float radiusStep,
+	int trans, int transStep, int numTracers, int shockwave, int implosion,
+	float shakeDuration, float fadeTime, float fadeHoldTime)
+{
+	CSphereExplosion* pExplosion = GetClassPtr((CSphereExplosion*)NULL);
+	pExplosion->ConfigureAndFire(origin, maxRadius, radiusStep, trans, transStep,
+		numTracers, shockwave, implosion, shakeDuration, fadeTime, fadeHoldTime);
 }
 
 // Retail CDummyBot::Explode helper FUN_100d03d0 creates these two effects
