@@ -100,6 +100,7 @@ kbutton_t in_use;
 kbutton_t in_jump;
 kbutton_t in_attack;
 kbutton_t in_attack2;
+kbutton_t in_custom; // "+custom" (MOUSE2 by default, "Customize weapon")
 kbutton_t in_up;
 kbutton_t in_down;
 kbutton_t in_duck;
@@ -456,6 +457,22 @@ void IN_Attack2Down()
 }
 
 void IN_Attack2Up() { KeyUp(&in_attack2); }
+
+// "+custom"/"-custom" (MOUSE2 by default, "Customize weapon"): decompiled from
+// client.dll (retail, fresh decompile 2026-09-05) at FUN_1002d8a0/FUN_1002d8c0.
+// Unlike +attack2 this key does not feed a per-frame usercmd button bit - the
+// retail handler runs KeyDown/KeyUp bookkeeping only for HUD state, then on
+// key-DOWN immediately issues a one-shot "custupdate" server command (the
+// client-side HUD sprite-fade/weapon-select-cursor cosmetics that also run in
+// the retail handler are not reproduced here - see PlayerCustomization() in
+// dlls/player.cpp for what's actually implemented server-side).
+void IN_CustomDown()
+{
+	KeyDown(&in_custom);
+	gEngfuncs.pfnClientCmd("custupdate\n");
+}
+void IN_CustomUp() { KeyUp(&in_custom); }
+
 void IN_UseDown()
 {
 	KeyDown(&in_use);
@@ -943,6 +960,8 @@ void InitInput()
 	gEngfuncs.pfnAddCommand("-attack", IN_AttackUp);
 	gEngfuncs.pfnAddCommand("+attack2", IN_Attack2Down);
 	gEngfuncs.pfnAddCommand("-attack2", IN_Attack2Up);
+	gEngfuncs.pfnAddCommand("+custom", IN_CustomDown);
+	gEngfuncs.pfnAddCommand("-custom", IN_CustomUp);
 	gEngfuncs.pfnAddCommand("+use", IN_UseDown);
 	gEngfuncs.pfnAddCommand("-use", IN_UseUp);
 	gEngfuncs.pfnAddCommand("+jump", IN_JumpDown);

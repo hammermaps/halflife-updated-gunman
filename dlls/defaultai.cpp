@@ -991,6 +991,20 @@ Schedule_t* CBaseMonster::GetScheduleOfType(int Type)
 		case 0:
 		case 4:
 			return slWaitScript;
+		case 6:
+			// Gunman's scripted_sequence extension "walk and face player".
+			// The stock SDK switch has no case for 6, causing a NULL schedule
+			// and a ChangeSchedule crash during the City2A briefing sequence.
+			// Preserve the matching stock walk-to-script motion. Player-facing
+			// remains a separate Gunman cinematic-controller implementation.
+			return slWalkToScript;
+		case 7:
+			// Preserve the matching stock run-to-script motion. Player-facing
+			// remains a separate Gunman cinematic-controller implementation.
+			return slRunToScript;
+		case 8:
+			// Gunman extension "turn and face player".
+			return slFaceScript;
 		case 1:
 			return slWalkToScript;
 		case 2:

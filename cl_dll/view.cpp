@@ -89,6 +89,15 @@ cvar_t* cl_bobup;
 cvar_t* cl_waterdist;
 cvar_t* cl_chasedist;
 
+// New, non-RE'd client-feel additions (user request 2026-09-06): a subtle
+// camera sway synced to the existing weapon-bob cycle, plus a brief downward
+// pitch kick when landing from a fall, so movement reads as less static.
+// Both are purely cosmetic and gated behind their own cvars so they can be
+// tuned or disabled without touching the underlying (retail-matching) bob
+// math in V_CalcBob/V_CalcViewRoll.
+cvar_t* cl_viewbob;
+cvar_t* cl_viewbob_landing;
+
 // These cvars are not registered (so users can't cheat), so set the ->value field directly
 // Register these cvars in V_Init() if needed for easy tweaking
 cvar_t v_iyaw_cycle = {"v_iyaw_cycle", "2", 0, 2};
@@ -499,6 +508,50 @@ void V_CalcNormalRefdef(struct ref_params_s* pparams)
 
 	V_DriftPitch(pparams);
 
+	// Landing dip (new client-feel addition, not RE'd - see cl_viewbob_landing
+	// declaration above): kick the view down briefly when the player hits the
+	// ground after a fall, scaled by how hard the landing was. Piggybacks on
+	// the existing client-side punchangle/V_DropPunchAngle decay so it fades
+	// out the same way a weapon-recoil punch would, with no extra state to
+	// maintain beyond the landing detector itself.
+	if (0 != cl_viewbob_landing->value)
+	{
+		static bool s_bWasOnGround = true;
+		// Nachtrag 2026-09-06 (Live-Report: "die zusaetzlichen Bewegungen
+		// beim springen funktionieren nicht"): urspruenglich wurde nur die
+		// Vertikalgeschwindigkeit des JEWEILS LETZTEN Frames vor der
+		// onground-Transition gespeichert. Falls simvel/onground in diesem
+		// Engine-Fork (Xash3D) nicht exakt in der angenommenen Reihenfolge
+		// aktualisiert werden, konnte dieser Einzel-Frame-Schnappschuss
+		// bereits (nahezu) 0 sein, wodurch die Landung nie die
+		// MIN_LANDING_SPEED-Schwelle erreichte und der Effekt faktisch nie
+		// ausloeste. Robuster: waehrend der gesamten Luftphase wird die
+		// staerkste beobachtete Sturzgeschwindigkeit mitgefuehrt, nicht nur
+		// der letzte Frame - unabhaengig von der genauen Update-Reihenfolge.
+		static float s_flMaxFallSpeed = 0.0f;
+
+		bool bOnGroundNow = pparams->onground != -1;
+		if (!bOnGroundNow)
+		{
+			s_flMaxFallSpeed = V_max(s_flMaxFallSpeed, -pparams->simvel[2]);
+		}
+		else if (!s_bWasOnGround)
+		{
+			float flFallSpeed = s_flMaxFallSpeed;
+			constexpr float MIN_LANDING_SPEED = 150.0f;
+			constexpr float MAX_LANDING_SPEED = 650.0f; // roughly where fall damage becomes severe
+			constexpr float MAX_KICK_DEGREES = 6.0f;
+
+			if (flFallSpeed > MIN_LANDING_SPEED)
+			{
+				float flFrac = V_min(1.0f, (flFallSpeed - MIN_LANDING_SPEED) / (MAX_LANDING_SPEED - MIN_LANDING_SPEED));
+				ev_punchangle[PITCH] += flFrac * MAX_KICK_DEGREES * cl_viewbob_landing->value;
+			}
+			s_flMaxFallSpeed = 0.0f;
+		}
+		s_bWasOnGround = bOnGroundNow;
+	}
+
 	if (0 != gEngfuncs.IsSpectateOnly())
 	{
 		ent = gEngfuncs.GetEntityByIndex(g_iUser2);
@@ -596,6 +649,18 @@ void V_CalcNormalRefdef(struct ref_params_s* pparams)
 	pparams->vieworg[2] += waterOffset;
 
 	V_CalcViewRoll(pparams);
+
+	// Movement sway (new client-feel addition, not RE'd - see cl_viewbob
+	// declaration above): lightly couples the actual camera to the same
+	// walk-cycle bob already computed for the weapon model further down, so
+	// the head sways a little side to side while walking instead of only the
+	// gun. Deliberately a small fraction of `bob` - this is meant to be felt
+	// more than seen.
+	if (0 != cl_viewbob->value)
+	{
+		pparams->viewangles[ROLL] += bob * 0.2f * cl_viewbob->value;
+		pparams->viewangles[PITCH] += fabs(bob) * 0.1f * cl_viewbob->value;
+	}
 
 	V_AddIdle(pparams);
 
@@ -1713,6 +1778,9 @@ void V_Init()
 	cl_bobup = gEngfuncs.pfnRegisterVariable("cl_bobup", "0.5", 0);
 	cl_waterdist = gEngfuncs.pfnRegisterVariable("cl_waterdist", "4", 0);
 	cl_chasedist = gEngfuncs.pfnRegisterVariable("cl_chasedist", "112", 0);
+
+	cl_viewbob = gEngfuncs.pfnRegisterVariable("cl_viewbob", "1", FCVAR_ARCHIVE);			 // movement sway strength, 0 disables
+	cl_viewbob_landing = gEngfuncs.pfnRegisterVariable("cl_viewbob_landing", "1", FCVAR_ARCHIVE); // landing dip strength, 0 disables
 }
 
 

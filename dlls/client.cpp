@@ -24,6 +24,10 @@
 */
 
 #include <algorithm>
+
+// Debug switch for decore_cam tracking (dbg_camtrack), default off.
+bool g_bDbgCamTrack = false;
+
 #include <string>
 #include <vector>
 
@@ -499,6 +503,22 @@ ClientCommand
 called each time a player uses a "cmd" command
 ============
 */
+// Debug helper for tp / dbg_focus: raises target in 16-unit steps (max 16)
+// until a human-hull trace from it is free (monsters block). Returns false
+// when no free position was found.
+static bool DbgFindFreeSpot(edict_t* pEntity, Vector& target)
+{
+	TraceResult tr;
+	for (int steps = 0; steps <= 16; steps++)
+	{
+		UTIL_TraceHull(target, target, dont_ignore_monsters, human_hull, pEntity, &tr);
+		if (!tr.fStartSolid && !tr.fAllSolid)
+			return true;
+		target.z += 16;
+	}
+	return false;
+}
+
 // Use CMD_ARGV,  CMD_ARGV, and CMD_ARGC to get pointers the character string command.
 void ClientCommand(edict_t* pEntity)
 {
@@ -562,6 +582,21 @@ void ClientCommand(edict_t* pEntity)
 	{
 		player->SelectLastItem();
 	}
+	else if (FStrEq(pcmd, "custupdate")) // "+custom" (MOUSE2, "Customize weapon")
+	{
+		player->PlayerCustomization();
+	}
+	else if (((pstr = strstr(pcmd, "cust_")) != NULL) && (pstr == pcmd))
+	{
+		// Retail FUN_100405b0: "cust_<Option><Wert>" -> aktive Waffe, Vtable-Slot 68 (Option ist das Zeichen hinter dem ersten '_')
+		const char* pUnderscore = strchr(pcmd, '_');
+		const char cOption = pUnderscore[1];
+		const int iValue = atoi(pUnderscore + 2);
+		if (cOption < '1')
+			ALERT(at_console, "Illegal option number\n");
+		else if (player->m_pActiveItem)
+			player->m_pActiveItem->ApplyCustomSetting(cOption, iValue);
+	}
 	else if (FStrEq(pcmd, "spectate")) // clients wants to become a spectator
 	{
 		// always allow proxies to become a spectator
@@ -581,6 +616,197 @@ void ClientCommand(edict_t* pEntity)
 	{
 		if (player->IsObserver())
 			player->Observer_SetMode(atoi(CMD_ARGV(1)));
+	}
+	else if (FStrEq(pcmd, "dbg_camtrack"))
+	{
+		// Debug only (sv_cheats, not part of the retail game): dbg_camtrack [1|0]
+		// Lets decore_cam turn its yaw toward player 1 (see gunman_custom_entities.cpp, CDecoreCam::TrackThink).
+		// Retail has no camera pan/tilt Think; this switch is off by default.
+		if (0 == g_psv_cheats->value)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "usage: dbg_camtrack [1|0] (needs sv_cheats 1)\n");
+			return;
+		}
+		g_bDbgCamTrack = CMD_ARGC() < 2 || atoi(CMD_ARGV(1)) != 0;
+		ClientPrint(pev, HUD_PRINTCONSOLE, g_bDbgCamTrack ? "dbg_camtrack: on\n" : "dbg_camtrack: off\n");
+	}
+	else if (FStrEq(pcmd, "dbg_god"))
+	{
+		// Debug god mode (sv_cheats only, not part of the retail game): dbg_god [1|0]
+		// Sets FL_GODMODE on the player (combat.cpp ignores damage for it).
+		// debug.cfg sets it after the map has loaded (see mod-src/xash3d/debug.cfg).
+		if (0 == g_psv_cheats->value)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "usage: dbg_god [1|0] (needs sv_cheats 1)\n");
+			return;
+		}
+		const bool on = CMD_ARGC() < 2 || atoi(CMD_ARGV(1)) != 0;
+		if (on)
+			pev->flags |= FL_GODMODE;
+		else
+			pev->flags &= ~FL_GODMODE;
+		ClientPrint(pev, HUD_PRINTCONSOLE, on ? "dbg_god: on\n" : "dbg_god: off\n");
+	}
+	else if (FStrEq(pcmd, "tp"))
+	{
+		// Debug teleport (sv_cheats only, not part of the retail game): tp <x> <y> <z>
+		// Moves the player to the given coordinates (e.g. taken from a map's entity
+		// lump). To avoid spawning inside geometry or a monster, the target is
+		// checked with a human-hull trace (monsters count as blocking) and raised
+		// in 16-unit steps (up to 16 steps) until the hull is free. The final
+		// offset is reported on the console.
+		if (0 == g_psv_cheats->value || CMD_ARGC() < 4)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "usage: tp <x> <y> <z> (needs sv_cheats 1)\n");
+			return;
+		}
+
+		Vector target(atof(CMD_ARGV(1)), atof(CMD_ARGV(2)), atof(CMD_ARGV(3)));
+		const Vector requested = target;
+		if (!DbgFindFreeSpot(pEntity, target))
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "tp: no free position above the requested coordinates\n");
+			return;
+		}
+
+		UTIL_SetOrigin(pev, target);
+		pev->velocity = g_vecZero;
+		pev->basevelocity = g_vecZero;
+		ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs("tp: requested (%.0f %.0f %.0f), placed at (%.0f %.0f %.0f), offset z +%.0f\n", requested.x, requested.y, requested.z, target.x, target.y, target.z, target.z - requested.z));
+	}
+	else if (FStrEq(pcmd, "dbg_focus"))
+	{
+		// Debug focus (sv_cheats only): dbg_focus <classname> [distance]
+		// Finds the nearest entity with that classname, places the player at
+		// 'distance' units (default 160) from it on the side the player comes
+		// from (free-spot check as in tp), and turns the view to its center.
+		// Afterwards dbg_anim / dbg_sched act on it through the crosshair.
+		if (0 == g_psv_cheats->value || CMD_ARGC() < 2)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "usage: dbg_focus <classname> [distance] | dbg_focus off (needs sv_cheats 1)\n");
+			return;
+		}
+
+		if (FStrEq(CMD_ARGV(1), "off"))
+		{
+			player->m_hDbgFocus = nullptr;
+			ClientPrint(pev, HUD_PRINTCONSOLE, "dbg_focus: view unlocked\n");
+			return;
+		}
+
+		const float distance = CMD_ARGC() >= 3 ? atof(CMD_ARGV(2)) : 160.0f;
+		CBaseEntity* pTarget = nullptr;
+		float bestDist = 1e9f;
+		for (CBaseEntity* pEnt = UTIL_FindEntityByClassname(nullptr, CMD_ARGV(1)); pEnt; pEnt = UTIL_FindEntityByClassname(pEnt, CMD_ARGV(1)))
+		{
+			const float d = (pEnt->pev->origin - pev->origin).Length();
+			if (d < bestDist)
+			{
+				bestDist = d;
+				pTarget = pEnt;
+			}
+		}
+		if (pTarget == nullptr)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs("dbg_focus: no entity '%s' on this map\n", CMD_ARGV(1)));
+			return;
+		}
+
+		// Stand on the player's side of the target, horizontally.
+		Vector side = pev->origin - pTarget->pev->origin;
+		side.z = 0;
+		if (side.Length() < 1)
+			side = Vector(-1, 0, 0);
+		side = side.Normalize() * distance;
+
+		// Floor correction: drop from the target's height down to the first solid
+		// surface at the spot, so the player stands at the target's level and not on
+		// a ledge above it (a ledge gave bandits "GetPathToEnemy failed" on END1).
+		// Floor level under the target (the origin can be above the floor, e.g. the
+		// endboss origin is 200 units above its floor on END1).
+		Vector spot = pTarget->pev->origin + side;
+		{
+			TraceResult ground;
+			const Vector targetTop(pTarget->pev->origin.x, pTarget->pev->origin.y, pTarget->pev->origin.z);
+			const Vector targetBottom(pTarget->pev->origin.x, pTarget->pev->origin.y, pTarget->pev->origin.z - 1024);
+			UTIL_TraceLine(targetTop, targetBottom, ignore_monsters, pTarget->edict(), &ground);
+			const float floorZ = ground.flFraction < 1.0f ? ground.vecEndPos.z : pTarget->pev->origin.z;
+
+			TraceResult spotGround;
+			const Vector spotTop(spot.x, spot.y, floorZ + 36);
+			const Vector spotBottom(spot.x, spot.y, floorZ - 128);
+			UTIL_TraceHull(spotTop, spotBottom, dont_ignore_monsters, human_hull, pEntity, &spotGround);
+			if (!spotGround.fStartSolid && spotGround.flFraction < 1.0f)
+				spot = spotGround.vecEndPos;
+			else
+				spot.z = floorZ;
+		}
+		if (!DbgFindFreeSpot(pEntity, spot))
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "dbg_focus: no free spot next to the target\n");
+			return;
+		}
+
+		UTIL_SetOrigin(pev, spot);
+		pev->velocity = g_vecZero;
+		pev->basevelocity = g_vecZero;
+
+		// View toward the target's center, applied by the engine (fixangle).
+		const Vector eye = pev->origin + pev->view_ofs;
+		Vector ang = UTIL_VecToAngles(pTarget->Center() - eye);
+		ang.x = -ang.x; // VEC_TO_ANGLES liefert den Pitch invertiert (Blick nach oben = positiv); Spiel: negativ = oben
+		pev->v_angle = ang;
+		pev->angles = ang;
+		pev->fixangle = 1;
+		// Lock the view on the target's center from now on (CBasePlayer::PreThink).
+		player->m_hDbgFocus = pTarget;
+
+		ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs("dbg_focus (locked): %s at (%.0f %.0f %.0f), player at (%.0f %.0f %.0f), view %.0f %.0f\n", STRING(pTarget->pev->classname), pTarget->pev->origin.x, pTarget->pev->origin.y, pTarget->pev->origin.z, spot.x, spot.y, spot.z, ang.x, ang.y));
+	}
+	else if (FStrEq(pcmd, "dbg_anim") || FStrEq(pcmd, "dbg_sched"))
+	{
+		// Debug hook (sv_cheats only, not part of the retail game): drives the
+		// monster under the crosshair directly, for testing animations and behavior.
+		//   dbg_anim <activity number | sequence name>  -> SetActivity / SetSequenceByName
+		//   dbg_sched <schedule type number>            -> ChangeSchedule(GetScheduleOfType(n))
+		// Use with a map that contains the monster, e.g. END1 for monster_endboss.
+		if (0 == g_psv_cheats->value || CMD_ARGC() < 2)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "usage: dbg_anim <activity|sequence> | dbg_sched <type> (needs sv_cheats 1, aim at a monster)\n");
+			return;
+		}
+
+		UTIL_MakeVectors(pev->v_angle);
+		const Vector vecSrc = pev->origin + pev->view_ofs;
+		TraceResult tr;
+		UTIL_TraceLine(vecSrc, vecSrc + gpGlobals->v_forward * 2048, dont_ignore_monsters, pEntity, &tr);
+
+		CBaseEntity* pHit = tr.pHit ? CBaseEntity::Instance(tr.pHit) : nullptr;
+		CBaseMonster* pMonster = pHit ? pHit->MyMonsterPointer() : nullptr;
+		if (pMonster == nullptr)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "dbg: no monster in the crosshair\n");
+			return;
+		}
+
+		if (FStrEq(pcmd, "dbg_anim"))
+		{
+			const char* arg = CMD_ARGV(1);
+			// A pure number is an activity id (ACT_*), anything else a sequence name.
+			const bool isNumber = arg[0] != '\0' && (arg[0] >= '0' && arg[0] <= '9');
+			if (isNumber)
+			{
+				pMonster->SetActivity(static_cast<Activity>(atoi(arg)));
+			}
+			else
+			{
+				pMonster->SetSequenceByName(arg);
+			}
+		}
+		else
+		{
+			pMonster->ChangeSchedule(pMonster->GetScheduleOfType(atoi(CMD_ARGV(1))));
+		}
 	}
 	else if (FStrEq(pcmd, "closemenus"))
 	{
@@ -928,114 +1154,114 @@ void StartFrame()
 void ClientPrecache()
 {
 	// setup precaches always needed
-	PRECACHE_SOUND("player/sprayer.wav"); // spray paint sound for PreAlpha
+	PrecacheSound("player/sprayer.wav"); // spray paint sound for PreAlpha
 
-	// PRECACHE_SOUND("player/pl_jumpland2.wav");		// UNDONE: play 2x step sound
+	// PrecacheSound("player/pl_jumpland2.wav");		// UNDONE: play 2x step sound
 
-	PRECACHE_SOUND("player/pl_fallpain2.wav");
-	PRECACHE_SOUND("player/pl_fallpain3.wav");
+	PrecacheSound("player/pl_fallpain2.wav");
+	PrecacheSound("player/pl_fallpain3.wav");
 
-	PRECACHE_SOUND("player/pl_step1.wav"); // walk on concrete
-	PRECACHE_SOUND("player/pl_step2.wav");
-	PRECACHE_SOUND("player/pl_step3.wav");
-	PRECACHE_SOUND("player/pl_step4.wav");
+	PrecacheSound("player/pl_step1.wav"); // walk on concrete
+	PrecacheSound("player/pl_step2.wav");
+	PrecacheSound("player/pl_step3.wav");
+	PrecacheSound("player/pl_step4.wav");
 
-	PRECACHE_SOUND("common/npc_step1.wav"); // NPC walk on concrete
-	PRECACHE_SOUND("common/npc_step2.wav");
-	PRECACHE_SOUND("common/npc_step3.wav");
-	PRECACHE_SOUND("common/npc_step4.wav");
+	PrecacheSound("common/npc_step1.wav"); // NPC walk on concrete
+	PrecacheSound("common/npc_step2.wav");
+	PrecacheSound("common/npc_step3.wav");
+	PrecacheSound("common/npc_step4.wav");
 
-	PRECACHE_SOUND("player/pl_metal1.wav"); // walk on metal
-	PRECACHE_SOUND("player/pl_metal2.wav");
-	PRECACHE_SOUND("player/pl_metal3.wav");
-	PRECACHE_SOUND("player/pl_metal4.wav");
+	PrecacheSound("player/pl_metal1.wav"); // walk on metal
+	PrecacheSound("player/pl_metal2.wav");
+	PrecacheSound("player/pl_metal3.wav");
+	PrecacheSound("player/pl_metal4.wav");
 
-	PRECACHE_SOUND("player/pl_dirt1.wav"); // walk on dirt
-	PRECACHE_SOUND("player/pl_dirt2.wav");
-	PRECACHE_SOUND("player/pl_dirt3.wav");
-	PRECACHE_SOUND("player/pl_dirt4.wav");
+	PrecacheSound("player/pl_dirt1.wav"); // walk on dirt
+	PrecacheSound("player/pl_dirt2.wav");
+	PrecacheSound("player/pl_dirt3.wav");
+	PrecacheSound("player/pl_dirt4.wav");
 
-	PRECACHE_SOUND("player/pl_duct1.wav"); // walk in duct
-	PRECACHE_SOUND("player/pl_duct2.wav");
-	PRECACHE_SOUND("player/pl_duct3.wav");
-	PRECACHE_SOUND("player/pl_duct4.wav");
+	PrecacheSound("player/pl_duct1.wav"); // walk in duct
+	PrecacheSound("player/pl_duct2.wav");
+	PrecacheSound("player/pl_duct3.wav");
+	PrecacheSound("player/pl_duct4.wav");
 
-	PRECACHE_SOUND("player/pl_grate1.wav"); // walk on grate
-	PRECACHE_SOUND("player/pl_grate2.wav");
-	PRECACHE_SOUND("player/pl_grate3.wav");
-	PRECACHE_SOUND("player/pl_grate4.wav");
+	PrecacheSound("player/pl_grate1.wav"); // walk on grate
+	PrecacheSound("player/pl_grate2.wav");
+	PrecacheSound("player/pl_grate3.wav");
+	PrecacheSound("player/pl_grate4.wav");
 
-	PRECACHE_SOUND("player/pl_slosh1.wav"); // walk in shallow water
-	PRECACHE_SOUND("player/pl_slosh2.wav");
-	PRECACHE_SOUND("player/pl_slosh3.wav");
-	PRECACHE_SOUND("player/pl_slosh4.wav");
+	PrecacheSound("player/pl_slosh1.wav"); // walk in shallow water
+	PrecacheSound("player/pl_slosh2.wav");
+	PrecacheSound("player/pl_slosh3.wav");
+	PrecacheSound("player/pl_slosh4.wav");
 
-	PRECACHE_SOUND("player/pl_tile1.wav"); // walk on tile
-	PRECACHE_SOUND("player/pl_tile2.wav");
-	PRECACHE_SOUND("player/pl_tile3.wav");
-	PRECACHE_SOUND("player/pl_tile4.wav");
-	PRECACHE_SOUND("player/pl_tile5.wav");
+	PrecacheSound("player/pl_tile1.wav"); // walk on tile
+	PrecacheSound("player/pl_tile2.wav");
+	PrecacheSound("player/pl_tile3.wav");
+	PrecacheSound("player/pl_tile4.wav");
+	PrecacheSound("player/pl_tile5.wav");
 
-	PRECACHE_SOUND("player/pl_swim1.wav"); // breathe bubbles
-	PRECACHE_SOUND("player/pl_swim2.wav");
-	PRECACHE_SOUND("player/pl_swim3.wav");
-	PRECACHE_SOUND("player/pl_swim4.wav");
+	PrecacheSound("player/pl_swim1.wav"); // breathe bubbles
+	PrecacheSound("player/pl_swim2.wav");
+	PrecacheSound("player/pl_swim3.wav");
+	PrecacheSound("player/pl_swim4.wav");
 
-	PRECACHE_SOUND("player/pl_ladder1.wav"); // climb ladder rung
-	PRECACHE_SOUND("player/pl_ladder2.wav");
-	PRECACHE_SOUND("player/pl_ladder3.wav");
-	PRECACHE_SOUND("player/pl_ladder4.wav");
+	PrecacheSound("player/pl_ladder1.wav"); // climb ladder rung
+	PrecacheSound("player/pl_ladder2.wav");
+	PrecacheSound("player/pl_ladder3.wav");
+	PrecacheSound("player/pl_ladder4.wav");
 
-	PRECACHE_SOUND("player/pl_wade1.wav"); // wade in water
-	PRECACHE_SOUND("player/pl_wade2.wav");
-	PRECACHE_SOUND("player/pl_wade3.wav");
-	PRECACHE_SOUND("player/pl_wade4.wav");
+	PrecacheSound("player/pl_wade1.wav"); // wade in water
+	PrecacheSound("player/pl_wade2.wav");
+	PrecacheSound("player/pl_wade3.wav");
+	PrecacheSound("player/pl_wade4.wav");
 
-	PRECACHE_SOUND("debris/wood1.wav"); // hit wood texture
-	PRECACHE_SOUND("debris/wood2.wav");
-	PRECACHE_SOUND("debris/wood3.wav");
+	PrecacheSound("debris/wood1.wav"); // hit wood texture
+	PrecacheSound("debris/wood2.wav");
+	PrecacheSound("debris/wood3.wav");
 
-	PRECACHE_SOUND("plats/train_use1.wav"); // use a train
-	PRECACHE_SOUND("plats/vehicle_ignition.wav");
+	PrecacheSound("plats/train_use1.wav"); // use a train
+	PrecacheSound("plats/vehicle_ignition.wav");
 
-	PRECACHE_SOUND("buttons/spark5.wav"); // hit computer texture
-	PRECACHE_SOUND("buttons/spark6.wav");
-	PRECACHE_SOUND("debris/glass1.wav");
-	PRECACHE_SOUND("debris/glass2.wav");
-	PRECACHE_SOUND("debris/glass3.wav");
+	PrecacheSound("buttons/spark5.wav"); // hit computer texture
+	PrecacheSound("buttons/spark6.wav");
+	PrecacheSound("debris/glass1.wav");
+	PrecacheSound("debris/glass2.wav");
+	PrecacheSound("debris/glass3.wav");
 
-	PRECACHE_SOUND(SOUND_FLASHLIGHT_ON);
-	PRECACHE_SOUND(SOUND_FLASHLIGHT_OFF);
+	PrecacheSound(SOUND_FLASHLIGHT_ON);
+	PrecacheSound(SOUND_FLASHLIGHT_OFF);
 
 	// player gib sounds
-	PRECACHE_SOUND("common/bodysplat.wav");
+	PrecacheSound("common/bodysplat.wav");
 
 	// player pain sounds
-	PRECACHE_SOUND("player/pl_pain2.wav");
-	PRECACHE_SOUND("player/pl_pain4.wav");
-	PRECACHE_SOUND("player/pl_pain5.wav");
-	PRECACHE_SOUND("player/pl_pain6.wav");
-	PRECACHE_SOUND("player/pl_pain7.wav");
+	PrecacheSound("player/pl_pain2.wav");
+	PrecacheSound("player/pl_pain4.wav");
+	PrecacheSound("player/pl_pain5.wav");
+	PrecacheSound("player/pl_pain6.wav");
+	PrecacheSound("player/pl_pain7.wav");
 
-	PRECACHE_MODEL("models/player.mdl");
+	PrecacheModel("models/player.mdl");
 
 	// hud sounds
 
-	PRECACHE_SOUND("common/wpn_hudoff.wav");
-	PRECACHE_SOUND("common/wpn_hudon.wav");
-	PRECACHE_SOUND("common/wpn_moveselect.wav");
-	PRECACHE_SOUND("common/wpn_select.wav");
-	PRECACHE_SOUND("common/wpn_denyselect.wav");
+	PrecacheSound("common/wpn_hudoff.wav");
+	PrecacheSound("common/wpn_hudon.wav");
+	PrecacheSound("common/wpn_moveselect.wav");
+	PrecacheSound("common/wpn_select.wav");
+	PrecacheSound("common/wpn_denyselect.wav");
 
 
 	// geiger sounds
 
-	PRECACHE_SOUND("player/geiger6.wav");
-	PRECACHE_SOUND("player/geiger5.wav");
-	PRECACHE_SOUND("player/geiger4.wav");
-	PRECACHE_SOUND("player/geiger3.wav");
-	PRECACHE_SOUND("player/geiger2.wav");
-	PRECACHE_SOUND("player/geiger1.wav");
+	PrecacheSound("player/geiger6.wav");
+	PrecacheSound("player/geiger5.wav");
+	PrecacheSound("player/geiger4.wav");
+	PrecacheSound("player/geiger3.wav");
+	PrecacheSound("player/geiger2.wav");
+	PrecacheSound("player/geiger1.wav");
 
 	if (giPrecacheGrunt)
 		UTIL_PrecacheOther("monster_human_grunt");

@@ -78,13 +78,13 @@ void CCrossbowBolt::Spawn()
 
 void CCrossbowBolt::Precache()
 {
-	PRECACHE_MODEL("models/crossbow_bolt.mdl");
-	PRECACHE_SOUND("weapons/xbow_hitbod1.wav");
-	PRECACHE_SOUND("weapons/xbow_hitbod2.wav");
-	PRECACHE_SOUND("weapons/xbow_fly1.wav");
-	PRECACHE_SOUND("weapons/xbow_hit1.wav");
-	PRECACHE_SOUND("fvox/beep.wav");
-	m_iTrail = PRECACHE_MODEL("sprites/streak.spr");
+	PrecacheModel("models/crossbow_bolt.mdl");
+	PrecacheSound("weapons/xbow_hitbod1.wav");
+	PrecacheSound("weapons/xbow_hitbod2.wav");
+	PrecacheSound("weapons/xbow_fly1.wav");
+	PrecacheSound("weapons/xbow_hit1.wav");
+	PrecacheSound("fvox/beep.wav");
+	m_iTrail = PrecacheModel("sprites/streak.spr");
 }
 
 
@@ -205,6 +205,9 @@ void CCrossbowBolt::ExplodeThink()
 	WRITE_BYTE(15);		// framerate
 	WRITE_BYTE(TE_EXPLFLAG_NONE);
 	MESSAGE_END();
+	// Nachtrag 2026-09-06 (Nutzerwunsch: Erschuetterung+Lichtblitz bei
+	// jeder Explosion, siehe util.h/UTIL_ExplosionEffects).
+	UTIL_ExplosionEffects(pev->origin, 128.0f);
 
 	entvars_t* pevOwner;
 
@@ -236,17 +239,17 @@ void CCrossbow::Spawn()
 
 void CCrossbow::Precache()
 {
-	PRECACHE_MODEL("models/w_crossbow.mdl");
-	PRECACHE_MODEL("models/v_crossbow.mdl");
-	PRECACHE_MODEL("models/p_crossbow.mdl");
+	PrecacheModel("models/w_crossbow.mdl");
+	PrecacheModel("models/v_crossbow.mdl");
+	PrecacheModel("models/p_crossbow.mdl");
 
-	PRECACHE_SOUND("weapons/xbow_fire1.wav");
-	PRECACHE_SOUND("weapons/xbow_reload1.wav");
+	PrecacheSound("weapons/xbow_fire1.wav");
+	PrecacheSound("weapons/xbow_reload1.wav");
 
 	UTIL_PrecacheOther("crossbow_bolt");
 
-	m_usCrossbow = PRECACHE_EVENT(1, "events/crossbow1.sc");
-	m_usCrossbow2 = PRECACHE_EVENT(1, "events/crossbow2.sc");
+	m_usCrossbow = PrecacheEvent(1, "events/crossbow1.sc");
+	m_usCrossbow2 = PrecacheEvent(1, "events/crossbow2.sc");
 }
 
 
@@ -500,8 +503,8 @@ class CCrossbowAmmo : public CBasePlayerAmmo
 	}
 	void Precache() override
 	{
-		PRECACHE_MODEL("models/w_crossbow_clip.mdl");
-		PRECACHE_SOUND("items/9mmclip1.wav");
+		PrecacheModel("models/w_crossbow_clip.mdl");
+		PrecacheSound("items/9mmclip1.wav");
 	}
 	bool AddAmmo(CBaseEntity* pOther) override
 	{

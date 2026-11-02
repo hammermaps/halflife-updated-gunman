@@ -100,6 +100,7 @@ TYPEDESCRIPTION CBaseMonster::m_SaveData[] =
 
 		DEFINE_FIELD(CBaseMonster, m_scriptState, FIELD_INTEGER),
 		DEFINE_FIELD(CBaseMonster, m_pCine, FIELD_CLASSPTR),
+		DEFINE_FIELD(CBaseMonster, m_flCineGraceEnd, FIELD_TIME),
 		DEFINE_FIELD(CBaseMonster, m_AllowItemDropping, FIELD_BOOLEAN),
 };
 
@@ -179,13 +180,7 @@ void CBaseMonster::BarnacleVictimBitten(entvars_t* pevBarnacle)
 //=========================================================
 void CBaseMonster::BarnacleVictimReleased()
 {
-	// Half-Life: Updated - this condition fixes the Barnacle victim
-	// "ressurection" bug where it should be considered dead but is still
-	// alive. That is until taking certain types of damage (club, explosives)
-	// while some don't work (bullets).
-	// To restore the original behavior/bug, remove this condition.
-	if ( !HasMemory( bits_MEMORY_KILLED ) && (pev->deadflag == DEAD_NO) && pev->health > 0 )
-		m_IdealMonsterState = MONSTERSTATE_IDLE;
+	m_IdealMonsterState = MONSTERSTATE_IDLE;
 
 	pev->velocity = g_vecZero;
 	pev->movetype = MOVETYPE_STEP;
@@ -1222,7 +1217,11 @@ bool CBaseMonster::PopEnemy()
 //=========================================================
 void CBaseMonster::SetActivity(Activity NewActivity)
 {
-	const Activity oldActivity = NewActivity;
+	// Retail CBaseMonster::SetActivity (shared body @0x100295f0, disassembled
+	// 2026-11-01, findings/entities/setactivity_base_2026-11-01.md) compares the
+	// PREVIOUS m_Activity (this+0x130) with the new one. The former
+	// "oldActivity = NewActivity" made that check always test the new value.
+	const Activity oldActivity = m_Activity;
 
 	m_Activity = NewActivity; // Go ahead and set this so it doesn't keep trying when the anim is not present
 
@@ -1784,6 +1783,49 @@ bool CBaseMonster::FTriangulate(const Vector& vecStart, const Vector& vecEnd, fl
 		}
 	}
 
+	// The classic search only changes lateral distance while keeping the apex
+	// at one fixed point along the route. Broad props and room corners can need
+	// both a wider berth and a point farther past the blocker. Try a compact
+	// two-dimensional set of additional waypoints before declaring the route
+	// blocked. This is shared by all monsters; flyers retain their vertical
+	// candidates above and can also use these side routes.
+	float hullWidth = pev->size.x;
+	if (hullWidth < 24.0f)
+		hullWidth = 24.0f;
+	else if (hullWidth > 48.0f)
+		hullWidth = 48.0f;
+	const Vector routeForward = (vecEnd - vecStart).Normalize();
+	Vector routeLateral(-routeForward.y, routeForward.x, 0.0f);
+	const float routeLength = (vecEnd - vecStart).Length2D();
+	if (routeLength > 0.001f && routeLateral.Length2D() > 0.001f)
+	{
+		routeLateral = routeLateral.Normalize();
+		for (int depth = 0; depth < 3; ++depth)
+		{
+			float forwardOffset = flDist + hullWidth * (1.0f + depth * 1.5f);
+			const float maxForwardOffset = routeLength - hullWidth;
+			if (maxForwardOffset > 0.0f && forwardOffset > maxForwardOffset)
+				forwardOffset = maxForwardOffset;
+			for (int side = 0; side < 2; ++side)
+			{
+				const float sideSign = (side == 0) ? -1.0f : 1.0f;
+				for (int width = 0; width < 6; ++width)
+				{
+					const float lateralOffset = hullWidth * (2.5f + width * 1.5f);
+					const Vector candidate = vecStart + routeForward * forwardOffset + routeLateral * (sideSign * lateralOffset);
+					if (CheckLocalMove(vecStart, candidate, pTargetEnt, NULL) != LOCALMOVE_VALID)
+						continue;
+					if (CheckLocalMove(candidate, vecFarSide, pTargetEnt, NULL) != LOCALMOVE_VALID)
+						continue;
+
+					if (pApex)
+						*pApex = candidate;
+					return true;
+				}
+			}
+		}
+	}
+
 	return false;
 }
 
@@ -2011,6 +2053,35 @@ void CBaseMonster::MonsterInit()
 		return;
 	}
 
+	// Retail MonsterInit (@0x1002af50) applies the class's profile table entry (slot 59). The SDK
+	// takes over its blood color and field-of-view columns. Capability and movetype remain unapplied:
+	// changing them affects SDK attack gating, and class-specific write ordering is not verified.
+	{
+		// Uncut column (entry 0 = no profile); index = retail slot-59 return value.
+		static const int kProfileBloodColor[] = {0, 247, 156, 247, 156, 195, 247, 247, 247, 247, 200, 200, 156, 156, 156,
+			195, 100, 100, 50, 100, 247, 195, 156, 247, 100, 247, 156};
+		static const int kProfileBloodSprayType[] = {0, 5, 1, 5, 1, 0, 0, 0, 5, 5, 5, 0, 0, 1,
+			1, 1, 2, 6, 3, 4, 3, 5, 0, 0, 5, 6, 1};
+		const int iProfile = MonsterProfile();
+		if (iProfile > 0 && iProfile < (int)ARRAYSIZE(kProfileBloodColor))
+			m_bloodColor = kProfileBloodColor[iProfile];
+		if (iProfile > 0 && iProfile < (int)ARRAYSIZE(kProfileBloodSprayType))
+		{
+			const int iSprayType = kProfileBloodSprayType[iProfile];
+			if (iSprayType > 0)
+			{
+				static const char* const kBloodSprayModels[] = {nullptr, "sprites/gorebot.spr", "sprites/gorebeak.spr",
+					"sprites/gorexeno.spr", "sprites/goretube.spr", "sprites/gorehuman.spr", "sprites/gorebirth.spr"};
+				PRECACHE_MODEL(kBloodSprayModels[iSprayType]);
+			}
+		}
+
+		// Profil-Sichtfeld (retail +0x124, Spalte +0x1c): in allen 26 Zeilen -0,7. Retail schreibt es
+		// in MonsterInit nach den Klassen-Zuweisungen vor dem Aufruf, daher gewinnt der Profilwert.
+		if (iProfile > 0)
+			m_flFieldOfView = -0.7f;
+	}
+
 	// Set fields common to all monsters
 	pev->effects = 0;
 	pev->takedamage = DAMAGE_AIM;
@@ -2193,26 +2264,70 @@ bool CBaseMonster::TaskIsRunning()
 // IRelationship - returns an integer that describes the
 // relationship between two types of monster.
 //=========================================================
+// Nachtrag 2026-09-06 (Nutzerwunsch "bitte genauer decompilieren", nach
+// Live-Report "monster_cricket can't assess ..."-Konsolenspam): die
+// stock-SDK-eigene 14x14-Tabelle wurde durch die ECHTE, frisch aus
+// gunman.dll decompilierte 21x21-Tabelle ersetzt. IRelationship() hat
+// keinen demanglten Namen (nicht exportiert, kein RTTI), wurde aber
+// eindeutig ueber ihre Vtable-Position identifiziert: CBaseTurret's
+// bereits bekannter Classify()-Slot (Byte-Offset 0x20, bestaetigt durch
+// mehrere frueher decompilierte Klassen) taucht in der Kandidatenfunktion
+// @0x1002b460 zweimal auf (this->Classify() und pTarget->Classify()),
+// gefolgt von genau dem erwarteten Tabellen-Lookup-Muster:
+//   iVar1 = this->Classify();       // vtable+0x20
+//   iVar2 = pTarget->Classify();    // vtable+0x20
+//   return *(int*)(&DAT_1011b590 + (iVar1*0x15 + iVar2) * 4);
+// 0x15 = 21 (Zeilenbreite!) - die reale Tabelle ist also NICHT 14x14 wie
+// im modernen SDK-Fork, sondern 21x21 und deckt damit exakt alle in
+// cbase.h dokumentierten Gunman-Erweiterungen ab (hoechster bekannter
+// Wert: CLASS_ALIEN_BOSS=20, 21 Zeilen/Spalten = Indizes 0-20 - passt
+// exakt). Rohdaten bei 0x1011b590 (.data) per dump_raw_dwords.py
+// ausgelesen (441 Ganzzahlen -2..3, exakt die R_*-Werte), die ersten 14
+// Spalten/Zeilen wurden gegen die alte stock-Tabelle gegenprueft: 11 von
+// 14 Zellen der MACHINE-Zeile stimmen exakt ueberein, die restigen 3
+// (ALIENMILITARY/ALIENPASSIVE/ABIOWEAPON als Ziel) sind echte,
+// beabsichtigte Gunman-Balance-Abweichungen - kein Decompile-Fehler.
+// Ersetzt den vorherigen, nur dokumentierten Remap-Workaround
+// (CRICKET->INSECT, RAPTOR->ALIEN_PREDATOR) vollstaendig durch echte
+// RE-Daten. Siehe findings/entities/cricket_irelationship_and_wander.md.
 int CBaseMonster::IRelationship(CBaseEntity* pTarget)
 {
-	static int iEnemy[14][14] =
-		{//   NONE	 MACH	 PLYR	 HPASS	 HMIL	 AMIL	 APASS	 AMONST	APREY	 APRED	 INSECT	PLRALY	PBWPN	ABWPN
-			/*NONE*/ {R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO},
-			/*MACHINE*/ {R_NO, R_NO, R_DL, R_DL, R_NO, R_DL, R_DL, R_DL, R_DL, R_DL, R_NO, R_DL, R_DL, R_DL},
-			/*PLAYER*/ {R_NO, R_DL, R_NO, R_NO, R_DL, R_DL, R_DL, R_DL, R_DL, R_DL, R_NO, R_NO, R_DL, R_DL},
-			/*HUMANPASSIVE*/ {R_NO, R_NO, R_AL, R_AL, R_HT, R_HT, R_NO, R_HT, R_DL, R_DL, R_NO, R_AL, R_NO, R_NO},
-			/*HUMANMILITAR*/ {R_NO, R_NO, R_HT, R_DL, R_NO, R_HT, R_DL, R_DL, R_DL, R_DL, R_NO, R_HT, R_NO, R_NO},
-			/*ALIENMILITAR*/ {R_NO, R_DL, R_HT, R_DL, R_HT, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_DL, R_NO, R_NO},
-			/*ALIENPASSIVE*/ {R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO},
-			/*ALIENMONSTER*/ {R_NO, R_DL, R_DL, R_DL, R_DL, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_DL, R_NO, R_NO},
-			/*ALIENPREY   */ {R_NO, R_NO, R_DL, R_DL, R_DL, R_NO, R_NO, R_NO, R_NO, R_FR, R_NO, R_DL, R_NO, R_NO},
-			/*ALIENPREDATO*/ {R_NO, R_NO, R_DL, R_DL, R_DL, R_NO, R_NO, R_NO, R_HT, R_DL, R_NO, R_DL, R_NO, R_NO},
-			/*INSECT*/ {R_FR, R_FR, R_FR, R_FR, R_FR, R_NO, R_FR, R_FR, R_FR, R_FR, R_NO, R_FR, R_NO, R_NO},
-			/*PLAYERALLY*/ {R_NO, R_DL, R_AL, R_AL, R_DL, R_DL, R_DL, R_DL, R_DL, R_DL, R_NO, R_NO, R_NO, R_NO},
-			/*PBIOWEAPON*/ {R_NO, R_NO, R_DL, R_DL, R_DL, R_DL, R_DL, R_DL, R_DL, R_DL, R_NO, R_DL, R_NO, R_DL},
-			/*ABIOWEAPON*/ {R_NO, R_NO, R_DL, R_DL, R_DL, R_AL, R_NO, R_DL, R_DL, R_NO, R_NO, R_DL, R_DL, R_NO}};
+	static int iEnemy[21][21] =
+		{//        NONE  MACH  PLYR  HPAS  HMIL  AMIL  APAS  AMON  APRY  APRD  INSC  PALY  PBWP  ABWP  VEHI  RAPT   C16  CRIC   C18   C19  BOSS
+			/*NONE*/ {R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO, R_NO},
+			/*MACH*/ {R_NO, R_NO, R_DL, R_DL, R_NO, R_NO, R_NO, R_DL, R_DL, R_DL, R_NO, R_DL, R_DL, R_NO, R_DL, R_DL, R_NO, R_NO, R_NO, R_NO, R_NO},
+			/*PLYR*/ {R_NO, R_NO, R_AL, R_AL, R_FR, R_NM, R_NO, R_DL, R_NM, R_HT, R_NO, R_HT, R_DL, R_NO, R_DL, R_NM, R_NO, R_NO, R_NO, R_NO, R_DL},
+			/*HPAS*/ {R_NO, R_NO, R_AL, R_AL, R_FR, R_NM, R_NO, R_DL, R_NM, R_HT, R_DL, R_HT, R_DL, R_DL, R_DL, R_NM, R_DL, R_NO, R_NO, R_NO, R_HT},
+			/*HMIL*/ {R_NO, R_NO, R_FR, R_FR, R_FR, R_FR, R_NO, R_DL, R_DL, R_FR, R_NO, R_HT, R_HT, R_NO, R_DL, R_HT, R_NO, R_NO, R_NO, R_NO, R_FR},
+			/*AMIL*/ {R_NO, R_NO, R_HT, R_HT, R_AL, R_AL, R_AL, R_FR, R_DL, R_NO, R_NO, R_NM, R_HT, R_NO, R_DL, R_HT, R_NO, R_DL, R_NO, R_NO, R_FR},
+			/*APAS*/ {R_NO, R_NO, R_HT, R_HT, R_NO, R_AL, R_AL, R_FR, R_DL, R_NO, R_NO, R_DL, R_NM, R_NO, R_DL, R_HT, R_NO, R_DL, R_NO, R_NO, R_FR},
+			/*AMON*/ {R_NO, R_NO, R_DL, R_DL, R_DL, R_NM, R_NO, R_AL, R_AL, R_AL, R_NO, R_NM, R_DL, R_NO, R_DL, R_DL, R_NO, R_NO, R_NO, R_NO, R_HT},
+			/*APRY*/ {R_NO, R_NO, R_DL, R_DL, R_DL, R_NM, R_NO, R_AL, R_AL, R_AL, R_NO, R_NM, R_DL, R_NO, R_DL, R_DL, R_NO, R_NO, R_NO, R_NO, R_HT},
+			/*APRD*/ {R_NO, R_NO, R_DL, R_NM, R_DL, R_NM, R_NO, R_AL, R_AL, R_AL, R_NO, R_DL, R_NM, R_NO, R_DL, R_DL, R_NO, R_NO, R_NO, R_NO, R_HT},
+			/*INSC*/ {R_NO, R_NO, R_NM, R_DL, R_DL, R_DL, R_DL, R_DL, R_DL, R_DL, R_NO, R_DL, R_DL, R_DL, R_DL, R_DL, R_DL, R_DL, R_DL, R_DL, R_HT},
+			/*PALY*/ {R_NO, R_NO, R_HT, R_NM, R_NM, R_HT, R_NO, R_HT, R_NM, R_DL, R_NO, R_AL, R_AL, R_AL, R_AL, R_AL, R_NO, R_NO, R_NO, R_NO, R_AL},
+			/*PBWP*/ {R_NO, R_NO, R_HT, R_NM, R_NM, R_HT, R_DL, R_DL, R_HT, R_NM, R_NO, R_AL, R_AL, R_AL, R_AL, R_AL, R_NO, R_NO, R_NO, R_NO, R_AL},
+			/*ABWP*/ {R_NO, R_NO, R_HT, R_NM, R_NM, R_HT, R_DL, R_DL, R_HT, R_NM, R_NO, R_AL, R_AL, R_AL, R_AL, R_AL, R_NO, R_NO, R_NO, R_NO, R_AL},
+			/*VEHI*/ {R_NO, R_NO, R_DL, R_DL, R_DL, R_NM, R_NO, R_DL, R_DL, R_DL, R_NO, R_AL, R_AL, R_AL, R_AL, R_DL, R_NO, R_NO, R_NO, R_NO, R_DL},
+			/*RAPT*/ {R_NO, R_NO, R_DL, R_NM, R_NM, R_DL, R_NO, R_DL, R_DL, R_DL, R_NO, R_AL, R_AL, R_AL, R_DL, R_AL, R_DL, R_NO, R_NO, R_NO, R_DL},
+			/*C16 */ {R_NO, R_NO, R_DL, R_DL, R_DL, R_DL, R_NO, R_DL, R_DL, R_DL, R_NO, R_AL, R_AL, R_AL, R_AL, R_DL, R_AL, R_DL, R_NO, R_NO, R_DL},
+			/*CRIC*/ {R_NO, R_NO, R_FR, R_FR, R_DL, R_DL, R_FR, R_FR, R_FR, R_FR, R_NO, R_FR, R_FR, R_FR, R_FR, R_FR, R_FR, R_FR, R_FR, R_FR, R_FR},
+			/*C18 */ {R_NO, R_DL, R_DL, R_DL, R_DL, R_DL, R_DL, R_DL, R_DL, R_NM, R_NO, R_DL, R_DL, R_DL, R_DL, R_NM, R_NO, R_DL, R_DL, R_NO, R_DL},
+			/*C19 */ {R_NO, R_NO, R_DL, R_NM, R_DL, R_DL, R_NO, R_DL, R_DL, R_NM, R_NO, R_AL, R_AL, R_AL, R_DL, R_NM, R_NO, R_NO, R_DL, R_NO, R_NO},
+			/*BOSS*/ {R_NO, R_NO, R_DL, R_NM, R_FR, R_FR, R_FR, R_DL, R_DL, R_NM, R_NO, R_FR, R_FR, R_FR, R_DL, R_NM, R_NO, R_NO, R_DL, R_NO, R_AL}};
 
-	return iEnemy[Classify()][pTarget->Classify()];
+	int iMyClass = Classify();
+	int iTargetClass = pTarget->Classify();
+
+	// CLASS_BARNACLE (99, xen.cpp) liegt bewusst ausserhalb dieser 21x21-
+	// Tabelle - dieselbe Out-of-Range-Eigenart existiert bereits im
+	// unveraenderten Stock-SDK (CBarnacle ueberschreibt IRelationship dort
+	// nicht) und wird hier defensiv statt per Undefined-Behavior-Read
+	// abgefangen; kein bekannter Gunman-Map-Einsatz von monster_barnacle.
+	if (iMyClass < 0 || iMyClass >= 21 || iTargetClass < 0 || iTargetClass >= 21)
+		return R_NO;
+
+	return iEnemy[iMyClass][iTargetClass];
 }
 
 //=========================================================
@@ -3274,7 +3389,8 @@ void CBaseMonster::MonsterInitDead()
 	// Setup health counters, etc.
 	BecomeDead();
 	SetThink(&CBaseMonster::CorpseFallThink);
-	pev->nextthink = gpGlobals->time + 0.5;
+	// Retail MonsterInitDead (0x1002d710, shared base): CorpseFallThink after 0.1 s.
+	pev->nextthink = gpGlobals->time + 0.1;
 }
 
 //=========================================================

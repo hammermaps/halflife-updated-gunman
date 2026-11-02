@@ -32,6 +32,7 @@ bool CHudBattery::Init()
 	m_iBat = 0;
 	m_fFade = 0;
 	m_iFlags = 0;
+	m_pCvarSmallHud = gEngfuncs.pfnGetCvarPointer("hud_smallhud");
 
 	HOOK_MESSAGE(Battery);
 
@@ -51,6 +52,7 @@ bool CHudBattery::VidInit()
 	m_prc2 = &gHUD.GetSpriteRect(HUD_suit_full);
 	m_iHeight = m_prc2->bottom - m_prc1->top;
 	m_fFade = 0;
+	m_HUD_armor_graph = gHUD.GetSpriteIndex("armor_graph");
 	return true;
 }
 
@@ -83,7 +85,11 @@ bool CHudBattery::Draw(float flTime)
 
 	rc.top += m_iHeight * ((float)(100 - (V_min(100, m_iBat))) * 0.01); // battery can go from 0 to 100 so * 0.01 goes from 0 to 1
 
-	UnpackRGB(r, g, b, RGB_YELLOWISH);
+	// Gunman's Life-Support-Gauge look: green instead of stock's yellow
+	// (RE-confirmed, findings/client/client_dll_kickoff.md Nachtrag 8).
+	r = 0;
+	g = 255;
+	b = 0;
 
 	if (!gHUD.HasSuit())
 		return true;
@@ -137,6 +143,18 @@ bool CHudBattery::Draw(float flTime)
 	x += width;
 	y += (int)(gHUD.m_iFontHeight * 0.2f);
 	x = gHUD.DrawHudNumber(x, y, DHN_3DIGITS | DHN_DRAWZERO, m_iBat, r, g, b);
+
+	// Two-layout system (RE-confirmed, no stock SDK equivalent): the "large"
+	// HUD variant adds a bar-graph sprite next to the numeric readout.
+	bool bLargeHud = ScreenWidth >= 641 && (m_pCvarSmallHud == nullptr || m_pCvarSmallHud->value == 0);
+	if (bLargeHud && m_HUD_armor_graph >= 0)
+	{
+		int rWhite, gWhite, bWhite;
+		UnpackRGB(rWhite, gWhite, bWhite, 0x00FFFFFF);
+		ScaleColors(rWhite, gWhite, bWhite, a);
+		SPR_Set(gHUD.GetSprite(m_HUD_armor_graph), rWhite, gWhite, bWhite);
+		SPR_DrawAdditive(0, x, y - iOffset, &gHUD.GetSpriteRect(m_HUD_armor_graph));
+	}
 
 	return true;
 }

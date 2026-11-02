@@ -138,7 +138,7 @@ void CGMan::Spawn()
 //=========================================================
 void CGMan::Precache()
 {
-	PRECACHE_MODEL("models/gman.mdl");
+	PrecacheModel("models/gman.mdl");
 }
 
 

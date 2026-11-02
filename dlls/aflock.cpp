@@ -160,8 +160,8 @@ void CFlockingFlyerFlock::Spawn()
 //=========================================================
 void CFlockingFlyerFlock::Precache()
 {
-	//PRECACHE_MODEL("models/aflock.mdl");
-	PRECACHE_MODEL("models/boid.mdl");
+	//PrecacheModel("models/aflock.mdl");
+	PrecacheModel("models/boid.mdl");
 
 	PrecacheFlockSounds();
 }
@@ -169,11 +169,11 @@ void CFlockingFlyerFlock::Precache()
 
 void CFlockingFlyerFlock::PrecacheFlockSounds()
 {
-	PRECACHE_SOUND("boid/boid_alert1.wav");
-	PRECACHE_SOUND("boid/boid_alert2.wav");
+	PrecacheSound("boid/boid_alert1.wav");
+	PrecacheSound("boid/boid_alert2.wav");
 
-	PRECACHE_SOUND("boid/boid_idle1.wav");
-	PRECACHE_SOUND("boid/boid_idle2.wav");
+	PrecacheSound("boid/boid_idle1.wav");
+	PrecacheSound("boid/boid_idle2.wav");
 }
 
 //=========================================================
@@ -239,8 +239,8 @@ void CFlockingFlyer::Spawn()
 //=========================================================
 void CFlockingFlyer::Precache()
 {
-	//PRECACHE_MODEL("models/aflock.mdl");
-	PRECACHE_MODEL("models/boid.mdl");
+	//PrecacheModel("models/aflock.mdl");
+	PrecacheModel("models/boid.mdl");
 	CFlockingFlyerFlock::PrecacheFlockSounds();
 }
 

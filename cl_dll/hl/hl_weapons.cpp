@@ -49,23 +49,6 @@ bool g_irunninggausspred = false;
 
 Vector previousorigin;
 
-// HLDM Weapon placeholder entities.
-CGlock g_Glock;
-CCrowbar g_Crowbar;
-CPython g_Python;
-CMP5 g_Mp5;
-CCrossbow g_Crossbow;
-CShotgun g_Shotgun;
-CRpg g_Rpg;
-CGauss g_Gauss;
-CEgon g_Egon;
-CHgun g_HGun;
-CHandGrenade g_HandGren;
-CSatchel g_Satchel;
-CTripmine g_Tripmine;
-CSqueak g_Snark;
-
-
 /*
 ======================
 AlertMessage
@@ -449,21 +432,9 @@ void HUD_InitClientWeapons()
 	// Allocate a slot for the local player
 	HUD_PrepEntity(&player, NULL);
 
-	// Allocate slot(s) for each weapon that we are going to be predicting
-	HUD_PrepEntity(&g_Glock, &player);
-	HUD_PrepEntity(&g_Crowbar, &player);
-	HUD_PrepEntity(&g_Python, &player);
-	HUD_PrepEntity(&g_Mp5, &player);
-	HUD_PrepEntity(&g_Crossbow, &player);
-	HUD_PrepEntity(&g_Shotgun, &player);
-	HUD_PrepEntity(&g_Rpg, &player);
-	HUD_PrepEntity(&g_Gauss, &player);
-	HUD_PrepEntity(&g_Egon, &player);
-	HUD_PrepEntity(&g_HGun, &player);
-	HUD_PrepEntity(&g_HandGren, &player);
-	HUD_PrepEntity(&g_Satchel, &player);
-	HUD_PrepEntity(&g_Tripmine, &player);
-	HUD_PrepEntity(&g_Snark, &player);
+	// Gunman's retail client uses different weapon classes and IDs. Until
+	// those shared classes are reconstructed, keep weapon state server-owned;
+	// instantiating HL placeholders here corrupts Gunman animations and input.
 }
 
 /*
@@ -511,6 +482,10 @@ Run Weapon firing code on client
 */
 void HUD_WeaponsPostThink(local_state_s* from, local_state_s* to, usercmd_t* cmd, double time, unsigned int random_seed)
 {
+#if 0
+	// Stock Half-Life prediction intentionally removed. Gunman's weapon
+	// classes and retail IDs are different; HUD_PostRunCmd leaves their
+	// authoritative state to the server until native prediction is rebuilt.
 	int i;
 	int buttonsChanged;
 	CBasePlayerWeapon* pWeapon = NULL;
@@ -773,9 +748,6 @@ void HUD_WeaponsPostThink(local_state_s* from, local_state_s* to, usercmd_t* cmd
 	//  over the wire ( fixes some animation glitches )
 	if (g_runfuncs && (HUD_GetWeaponAnim() != to->client.weaponanim))
 	{
-		//Make sure the 357 has the right body
-		g_Python.pev->body = bIsMultiplayer() ? 1 : 0;
-
 		// Force a fixed anim down to viewmodel
 		HUD_SendWeaponAnim(to->client.weaponanim, pWeapon->pev->body, true);
 	}
@@ -885,6 +857,7 @@ void HUD_WeaponsPostThink(local_state_s* from, local_state_s* to, usercmd_t* cmd
 
 	// Wipe it so we can't use it after this frame
 	g_finalstate = NULL;
+#endif
 }
 
 /*
@@ -905,18 +878,9 @@ void DLLEXPORT HUD_PostRunCmd(struct local_state_s* from, struct local_state_s* 
 	g_runfuncs = runfuncs != 0;
 
 	//Event code depends on this stuff, so always initialize it.
-	HUD_InitClientWeapons();
-
-#if defined(CLIENT_WEAPONS)
-	if (cl_lw && 0 != cl_lw->value)
-	{
-		HUD_WeaponsPostThink(from, to, cmd, time, random_seed);
-	}
-	else
-#endif
-	{
-		to->client.fov = g_lastFOV;
-	}
+	// Server-authoritative Gunman weapon path. The old HL prediction table
+	// used unrelated weapon classes/IDs and overwrote valid server animations.
+	to->client.fov = g_lastFOV;
 
 	if (g_irunninggausspred)
 	{

@@ -231,6 +231,18 @@ cvar_t sk_scientist_health1 = {"sk_scientist_health1", "0"};
 cvar_t sk_scientist_health2 = {"sk_scientist_health2", "0"};
 cvar_t sk_scientist_health3 = {"sk_scientist_health3", "0"};
 
+// Nachtrag 2026-09-06 (CVAR_REGISTER-Audit gegen retail gunman.dll
+// String-Dump): "sk_scientist_health<N>" ist Stock-SDK-Ballast, existiert
+// NICHT im retail-Binary. Der echte, retail-verwendete Cvar-Name ist
+// "sk_scientist_h<N>" (bestaetigt: String-Dump + echte Skill.cfg,
+// 45/55/65) - monster_scientist (CScientist, scientist.cpp) hatte dadurch
+// bislang IMMER Health 0, obwohl es mit 24 Platzierungen die
+// meistgenutzte Klasse ist, die noch das alte SDK-Cvar-Muster nutzte.
+// Siehe gamerules.cpp fuer die korrigierte GetSkillCvar-Zeile.
+cvar_t sk_scientist_h1 = {"sk_scientist_h1", "45"};
+cvar_t sk_scientist_h2 = {"sk_scientist_h2", "55"};
+cvar_t sk_scientist_h3 = {"sk_scientist_h3", "65"};
+
 
 // Snark
 cvar_t sk_snark_health1 = {"sk_snark_health1", "0"};
@@ -312,6 +324,11 @@ cvar_t sk_plr_9mmAR_grenade3 = {"sk_plr_9mmAR_grenade3", "0"};
 cvar_t sk_plr_buckshot1 = {"sk_plr_buckshot1", "0"};
 cvar_t sk_plr_buckshot2 = {"sk_plr_buckshot2", "0"};
 cvar_t sk_plr_buckshot3 = {"sk_plr_buckshot3", "0"};
+// Retail Gunman skill.cfg uses this non-player family for the friendly
+// Gunman's shotgun event (three pellets, eight damage each).
+cvar_t sk_buckshot1 = {"sk_buckshot1", "8"};
+cvar_t sk_buckshot2 = {"sk_buckshot2", "8"};
+cvar_t sk_buckshot3 = {"sk_buckshot3", "8"};
 
 
 // Crossbow
@@ -350,6 +367,14 @@ cvar_t sk_plr_egon_wide3 = {"sk_plr_egon_wide3", "0"};
 cvar_t sk_plr_hand_grenade1 = {"sk_plr_hand_grenade1", "0"};
 cvar_t sk_plr_hand_grenade2 = {"sk_plr_hand_grenade2", "0"};
 cvar_t sk_plr_hand_grenade3 = {"sk_plr_hand_grenade3", "0"};
+
+// Gunman melee weapons
+cvar_t sk_onehandpunch_d1 = {"sk_onehandpunch_d1", "10"};
+cvar_t sk_onehandpunch_d2 = {"sk_onehandpunch_d2", "10"};
+cvar_t sk_onehandpunch_d3 = {"sk_onehandpunch_d3", "10"};
+cvar_t sk_knife1_d1 = {"sk_knife1_d1", "35"};
+cvar_t sk_knife1_d2 = {"sk_knife1_d2", "35"};
+cvar_t sk_knife1_d3 = {"sk_knife1_d3", "35"};
 
 
 // Satchel Charge
@@ -409,6 +434,223 @@ cvar_t sk_scientist_heal1 = {"sk_scientist_heal1", "0"};
 cvar_t sk_scientist_heal2 = {"sk_scientist_heal2", "0"};
 cvar_t sk_scientist_heal3 = {"sk_scientist_heal3", "0"};
 
+// Nachtrag 2026-09-06 (RE-Fund via In-Game-Smoke-Test der Cut-Content-
+// Rekonstruktion monster_penta): gSkillData.ouranoHealth/
+// percentRandomHealth/pentaHealth/pentaBiteDamage (gamerules.cpp,
+// RefreshSkillData) lasen seit ihrer Einfuehrung IMMER 0, weil fuer
+// diese Gunman-eigenen Cvars (anders als fuer alle SDK-Stock-Cvars
+// oben) nie ein CVAR_REGISTER(...) existierte - "exec skill.cfg" kann
+// einen noch nie registrierten Cvar-Namen nicht anlegen (nur "Unknown
+// command"-Warnung, Wert geht verloren), siehe GetSkillCVar in
+// skill.cpp. Betraf COurano::Spawn() (Session "Fauna/Cricket") UND
+// CPenta::Spawn() (Cut-Content-Rekonstruktion) UNBEMERKT, bis der
+// erste echte In-Game-Test (map cutcontent_test) beide auf "GetSkillCVar
+// Got a zero" zeigte. Default-Werte hier bewusst identisch zur echten
+// Skill.cfg (siehe mod-src/base/skill.cfg) gesetzt, damit auch ohne
+// erfolgreichen skill.cfg-Exec ein sinnvoller Wert vorliegt.
+cvar_t sk_ourano_h1 = {"sk_ourano_h1", "70"};
+cvar_t sk_ourano_h2 = {"sk_ourano_h2", "70"};
+cvar_t sk_ourano_h3 = {"sk_ourano_h3", "80"};
+cvar_t sk_ourano_d1 = {"sk_ourano_d1", "30"};
+cvar_t sk_ourano_d2 = {"sk_ourano_d2", "35"};
+cvar_t sk_ourano_d3 = {"sk_ourano_d3", "40"};
+
+cvar_t sk_percent_random_h1 = {"sk_percent_random_h1", "6"};
+cvar_t sk_percent_random_h2 = {"sk_percent_random_h2", "12"};
+cvar_t sk_percent_random_h3 = {"sk_percent_random_h3", "18"};
+
+cvar_t sk_penta_h1 = {"sk_penta_h1", "300"};
+cvar_t sk_penta_h2 = {"sk_penta_h2", "400"};
+cvar_t sk_penta_h3 = {"sk_penta_h3", "500"};
+
+cvar_t sk_penta_bite_d1 = {"sk_penta_bite_d1", "30"};
+cvar_t sk_penta_bite_d2 = {"sk_penta_bite_d2", "40"};
+cvar_t sk_penta_bite_d3 = {"sk_penta_bite_d3", "50"};
+
+// monster_maggot: exact defaults from the retail Skill.cfg.
+cvar_t sk_maggot_h1 = {"sk_maggot_h1", "10"};
+cvar_t sk_maggot_h2 = {"sk_maggot_h2", "10"};
+cvar_t sk_maggot_h3 = {"sk_maggot_h3", "10"};
+
+// monster_human_bandit and monster_human_chopper: exact defaults from
+// the retail Skill.cfg and their respective Retail Spawn functions.
+cvar_t sk_bandit_h1 = {"sk_bandit_h1", "100"};
+cvar_t sk_bandit_h2 = {"sk_bandit_h2", "110"};
+cvar_t sk_bandit_h3 = {"sk_bandit_h3", "125"};
+cvar_t sk_bandit_bolt_d1 = {"sk_bandit_bolt_d1", "3"};
+cvar_t sk_bandit_bolt_d2 = {"sk_bandit_bolt_d2", "4"};
+cvar_t sk_bandit_bolt_d3 = {"sk_bandit_bolt_d3", "6"};
+cvar_t sk_bandit_fast_d1 = {"sk_bandit_fast_d1", "3"};
+cvar_t sk_bandit_fast_d2 = {"sk_bandit_fast_d2", "6"};
+cvar_t sk_bandit_fast_d3 = {"sk_bandit_fast_d3", "12"};
+cvar_t sk_gaussshot_d1 = {"sk_gaussshot_d1", "9.5"};
+cvar_t sk_gaussshot_d2 = {"sk_gaussshot_d2", "9.5"};
+cvar_t sk_gaussshot_d3 = {"sk_gaussshot_d3", "8"};
+cvar_t sk_gaussfast_d1 = {"sk_gaussfast_d1", "13"};
+cvar_t sk_gaussfast_d2 = {"sk_gaussfast_d2", "13"};
+cvar_t sk_gaussfast_d3 = {"sk_gaussfast_d3", "10"};
+cvar_t sk_gaussslow_d1 = {"sk_gaussslow_d1", "50"};
+cvar_t sk_gaussslow_d2 = {"sk_gaussslow_d2", "50"};
+cvar_t sk_gaussslow_d3 = {"sk_gaussslow_d3", "50"};
+cvar_t sk_chopper_h1 = {"sk_chopper_h1", "200"};
+cvar_t sk_chopper_h2 = {"sk_chopper_h2", "250"};
+cvar_t sk_chopper_h3 = {"sk_chopper_h3", "300"};
+cvar_t sk_demoman_h1 = {"sk_demoman_h1", "125"};
+cvar_t sk_demoman_h2 = {"sk_demoman_h2", "135"};
+cvar_t sk_demoman_h3 = {"sk_demoman_h3", "145"};
+cvar_t sk_human_kick_d1 = {"sk_human_kick_d1", "20"};
+cvar_t sk_human_kick_d2 = {"sk_human_kick_d2", "20"};
+cvar_t sk_human_kick_d3 = {"sk_human_kick_d3", "20"};
+cvar_t sk_gren_speed1 = {"sk_gren_speed1", "50"};
+cvar_t sk_gren_speed2 = {"sk_gren_speed2", "75"};
+cvar_t sk_gren_speed3 = {"sk_gren_speed3", "100"};
+cvar_t sk_bandit_limp_h1 = {"sk_bandit_limp_h1", "40"};
+cvar_t sk_bandit_limp_h2 = {"sk_bandit_limp_h2", "30"};
+cvar_t sk_bandit_limp_h3 = {"sk_bandit_limp_h3", "20"};
+cvar_t sk_bandit_melee_d1 = {"sk_bandit_melee_d1", "5"};
+cvar_t sk_bandit_melee_d2 = {"sk_bandit_melee_d2", "7"};
+cvar_t sk_bandit_melee_d3 = {"sk_bandit_melee_d3", "11"};
+cvar_t sk_bandit_mech_d1 = {"sk_bandit_mech_d1", "6"};
+cvar_t sk_bandit_mech_d2 = {"sk_bandit_mech_d2", "8"};
+cvar_t sk_bandit_mech_d3 = {"sk_bandit_mech_d3", "12"};
+cvar_t sk_smlscorp_sting_d1 = {"sk_smlscorp_sting_d1", "1"};
+cvar_t sk_smlscorp_sting_d2 = {"sk_smlscorp_sting_d2", "2"};
+cvar_t sk_smlscorp_sting_d3 = {"sk_smlscorp_sting_d3", "3"};
+cvar_t sk_maggot_d1 = {"sk_maggot_d1", "3"};
+cvar_t sk_maggot_d2 = {"sk_maggot_d2", "6"};
+cvar_t sk_maggot_d3 = {"sk_maggot_d3", "12"};
+cvar_t sk_chemgun_d1 = {"sk_chemgun_d1", "85"};
+cvar_t sk_chemgun_d2 = {"sk_chemgun_d2", "85"};
+cvar_t sk_chemgun_d3 = {"sk_chemgun_d3", "85"};
+cvar_t sk_hand_grenade_d1 = {"sk_hand_grenade_d1", "90"};
+cvar_t sk_hand_grenade_d2 = {"sk_hand_grenade_d2", "90"};
+cvar_t sk_hand_grenade_d3 = {"sk_hand_grenade_d3", "90"};
+cvar_t sk_twohandpunch_d1 = {"sk_twohandpunch_d1", "10"};
+cvar_t sk_twohandpunch_d2 = {"sk_twohandpunch_d2", "10"};
+cvar_t sk_twohandpunch_d3 = {"sk_twohandpunch_d3", "10"};
+cvar_t sk_armorsuit1 = {"sk_armorsuit1", "100"};
+cvar_t sk_armorsuit2 = {"sk_armorsuit2", "100"};
+cvar_t sk_armorsuit3 = {"sk_armorsuit3", "100"};
+cvar_t sk_demoman_limp_h1 = {"sk_demoman_limp_h1", "40"};
+cvar_t sk_demoman_limp_h2 = {"sk_demoman_limp_h2", "20"};
+cvar_t sk_demoman_limp_h3 = {"sk_demoman_limp_h3", "15"};
+cvar_t sk_demoman_sg_d1 = {"sk_demoman_sg_d1", "3"};
+cvar_t sk_demoman_sg_d2 = {"sk_demoman_sg_d2", "6"};
+cvar_t sk_demoman_sg_d3 = {"sk_demoman_sg_d3", "9"};
+cvar_t sk_demoman_rocket_d1 = {"sk_demoman_rocket_d1", "50"};
+cvar_t sk_demoman_rocket_d2 = {"sk_demoman_rocket_d2", "70"};
+cvar_t sk_demoman_rocket_d3 = {"sk_demoman_rocket_d3", "90"};
+cvar_t sk_mine_d1 = {"sk_mine_d1", "75"};
+cvar_t sk_mine_d2 = {"sk_mine_d2", "75"};
+cvar_t sk_mine_d3 = {"sk_mine_d3", "75"};
+cvar_t sk_dml_rocket_d1 = {"sk_dml_rocket_d1", "100"};
+cvar_t sk_dml_rocket_d2 = {"sk_dml_rocket_d2", "100"};
+cvar_t sk_dml_rocket_d3 = {"sk_dml_rocket_d3", "100"};
+
+// monster_critter: exact defaults from the retail Skill.cfg.
+cvar_t sk_critter_h1 = {"sk_critter_h1", "75"};
+cvar_t sk_critter_h2 = {"sk_critter_h2", "100"};
+cvar_t sk_critter_h3 = {"sk_critter_h3", "120"};
+cvar_t sk_critter_spit_d1 = {"sk_critter_spit_d1", "8"};
+cvar_t sk_critter_spit_d2 = {"sk_critter_spit_d2", "12"};
+cvar_t sk_critter_spit_d3 = {"sk_critter_spit_d3", "16"};
+cvar_t sk_critter_melee1_d1 = {"sk_critter_melee1_d1", "12"};
+cvar_t sk_critter_melee1_d2 = {"sk_critter_melee1_d2", "16"};
+cvar_t sk_critter_melee1_d3 = {"sk_critter_melee1_d3", "27"};
+
+// monster_tube: exact defaults from the retail Skill.cfg.
+cvar_t sk_tube_h1 = {"sk_tube_h1", "30"};
+cvar_t sk_tube_h2 = {"sk_tube_h2", "45"};
+cvar_t sk_tube_h3 = {"sk_tube_h3", "60"};
+
+// monster_gator: exact defaults from the retail Skill.cfg.
+cvar_t sk_gator_h1 = {"sk_gator_h1", "40"};
+cvar_t sk_gator_h2 = {"sk_gator_h2", "50"};
+cvar_t sk_gator_h3 = {"sk_gator_h3", "60"};
+cvar_t sk_gator_bite_d1 = {"sk_gator_bite_d1", "3"};
+cvar_t sk_gator_bite_d2 = {"sk_gator_bite_d2", "6"};
+cvar_t sk_gator_bite_d3 = {"sk_gator_bite_d3", "12"};
+
+// Maya fauna: exact defaults from the retail Skill.cfg.
+cvar_t sk_raptor_h1 = {"sk_raptor_h1", "75"};
+cvar_t sk_raptor_h2 = {"sk_raptor_h2", "90"};
+cvar_t sk_raptor_h3 = {"sk_raptor_h3", "110"};
+cvar_t sk_raptor_bite_d1 = {"sk_raptor_bite_d1", "5"};
+cvar_t sk_raptor_bite_d2 = {"sk_raptor_bite_d2", "7"};
+cvar_t sk_raptor_bite_d3 = {"sk_raptor_bite_d3", "15"};
+cvar_t sk_raptor_jump_d1 = {"sk_raptor_jump_d1", "5"};
+cvar_t sk_raptor_jump_d2 = {"sk_raptor_jump_d2", "7"};
+cvar_t sk_raptor_jump_d3 = {"sk_raptor_jump_d3", "17"};
+cvar_t sk_smlscorp_h1 = {"sk_smlscorp_h1", "3"};
+cvar_t sk_smlscorp_h2 = {"sk_smlscorp_h2", "5"};
+cvar_t sk_smlscorp_h3 = {"sk_smlscorp_h3", "7"};
+cvar_t sk_smlscorp_claw_d1 = {"sk_smlscorp_claw_d1", "1"};
+cvar_t sk_smlscorp_claw_d2 = {"sk_smlscorp_claw_d2", "2"};
+cvar_t sk_smlscorp_claw_d3 = {"sk_smlscorp_claw_d3", "4"};
+cvar_t sk_lrgscorp_h1 = {"sk_lrgscorp_h1", "45"};
+cvar_t sk_lrgscorp_h2 = {"sk_lrgscorp_h2", "55"};
+cvar_t sk_lrgscorp_h3 = {"sk_lrgscorp_h3", "65"};
+cvar_t sk_lrgscorp_claw_d1 = {"sk_lrgscorp_claw_d1", "5"};
+cvar_t sk_lrgscorp_claw_d2 = {"sk_lrgscorp_claw_d2", "10"};
+cvar_t sk_lrgscorp_claw_d3 = {"sk_lrgscorp_claw_d3", "15"};
+cvar_t sk_lrgscorp_sting_d1 = {"sk_lrgscorp_sting_d1", "7"};
+cvar_t sk_lrgscorp_sting_d2 = {"sk_lrgscorp_sting_d2", "14"};
+cvar_t sk_lrgscorp_sting_d3 = {"sk_lrgscorp_sting_d3", "20"};
+cvar_t sk_rustbit_h1 = {"sk_rustbit_h1", "30"};
+cvar_t sk_rustbit_h2 = {"sk_rustbit_h2", "40"};
+cvar_t sk_rustbit_h3 = {"sk_rustbit_h3", "55"};
+cvar_t sk_rustbit_shot_d1 = {"sk_rustbit_shot_d1", "5"};
+cvar_t sk_rustbit_shot_d2 = {"sk_rustbit_shot_d2", "7"};
+cvar_t sk_rustbit_shot_d3 = {"sk_rustbit_shot_d3", "9"};
+cvar_t sk_rustbit_claw_d1 = {"sk_rustbit_claw_d1", "20"};
+cvar_t sk_rustbit_claw_d2 = {"sk_rustbit_claw_d2", "25"};
+cvar_t sk_rustbit_claw_d3 = {"sk_rustbit_claw_d3", "35"};
+cvar_t sk_rustbot_h1 = {"sk_rustbot_h1", "60"};
+cvar_t sk_rustbot_h2 = {"sk_rustbot_h2", "75"};
+cvar_t sk_rustbot_h3 = {"sk_rustbot_h3", "120"};
+cvar_t sk_rustbot_melee_d1 = {"sk_rustbot_melee_d1", "50"};
+cvar_t sk_rustbot_melee_d2 = {"sk_rustbot_melee_d2", "65"};
+cvar_t sk_rustbot_melee_d3 = {"sk_rustbot_melee_d3", "80"};
+cvar_t sk_rustbot_long_d1 = {"sk_rustbot_long_d1", "3"};
+cvar_t sk_rustbot_long_d2 = {"sk_rustbot_long_d2", "4"};
+cvar_t sk_rustbot_long_d3 = {"sk_rustbot_long_d3", "6"};
+cvar_t sk_rustgunner_h1 = {"sk_rustgunner_h1", "400"};
+cvar_t sk_rustgunner_h2 = {"sk_rustgunner_h2", "500"};
+cvar_t sk_rustgunner_h3 = {"sk_rustgunner_h3", "700"};
+cvar_t sk_rustgunner_r_d1 = {"sk_rustgunner_r_d1", "35"};
+cvar_t sk_rustgunner_r_d2 = {"sk_rustgunner_r_d2", "50"};
+cvar_t sk_rustgunner_r_d3 = {"sk_rustgunner_r_d3", "60"};
+cvar_t sk_rustgunner_mr_d1 = {"sk_rustgunner_mr_d1", "10"};
+cvar_t sk_rustgunner_mr_d2 = {"sk_rustgunner_mr_d2", "20"};
+cvar_t sk_rustgunner_mr_d3 = {"sk_rustgunner_mr_d3", "35"};
+// monster_beak: exact defaults from the retail Skill.cfg.
+cvar_t sk_beak_h1 = {"sk_beak_h1", "30"};
+cvar_t sk_beak_h2 = {"sk_beak_h2", "40"};
+cvar_t sk_beak_h3 = {"sk_beak_h3", "50"};
+cvar_t sk_beak_bite_d1 = {"sk_beak_bite_d1", "4"};
+cvar_t sk_beak_bite_d2 = {"sk_beak_bite_d2", "7"};
+cvar_t sk_beak_bite_d3 = {"sk_beak_bite_d3", "14"};
+cvar_t sk_beak_scrape_d1 = {"sk_beak_scrape_d1", "6"};
+cvar_t sk_beak_scrape_d2 = {"sk_beak_scrape_d2", "7"};
+cvar_t sk_beak_scrape_d3 = {"sk_beak_scrape_d3", "11"};
+// monster_hatchetfish: exact defaults from the retail Skill.cfg.
+cvar_t sk_hatchetfish_h1 = {"sk_hatchetfish_h1", "6"};
+cvar_t sk_hatchetfish_h2 = {"sk_hatchetfish_h2", "6"};
+cvar_t sk_hatchetfish_h3 = {"sk_hatchetfish_h3", "6"};
+cvar_t sk_hatchetfish_d1 = {"sk_hatchetfish_d1", "2"};
+cvar_t sk_hatchetfish_d2 = {"sk_hatchetfish_d2", "2"};
+cvar_t sk_hatchetfish_d3 = {"sk_hatchetfish_d3", "2"};
+// monster_xenome: exact defaults from the retail Skill.cfg.
+cvar_t sk_xenome_h1 = {"sk_xenome_h1", "60"};
+cvar_t sk_xenome_h2 = {"sk_xenome_h2", "90"};
+cvar_t sk_xenome_h3 = {"sk_xenome_h3", "120"};
+cvar_t sk_xenomemelee_d1 = {"sk_xenomemelee_d1", "5"};
+cvar_t sk_xenomemelee_d2 = {"sk_xenomemelee_d2", "11"};
+cvar_t sk_xenomemelee_d3 = {"sk_xenomemelee_d3", "17"};
+cvar_t sk_xenomedart_d1 = {"sk_xenomedart_d1", "3"};
+cvar_t sk_xenomedart_d2 = {"sk_xenomedart_d2", "7"};
+cvar_t sk_xenomedart_d3 = {"sk_xenomedart_d3", "12"};
+
 
 // monster damage adjusters
 cvar_t sk_monster_head1 = {"sk_monster_head1", "2"};
@@ -462,13 +704,6 @@ static bool SV_InitServer()
 {
 	if (!FileSystem_LoadFileSystem())
 	{
-		return false;
-	}
-
-	if (UTIL_IsValveGameDirectory())
-	{
-		g_engfuncs.pfnServerPrint("This mod has detected that it is being run from a Valve game directory which is not supported\n"
-			"Run this mod from its intended location\n\nThe game will now shut down\n");
 		return false;
 	}
 
@@ -707,6 +942,11 @@ void GameDLLInit()
 	CVAR_REGISTER(&sk_scientist_health1); // {"sk_scientist_health1","0"};
 	CVAR_REGISTER(&sk_scientist_health2); // {"sk_scientist_health2","0"};
 	CVAR_REGISTER(&sk_scientist_health3); // {"sk_scientist_health3","0"};
+	// Nachtrag 2026-09-06: siehe Deklarations-Kommentar oben - der echte
+	// retail-verwendete Cvar fuer monster_scientist.
+	CVAR_REGISTER(&sk_scientist_h1);
+	CVAR_REGISTER(&sk_scientist_h2);
+	CVAR_REGISTER(&sk_scientist_h3);
 
 
 	// Snark
@@ -789,6 +1029,9 @@ void GameDLLInit()
 	CVAR_REGISTER(&sk_plr_buckshot1); // {"sk_plr_buckshot1","0"};
 	CVAR_REGISTER(&sk_plr_buckshot2); // {"sk_plr_buckshot2","0"};
 	CVAR_REGISTER(&sk_plr_buckshot3); // {"sk_plr_buckshot3","0"};
+	CVAR_REGISTER(&sk_buckshot1);
+	CVAR_REGISTER(&sk_buckshot2);
+	CVAR_REGISTER(&sk_buckshot3);
 
 
 	// Crossbow
@@ -827,6 +1070,12 @@ void GameDLLInit()
 	CVAR_REGISTER(&sk_plr_hand_grenade1); // {"sk_plr_hand_grenade1","0"};
 	CVAR_REGISTER(&sk_plr_hand_grenade2); // {"sk_plr_hand_grenade2","0"};
 	CVAR_REGISTER(&sk_plr_hand_grenade3); // {"sk_plr_hand_grenade3","0"};
+	CVAR_REGISTER(&sk_onehandpunch_d1);
+	CVAR_REGISTER(&sk_onehandpunch_d2);
+	CVAR_REGISTER(&sk_onehandpunch_d3);
+	CVAR_REGISTER(&sk_knife1_d1);
+	CVAR_REGISTER(&sk_knife1_d2);
+	CVAR_REGISTER(&sk_knife1_d3);
 
 
 	// Satchel Charge
@@ -885,6 +1134,202 @@ void GameDLLInit()
 	CVAR_REGISTER(&sk_scientist_heal1);
 	CVAR_REGISTER(&sk_scientist_heal2);
 	CVAR_REGISTER(&sk_scientist_heal3);
+
+	// Nachtrag 2026-09-06: siehe Deklarations-Kommentar oben - ohne
+	// diese Registrierung liest gSkillData.ouranoHealth/
+	// percentRandomHealth/pentaHealth/pentaBiteDamage immer 0.
+	CVAR_REGISTER(&sk_ourano_h1);
+	CVAR_REGISTER(&sk_ourano_h2);
+	CVAR_REGISTER(&sk_ourano_h3);
+	CVAR_REGISTER(&sk_ourano_d1);
+	CVAR_REGISTER(&sk_ourano_d2);
+	CVAR_REGISTER(&sk_ourano_d3);
+
+	CVAR_REGISTER(&sk_percent_random_h1);
+	CVAR_REGISTER(&sk_percent_random_h2);
+	CVAR_REGISTER(&sk_percent_random_h3);
+
+	CVAR_REGISTER(&sk_penta_h1);
+	CVAR_REGISTER(&sk_penta_h2);
+	CVAR_REGISTER(&sk_penta_h3);
+
+	CVAR_REGISTER(&sk_penta_bite_d1);
+	CVAR_REGISTER(&sk_penta_bite_d2);
+	CVAR_REGISTER(&sk_penta_bite_d3);
+
+	CVAR_REGISTER(&sk_maggot_h1);
+	CVAR_REGISTER(&sk_maggot_h2);
+	CVAR_REGISTER(&sk_maggot_h3);
+
+	CVAR_REGISTER(&sk_bandit_h1);
+	CVAR_REGISTER(&sk_bandit_h2);
+	CVAR_REGISTER(&sk_bandit_h3);
+	CVAR_REGISTER(&sk_bandit_bolt_d1);
+	CVAR_REGISTER(&sk_bandit_bolt_d2);
+	CVAR_REGISTER(&sk_bandit_bolt_d3);
+	CVAR_REGISTER(&sk_bandit_fast_d1);
+	CVAR_REGISTER(&sk_bandit_fast_d2);
+	CVAR_REGISTER(&sk_bandit_fast_d3);
+	CVAR_REGISTER(&sk_gaussshot_d1);
+	CVAR_REGISTER(&sk_gaussshot_d2);
+	CVAR_REGISTER(&sk_gaussshot_d3);
+	CVAR_REGISTER(&sk_gaussfast_d1);
+	CVAR_REGISTER(&sk_gaussfast_d2);
+	CVAR_REGISTER(&sk_gaussfast_d3);
+	CVAR_REGISTER(&sk_gaussslow_d1);
+	CVAR_REGISTER(&sk_gaussslow_d2);
+	CVAR_REGISTER(&sk_gaussslow_d3);
+	CVAR_REGISTER(&sk_chopper_h1);
+	CVAR_REGISTER(&sk_chopper_h2);
+	CVAR_REGISTER(&sk_chopper_h3);
+	CVAR_REGISTER(&sk_demoman_h1);
+	CVAR_REGISTER(&sk_demoman_h2);
+	CVAR_REGISTER(&sk_demoman_h3);
+	CVAR_REGISTER(&sk_human_kick_d1);
+	CVAR_REGISTER(&sk_human_kick_d2);
+	CVAR_REGISTER(&sk_human_kick_d3);
+	CVAR_REGISTER(&sk_gren_speed1);
+	CVAR_REGISTER(&sk_gren_speed2);
+	CVAR_REGISTER(&sk_gren_speed3);
+	CVAR_REGISTER(&sk_bandit_limp_h1);
+	CVAR_REGISTER(&sk_bandit_limp_h2);
+	CVAR_REGISTER(&sk_bandit_limp_h3);
+	CVAR_REGISTER(&sk_bandit_melee_d1);
+	CVAR_REGISTER(&sk_bandit_melee_d2);
+	CVAR_REGISTER(&sk_bandit_melee_d3);
+	CVAR_REGISTER(&sk_bandit_mech_d1);
+	CVAR_REGISTER(&sk_bandit_mech_d2);
+	CVAR_REGISTER(&sk_bandit_mech_d3);
+	CVAR_REGISTER(&sk_smlscorp_sting_d1);
+	CVAR_REGISTER(&sk_smlscorp_sting_d2);
+	CVAR_REGISTER(&sk_smlscorp_sting_d3);
+	CVAR_REGISTER(&sk_maggot_d1);
+	CVAR_REGISTER(&sk_maggot_d2);
+	CVAR_REGISTER(&sk_maggot_d3);
+	CVAR_REGISTER(&sk_chemgun_d1);
+	CVAR_REGISTER(&sk_chemgun_d2);
+	CVAR_REGISTER(&sk_chemgun_d3);
+	CVAR_REGISTER(&sk_hand_grenade_d1);
+	CVAR_REGISTER(&sk_hand_grenade_d2);
+	CVAR_REGISTER(&sk_hand_grenade_d3);
+	CVAR_REGISTER(&sk_twohandpunch_d1);
+	CVAR_REGISTER(&sk_twohandpunch_d2);
+	CVAR_REGISTER(&sk_twohandpunch_d3);
+	CVAR_REGISTER(&sk_armorsuit1);
+	CVAR_REGISTER(&sk_armorsuit2);
+	CVAR_REGISTER(&sk_armorsuit3);
+	CVAR_REGISTER(&sk_demoman_limp_h1);
+	CVAR_REGISTER(&sk_demoman_limp_h2);
+	CVAR_REGISTER(&sk_demoman_limp_h3);
+	CVAR_REGISTER(&sk_demoman_sg_d1);
+	CVAR_REGISTER(&sk_demoman_sg_d2);
+	CVAR_REGISTER(&sk_demoman_sg_d3);
+	CVAR_REGISTER(&sk_demoman_rocket_d1);
+	CVAR_REGISTER(&sk_demoman_rocket_d2);
+	CVAR_REGISTER(&sk_demoman_rocket_d3);
+	CVAR_REGISTER(&sk_mine_d1);
+	CVAR_REGISTER(&sk_mine_d2);
+	CVAR_REGISTER(&sk_mine_d3);
+	CVAR_REGISTER(&sk_dml_rocket_d1);
+	CVAR_REGISTER(&sk_dml_rocket_d2);
+	CVAR_REGISTER(&sk_dml_rocket_d3);
+
+	CVAR_REGISTER(&sk_critter_h1);
+	CVAR_REGISTER(&sk_critter_h2);
+	CVAR_REGISTER(&sk_critter_h3);
+	CVAR_REGISTER(&sk_critter_spit_d1);
+	CVAR_REGISTER(&sk_critter_spit_d2);
+	CVAR_REGISTER(&sk_critter_spit_d3);
+	CVAR_REGISTER(&sk_critter_melee1_d1);
+	CVAR_REGISTER(&sk_critter_melee1_d2);
+	CVAR_REGISTER(&sk_critter_melee1_d3);
+
+	CVAR_REGISTER(&sk_tube_h1);
+	CVAR_REGISTER(&sk_tube_h2);
+	CVAR_REGISTER(&sk_tube_h3);
+
+	CVAR_REGISTER(&sk_gator_h1);
+	CVAR_REGISTER(&sk_gator_h2);
+	CVAR_REGISTER(&sk_gator_h3);
+	CVAR_REGISTER(&sk_gator_bite_d1);
+	CVAR_REGISTER(&sk_gator_bite_d2);
+	CVAR_REGISTER(&sk_gator_bite_d3);
+
+	CVAR_REGISTER(&sk_raptor_h1);
+	CVAR_REGISTER(&sk_raptor_h2);
+	CVAR_REGISTER(&sk_raptor_h3);
+	CVAR_REGISTER(&sk_raptor_bite_d1);
+	CVAR_REGISTER(&sk_raptor_bite_d2);
+	CVAR_REGISTER(&sk_raptor_bite_d3);
+	CVAR_REGISTER(&sk_raptor_jump_d1);
+	CVAR_REGISTER(&sk_raptor_jump_d2);
+	CVAR_REGISTER(&sk_raptor_jump_d3);
+	CVAR_REGISTER(&sk_smlscorp_h1);
+	CVAR_REGISTER(&sk_smlscorp_h2);
+	CVAR_REGISTER(&sk_smlscorp_h3);
+	CVAR_REGISTER(&sk_smlscorp_claw_d1);
+	CVAR_REGISTER(&sk_smlscorp_claw_d2);
+	CVAR_REGISTER(&sk_smlscorp_claw_d3);
+	CVAR_REGISTER(&sk_lrgscorp_h1);
+	CVAR_REGISTER(&sk_lrgscorp_h2);
+	CVAR_REGISTER(&sk_lrgscorp_h3);
+	CVAR_REGISTER(&sk_lrgscorp_claw_d1);
+	CVAR_REGISTER(&sk_lrgscorp_claw_d2);
+	CVAR_REGISTER(&sk_lrgscorp_claw_d3);
+	CVAR_REGISTER(&sk_lrgscorp_sting_d1);
+	CVAR_REGISTER(&sk_lrgscorp_sting_d2);
+	CVAR_REGISTER(&sk_lrgscorp_sting_d3);
+	CVAR_REGISTER(&sk_rustbit_h1);
+	CVAR_REGISTER(&sk_rustbit_h2);
+	CVAR_REGISTER(&sk_rustbit_h3);
+	CVAR_REGISTER(&sk_rustbit_shot_d1);
+	CVAR_REGISTER(&sk_rustbit_shot_d2);
+	CVAR_REGISTER(&sk_rustbit_shot_d3);
+	CVAR_REGISTER(&sk_rustbit_claw_d1);
+	CVAR_REGISTER(&sk_rustbit_claw_d2);
+	CVAR_REGISTER(&sk_rustbit_claw_d3);
+	CVAR_REGISTER(&sk_rustbot_h1);
+	CVAR_REGISTER(&sk_rustbot_h2);
+	CVAR_REGISTER(&sk_rustbot_h3);
+	CVAR_REGISTER(&sk_rustbot_melee_d1);
+	CVAR_REGISTER(&sk_rustbot_melee_d2);
+	CVAR_REGISTER(&sk_rustbot_melee_d3);
+	CVAR_REGISTER(&sk_rustbot_long_d1);
+	CVAR_REGISTER(&sk_rustbot_long_d2);
+	CVAR_REGISTER(&sk_rustbot_long_d3);
+	CVAR_REGISTER(&sk_rustgunner_h1);
+	CVAR_REGISTER(&sk_rustgunner_h2);
+	CVAR_REGISTER(&sk_rustgunner_h3);
+	CVAR_REGISTER(&sk_rustgunner_r_d1);
+	CVAR_REGISTER(&sk_rustgunner_r_d2);
+	CVAR_REGISTER(&sk_rustgunner_r_d3);
+	CVAR_REGISTER(&sk_rustgunner_mr_d1);
+	CVAR_REGISTER(&sk_rustgunner_mr_d2);
+	CVAR_REGISTER(&sk_rustgunner_mr_d3);
+	CVAR_REGISTER(&sk_beak_h1);
+	CVAR_REGISTER(&sk_beak_h2);
+	CVAR_REGISTER(&sk_beak_h3);
+	CVAR_REGISTER(&sk_beak_bite_d1);
+	CVAR_REGISTER(&sk_beak_bite_d2);
+	CVAR_REGISTER(&sk_beak_bite_d3);
+	CVAR_REGISTER(&sk_beak_scrape_d1);
+	CVAR_REGISTER(&sk_beak_scrape_d2);
+	CVAR_REGISTER(&sk_beak_scrape_d3);
+	CVAR_REGISTER(&sk_hatchetfish_h1);
+	CVAR_REGISTER(&sk_hatchetfish_h2);
+	CVAR_REGISTER(&sk_hatchetfish_h3);
+	CVAR_REGISTER(&sk_hatchetfish_d1);
+	CVAR_REGISTER(&sk_hatchetfish_d2);
+	CVAR_REGISTER(&sk_hatchetfish_d3);
+	CVAR_REGISTER(&sk_xenome_h1);
+	CVAR_REGISTER(&sk_xenome_h2);
+	CVAR_REGISTER(&sk_xenome_h3);
+	CVAR_REGISTER(&sk_xenomemelee_d1);
+	CVAR_REGISTER(&sk_xenomemelee_d2);
+	CVAR_REGISTER(&sk_xenomemelee_d3);
+	CVAR_REGISTER(&sk_xenomedart_d1);
+	CVAR_REGISTER(&sk_xenomedart_d2);
+	CVAR_REGISTER(&sk_xenomedart_d3);
 
 	// monster damage adjusters
 	CVAR_REGISTER(&sk_monster_head1);

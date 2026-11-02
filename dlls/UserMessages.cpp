@@ -52,6 +52,8 @@ void LinkUserMessages()
 	gmsgServerName = REG_USER_MSG("ServerName", -1);
 	gmsgAmmoPickup = REG_USER_MSG("AmmoPickup", 2);
 	gmsgWeapPickup = REG_USER_MSG("WeapPickup", 1);
+	gmsgSliderX = REG_USER_MSG("SliderX", 2);
+	gmsgZoom = REG_USER_MSG("Zoom", 1);
 	gmsgItemPickup = REG_USER_MSG("ItemPickup", -1);
 	gmsgHideWeapon = REG_USER_MSG("HideWeapon", 1);
 	gmsgSetFOV = REG_USER_MSG("SetFOV", 1);
@@ -59,10 +61,14 @@ void LinkUserMessages()
 	gmsgShake = REG_USER_MSG("ScreenShake", sizeof(ScreenShake));
 	gmsgFade = REG_USER_MSG("ScreenFade", sizeof(ScreenFade));
 	gmsgAmmoX = REG_USER_MSG("AmmoX", 2);
+	gmsgTempX = REG_USER_MSG("TempX", 2);
 	gmsgTeamNames = REG_USER_MSG("TeamNames", -1);
 
 	gmsgStatusText = REG_USER_MSG("StatusText", -1);
 	gmsgStatusValue = REG_USER_MSG("StatusValue", 3);
 
 	gmsgWeapons = REG_USER_MSG("Weapons", 8);
+	gmsgTank = REG_USER_MSG("Tank", 2);
+	gmsgTankBody = REG_USER_MSG("TankBody", 2);
+	gmsgTurretPos = REG_USER_MSG("TurretPos", 2);
 }

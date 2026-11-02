@@ -107,6 +107,25 @@ public:
 	SCRIPTSTATE m_scriptState; // internal cinematic state
 	CCineMonster* m_pCine;
 
+	// Nachtrag 2026-09-06 (Live-Report "gunman haben wieder das gleiche
+	// Animationsproblem", monster_human_gunman/mayan1 "fart1" - eine
+	// SELBST-retriggernde scripted_sequence): CCineMonster::CineCleanup()
+	// setzt m_pCine sofort auf nullptr, aber CCineMonster::Use()
+	// (scripted.cpp) startet eine bereits bekannte Zielentity NICHT sofort
+	// neu, sondern verzoegert immer um 0.05s (m_startTime = gpGlobals->time
+	// + 0.05, Stock-SDK-Code, unveraendert). Das erzeugt bei JEDER
+	// Sequenz-Wiederholung (auch bei einer sich selbst retriggernden
+	// scripted_sequence ohne vom Mapper gesetzte Verzoegerung) eine echte,
+	// kurze Luecke, in der m_pCine bereits null ist, obwohl die Figur
+	// eigentlich noch "im Skript" ist - faellt fuer echte KI-Monster (im
+	// Gegensatz zu reiner Deko wie CFurniture) durch den m_pCine-Guard und
+	// stomped kurz auf Sequenz 0. Von CineCleanup() gesetzt, von
+	// einzelnen SetActivity()-Overrides opt-in genutzt (siehe
+	// CFriendlyGunman) - bewusst NICHT hier automatisch in der Basisklasse
+	// ausgewertet, um echte frei laufende KI (siehe COurano-Regression,
+	// [[feedback-setactivity-guard-per-class-only]]) nicht zu beeinflussen.
+	float m_flCineGraceEnd = 0;
+
 	float m_flLastYawTime;
 
 	bool m_AllowItemDropping = true;
@@ -125,6 +144,7 @@ public:
 	// overrideable Monster member functions
 
 	int BloodColor() override { return m_bloodColor; }
+	void TraceBleed(float flDamage, Vector vecDir, TraceResult* ptr, int bitsDamageType) override;
 
 	CBaseMonster* MyMonsterPointer() override { return this; }
 	virtual void Look(int iDistance); // basic sight function for monsters
@@ -145,6 +165,9 @@ public:
 	virtual void MonsterThink();
 	void EXPORT CallMonsterThink() { this->MonsterThink(); }
 	virtual int IRelationship(CBaseEntity* pTarget);
+	// Retail vtable slot 59: index into the monster profile table that CBaseMonster::MonsterInit
+	// consults (blood color, capabilities, movetype, field of view). 0 = no profile.
+	virtual int MonsterProfile() { return 0; }
 	virtual void MonsterInit();
 	virtual void MonsterInitDead(); // Call after animation/pose is set up
 	virtual void BecomeDead();
@@ -287,7 +310,7 @@ public:
 	bool FShouldEat();				// see if a monster is 'hungry'
 	void Eat(float flFullDuration); // make the monster 'full' for a while.
 
-	CBaseEntity* CheckTraceHullAttack(float flDist, int iDamage, int iDmgType);
+	CBaseEntity* CheckTraceHullAttack(float flDist, int iDamage, int iDmgType, TraceResult* pTrace = nullptr, Vector* pTraceDir = nullptr);
 	bool FacingIdeal();
 
 	bool FCheckAITrigger(); // checks and, if necessary, fires the monster's trigger target.
@@ -312,6 +335,17 @@ public:
 	void CallGibMonster();
 	virtual bool HasHumanGibs();
 	virtual bool HasAlienGibs();
+	// Nachtrag 2026-09-06 (In-Game-Test-Meldung: Rust Gunner wirft
+	// Fleisch-Gibs statt Metallteile): CBaseMonster::GibMonster() rief
+	// bislang immer die generischen Stock-SDK-Gibs (models/hgibs.mdl
+	// bzw. models/agibs.mdl) auf, obwohl viele Klassen laengst ein
+	// eigenes ...gibs.mdl precachen (gunnergibs.mdl, pentagibs.mdl,
+	// battgib.mdl usw.) - dieses wurde nie tatsaechlich verwendet.
+	// Klassen mit eigenem Gib-Modell ueberschreiben diesen Hook; per
+	// Default (nullptr) bleibt das generische SDK-Verhalten unveraendert
+	// (fuer alle Klassen ohne eigenes Gib-Modell, was retail-konform ist
+	// - siehe findings/entities/gib_model_override_2026-09-06.md).
+	virtual const char* CustomGibModel() { return nullptr; }
 	virtual void FadeMonster(); // Called instead of GibMonster() when gibs are disabled
 
 	Vector ShootAtEnemy(const Vector& shootOrigin);

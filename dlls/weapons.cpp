@@ -274,88 +274,65 @@ void W_Precache()
 	UTIL_PrecacheOther("item_security");
 	UTIL_PrecacheOther("item_longjump");
 
-	// shotgun
+	// Gunman player weapons. The stock Half-Life arsenal must not be
+	// registered here: its IDs overlap the retail Gunman weapon table.
+	UTIL_PrecacheOtherWeapon("weapon_fists");
+	UTIL_PrecacheOtherWeapon("weapon_dmlGrenade");
+	UTIL_PrecacheOtherWeapon("weapon_beamgun");
+	UTIL_PrecacheOtherWeapon("weapon_dml");
 	UTIL_PrecacheOtherWeapon("weapon_shotgun");
-	UTIL_PrecacheOther("ammo_buckshot");
-
-	// crowbar
-	UTIL_PrecacheOtherWeapon("weapon_crowbar");
-
-	// glock
-	UTIL_PrecacheOtherWeapon("weapon_9mmhandgun");
-	UTIL_PrecacheOther("ammo_9mmclip");
-
-	// mp5
-	UTIL_PrecacheOtherWeapon("weapon_9mmAR");
-	UTIL_PrecacheOther("ammo_9mmAR");
-	UTIL_PrecacheOther("ammo_ARgrenades");
-
-	// python
-	UTIL_PrecacheOtherWeapon("weapon_357");
-	UTIL_PrecacheOther("ammo_357");
-
-	// gauss
-	UTIL_PrecacheOtherWeapon("weapon_gauss");
-	UTIL_PrecacheOther("ammo_gaussclip");
-
-	// rpg
-	UTIL_PrecacheOtherWeapon("weapon_rpg");
-	UTIL_PrecacheOther("ammo_rpgclip");
-
-	// crossbow
-	UTIL_PrecacheOtherWeapon("weapon_crossbow");
-	UTIL_PrecacheOther("ammo_crossbow");
-
-	// egon
-	UTIL_PrecacheOtherWeapon("weapon_egon");
-
-	// tripmine
-	UTIL_PrecacheOtherWeapon("weapon_tripmine");
-
-	// satchel charge
-	UTIL_PrecacheOtherWeapon("weapon_satchel");
-
-	// hand grenade
-	UTIL_PrecacheOtherWeapon("weapon_handgrenade");
-
-	// squeak grenade
-	UTIL_PrecacheOtherWeapon("weapon_snark");
-
-	// hornetgun
-	UTIL_PrecacheOtherWeapon("weapon_hornetgun");
+	UTIL_PrecacheOtherWeapon("weapon_SPchemicalgun");
+	UTIL_PrecacheOtherWeapon("weapon_minigun");
+	UTIL_PrecacheOtherWeapon("weapon_gausspistol");
+	// Anpassungs-Items (customize_items.cpp)
+	UTIL_PrecacheOtherWeapon("cust_1fistsKnife");
+	UTIL_PrecacheOtherWeapon("cust_1ShotgunSpread");
+	UTIL_PrecacheOtherWeapon("cust_2ShotgunShells");
+	UTIL_PrecacheOtherWeapon("cust_1MinigunSpin");
+	UTIL_PrecacheOtherWeapon("cust_2MinigunCooled");
+	UTIL_PrecacheOtherWeapon("cust_1GaussPistolFireType");
+	UTIL_PrecacheOtherWeapon("cust_2GaussPistolSniper");
+	UTIL_PrecacheOtherWeapon("cust_1BeamFrequency");
+	UTIL_PrecacheOtherWeapon("cust_2BeamCurrent");
+	UTIL_PrecacheOtherWeapon("cust_3BeamVoltage");
+	UTIL_PrecacheOtherWeapon("cust_1SPChemicalGunPressure");
+	UTIL_PrecacheOtherWeapon("cust_2ChemAcid");
+	UTIL_PrecacheOtherWeapon("cust_3ChemBase");
+	UTIL_PrecacheOtherWeapon("cust_4ChemNuet");
+	UTIL_PrecacheOtherWeapon("weapon_aicore");
 
 	if (g_pGameRules->IsDeathmatch())
 	{
 		UTIL_PrecacheOther("weaponbox"); // container for dropped deathmatch weapons
 	}
 
-	g_sModelIndexFireball = PRECACHE_MODEL("sprites/zerogxplode.spr");	// fireball
-	g_sModelIndexWExplosion = PRECACHE_MODEL("sprites/WXplo1.spr");		// underwater fireball
-	g_sModelIndexSmoke = PRECACHE_MODEL("sprites/steam1.spr");			// smoke
-	g_sModelIndexBubbles = PRECACHE_MODEL("sprites/bubble.spr");		//bubbles
-	g_sModelIndexBloodSpray = PRECACHE_MODEL("sprites/bloodspray.spr"); // initial blood
-	g_sModelIndexBloodDrop = PRECACHE_MODEL("sprites/blood.spr");		// splattered blood
+	g_sModelIndexFireball = PrecacheModel("sprites/zerogxplode.spr");	// fireball
+	g_sModelIndexWExplosion = PrecacheModel("sprites/WXplo1.spr");		// underwater fireball
+	g_sModelIndexSmoke = PrecacheModel("sprites/steam1.spr");			// smoke
+	g_sModelIndexBubbles = PrecacheModel("sprites/bubble.spr");		//bubbles
+	g_sModelIndexBloodSpray = PrecacheModel("sprites/bloodspray.spr"); // initial blood
+	g_sModelIndexBloodDrop = PrecacheModel("sprites/blood.spr");		// splattered blood
 
-	g_sModelIndexLaser = PRECACHE_MODEL((char*)g_pModelNameLaser);
-	g_sModelIndexLaserDot = PRECACHE_MODEL("sprites/laserdot.spr");
+	g_sModelIndexLaser = PrecacheModel((char*)g_pModelNameLaser);
+	g_sModelIndexLaserDot = PrecacheModel("sprites/laserdot.spr");
 
 
 	// used by explosions
-	PRECACHE_MODEL("models/grenade.mdl");
-	PRECACHE_MODEL("sprites/explode1.spr");
+	PrecacheModel("models/grenade.mdl");
+	PrecacheModel("sprites/explode1.spr");
 
-	PRECACHE_SOUND("weapons/debris1.wav"); // explosion aftermaths
-	PRECACHE_SOUND("weapons/debris2.wav"); // explosion aftermaths
-	PRECACHE_SOUND("weapons/debris3.wav"); // explosion aftermaths
+	PrecacheSound("weapons/debris1.wav"); // explosion aftermaths
+	PrecacheSound("weapons/debris2.wav"); // explosion aftermaths
+	PrecacheSound("weapons/debris3.wav"); // explosion aftermaths
 
-	PRECACHE_SOUND("weapons/grenade_hit1.wav"); //grenade
-	PRECACHE_SOUND("weapons/grenade_hit2.wav"); //grenade
-	PRECACHE_SOUND("weapons/grenade_hit3.wav"); //grenade
+	PrecacheSound("weapons/grenade_hit1.wav"); //grenade
+	PrecacheSound("weapons/grenade_hit2.wav"); //grenade
+	PrecacheSound("weapons/grenade_hit3.wav"); //grenade
 
-	PRECACHE_SOUND("weapons/bullet_hit1.wav"); // hit by bullet
-	PRECACHE_SOUND("weapons/bullet_hit2.wav"); // hit by bullet
+	PrecacheSound("weapons/bullet_hit1.wav"); // hit by bullet
+	PrecacheSound("weapons/bullet_hit2.wav"); // hit by bullet
 
-	PRECACHE_SOUND("items/weapondrop1.wav"); // weapon falls to the ground
+	PrecacheSound("items/weapondrop1.wav"); // weapon falls to the ground
 }
 
 
@@ -721,7 +698,10 @@ bool CBasePlayerWeapon::UpdateClientData(CBasePlayer* pPlayer)
 
 void CBasePlayerWeapon::SendWeaponAnim(int iAnim, int body)
 {
-	const bool skiplocal = !m_ForceSendAnimations && UseDecrement() != false;
+	// Gunman client-side weapon prediction is intentionally disabled until
+	// its retail weapon classes are reconstructed. Never suppress the local
+	// server message, otherwise the owning player receives no attack animation.
+	const bool skiplocal = false;
 
 	m_pPlayer->pev->weaponanim = iAnim;
 
@@ -732,7 +712,7 @@ void CBasePlayerWeapon::SendWeaponAnim(int iAnim, int body)
 
 	MESSAGE_BEGIN(MSG_ONE, SVC_WEAPONANIM, NULL, m_pPlayer->pev);
 	WRITE_BYTE(iAnim);	   // sequence number
-	WRITE_BYTE(pev->body); // weaponmodel bodygroup.
+	WRITE_BYTE(body); // requested view/weapon model bodygroup
 	MESSAGE_END();
 }
 
@@ -890,6 +870,31 @@ void CBasePlayerAmmo::Spawn()
 	UTIL_SetOrigin(pev, pev->origin);
 
 	SetTouch(&CBasePlayerAmmo::DefaultTouch);
+	SetThink(&CBasePlayerAmmo::GlowThink);
+	pev->nextthink = gpGlobals->time;
+}
+
+void CBasePlayerAmmo::GlowThink()
+{
+	if (pev->effects & EF_NODRAW)
+	{
+		pev->nextthink = 0;
+		return;
+	}
+
+	if (pev->renderfx != kRenderFxGlowShell)
+	{
+		pev->effects |= EF_MUZZLEFLASH;
+		pev->renderfx = kRenderFxGlowShell;
+		pev->renderamt = 30;
+		pev->rendercolor = Vector(0, 100, 50);
+		pev->nextthink = gpGlobals->time + 2.2f;
+	}
+	else
+	{
+		pev->renderfx = kRenderFxNone;
+		pev->nextthink = gpGlobals->time;
+	}
 }
 
 CBaseEntity* CBasePlayerAmmo::Respawn()
@@ -913,6 +918,8 @@ void CBasePlayerAmmo::Materialize()
 		EMIT_SOUND_DYN(ENT(pev), CHAN_WEAPON, "items/suitchargeok1.wav", 1, ATTN_NORM, 0, 150);
 		pev->effects &= ~EF_NODRAW;
 		pev->effects |= EF_MUZZLEFLASH;
+		SetThink(&CBasePlayerAmmo::GlowThink);
+		pev->nextthink = gpGlobals->time;
 	}
 
 	SetTouch(&CBasePlayerAmmo::DefaultTouch);
@@ -1079,7 +1086,7 @@ IMPLEMENT_SAVERESTORE(CWeaponBox, CBaseEntity);
 //=========================================================
 void CWeaponBox::Precache()
 {
-	PRECACHE_MODEL("models/w_weaponbox.mdl");
+	PrecacheModel("models/w_weaponbox.mdl");
 }
 
 //=========================================================
@@ -1401,20 +1408,6 @@ void CBasePlayerWeapon::PrintState()
 }
 
 
-TYPEDESCRIPTION CRpg::m_SaveData[] =
-	{
-		DEFINE_FIELD(CRpg, m_fSpotActive, FIELD_BOOLEAN),
-		DEFINE_FIELD(CRpg, m_cActiveRockets, FIELD_INTEGER),
-};
-IMPLEMENT_SAVERESTORE(CRpg, CBasePlayerWeapon);
-
-TYPEDESCRIPTION CRpgRocket::m_SaveData[] =
-	{
-		DEFINE_FIELD(CRpgRocket, m_flIgniteTime, FIELD_TIME),
-		DEFINE_FIELD(CRpgRocket, m_hLauncher, FIELD_EHANDLE),
-};
-IMPLEMENT_SAVERESTORE(CRpgRocket, CGrenade);
-
 TYPEDESCRIPTION CShotgun::m_SaveData[] =
 	{
 		DEFINE_FIELD(CShotgun, m_flNextReload, FIELD_TIME),
@@ -1424,38 +1417,3 @@ TYPEDESCRIPTION CShotgun::m_SaveData[] =
 		DEFINE_FIELD(CShotgun, m_flPumpTime, FIELD_TIME),
 };
 IMPLEMENT_SAVERESTORE(CShotgun, CBasePlayerWeapon);
-
-TYPEDESCRIPTION CGauss::m_SaveData[] =
-	{
-		DEFINE_FIELD(CGauss, m_fInAttack, FIELD_INTEGER),
-		//	DEFINE_FIELD( CGauss, m_flStartCharge, FIELD_TIME ),
-		//	DEFINE_FIELD( CGauss, m_flPlayAftershock, FIELD_TIME ),
-		//	DEFINE_FIELD( CGauss, m_flNextAmmoBurn, FIELD_TIME ),
-		DEFINE_FIELD(CGauss, m_fPrimaryFire, FIELD_BOOLEAN),
-};
-IMPLEMENT_SAVERESTORE(CGauss, CBasePlayerWeapon);
-
-TYPEDESCRIPTION CEgon::m_SaveData[] =
-	{
-		//	DEFINE_FIELD( CEgon, m_pBeam, FIELD_CLASSPTR ),
-		//	DEFINE_FIELD( CEgon, m_pNoise, FIELD_CLASSPTR ),
-		//	DEFINE_FIELD( CEgon, m_pSprite, FIELD_CLASSPTR ),
-		DEFINE_FIELD(CEgon, m_shootTime, FIELD_TIME),
-		DEFINE_FIELD(CEgon, m_fireState, FIELD_INTEGER),
-		DEFINE_FIELD(CEgon, m_fireMode, FIELD_INTEGER),
-		DEFINE_FIELD(CEgon, m_shakeTime, FIELD_TIME),
-		DEFINE_FIELD(CEgon, m_flAmmoUseTime, FIELD_TIME),
-};
-IMPLEMENT_SAVERESTORE(CEgon, CBasePlayerWeapon);
-
-TYPEDESCRIPTION CHgun::m_SaveData[] =
-	{
-		DEFINE_FIELD(CHgun, m_flRechargeTime, FIELD_TIME),
-};
-IMPLEMENT_SAVERESTORE(CHgun, CBasePlayerWeapon);
-
-TYPEDESCRIPTION CSatchel::m_SaveData[] =
-	{
-		DEFINE_FIELD(CSatchel, m_chargeReady, FIELD_INTEGER),
-};
-IMPLEMENT_SAVERESTORE(CSatchel, CBasePlayerWeapon);

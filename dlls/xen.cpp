@@ -110,8 +110,8 @@ void CXenPLight::Spawn()
 
 void CXenPLight::Precache()
 {
-	PRECACHE_MODEL("models/light.mdl");
-	PRECACHE_MODEL(XEN_PLANT_GLOW_SPRITE);
+	PrecacheModel("models/light.mdl");
+	PrecacheModel(XEN_PLANT_GLOW_SPRITE);
 }
 
 
@@ -221,7 +221,7 @@ void CXenHair::Think()
 
 void CXenHair::Precache()
 {
-	PRECACHE_MODEL("models/hair.mdl");
+	PrecacheModel("models/hair.mdl");
 }
 
 
@@ -333,8 +333,8 @@ const char* CXenTree::pAttackMissSounds[] =
 
 void CXenTree::Precache()
 {
-	PRECACHE_MODEL("models/tree.mdl");
-	PRECACHE_MODEL(XEN_PLANT_GLOW_SPRITE);
+	PrecacheModel("models/tree.mdl");
+	PrecacheModel(XEN_PLANT_GLOW_SPRITE);
 	PRECACHE_SOUND_ARRAY(pAttackHitSounds);
 	PRECACHE_SOUND_ARRAY(pAttackMissSounds);
 }
@@ -561,7 +561,7 @@ const char* CXenSpore::pModelNames[] =
 
 void CXenSpore::Precache()
 {
-	PRECACHE_MODEL((char*)pModelNames[pev->skin]);
+	PrecacheModel((char*)pModelNames[pev->skin]);
 }
 
 

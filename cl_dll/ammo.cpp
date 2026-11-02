@@ -22,6 +22,8 @@
 #include "cl_util.h"
 #include "parsemsg.h"
 #include "pm_shared.h"
+#include "com_model.h"
+#include "triangleapi.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -73,11 +75,7 @@ void WeaponsResource::LoadWeaponSprites(WEAPON* pWeapon)
 {
 	int i, iRes;
 
-	if (ScreenWidth > 2560 && ScreenHeight > 1600)
-		iRes = 2560;
-	else if (ScreenWidth >= 1280 && ScreenHeight > 720)
-		iRes = 1280;
-	else if (ScreenWidth >= 640)
+	if (ScreenWidth >= 640)
 		iRes = 640;
 	else
 		iRes = 320;
@@ -329,11 +327,7 @@ bool CHudAmmo::VidInit()
 
 	int nScale = 1;
 
-	if (ScreenWidth > 2560 && ScreenHeight > 1600)
-		nScale = 4;
-	else if (ScreenWidth >= 1280 && ScreenHeight > 720)
-		nScale = 3;
-	else if (ScreenWidth >= 640)
+	if (ScreenWidth >= 640)
 		nScale = 2;
 
 	giABWidth = 10 * nScale;
@@ -862,6 +856,8 @@ bool CHudAmmo::Draw(float flTime)
 	if ((gHUD.m_iHideHUDDisplay & (HIDEHUD_WEAPONS | HIDEHUD_ALL)) != 0)
 		return true;
 
+	DrawAutoaimTarget();
+
 	// Draw Weapon Menu
 	DrawWList(flTime);
 
@@ -1216,4 +1212,72 @@ client_sprite_t* GetSpriteList(client_sprite_t* pList, const char* psz, int iRes
 	}
 
 	return NULL;
+}
+
+//=========================================================
+// Naeherung (nicht Retail-belegt, siehe findings/client/hud_gap_2026-11-01.md, Schritt 10):
+// Retail sucht das Ziel im Client (FUN_10013540) und zeichnet das Zielvisier-Sprite an dessen Bildposition.
+// Hier: nächstes Studio-Modell im Blickkegel von 10 Grad, Abstand max. 8192; Sprite "autoaim" der
+// aktuellen Waffe an der Bildposition des Ziels. Die Winkelkorrektur der Engine bleibt unveraendert.
+// Kegelwinkel und Auswahl sind Annahmen dieser Umsetzung.
+//=========================================================
+void CHudAmmo::DrawAutoaimTarget()
+{
+	if (!m_pWeapon || 0 == m_pWeapon->hAutoaim)
+		return;
+
+	cl_entity_t* pLocal = gEngfuncs.GetLocalPlayer();
+	if (!pLocal)
+		return;
+
+	float viewAngles[3];
+	gEngfuncs.GetViewAngles(viewAngles);
+	float fwd[3], rgt[3], upv[3];
+	AngleVectors(viewAngles, fwd, rgt, upv);
+	const Vector vecForward(fwd[0], fwd[1], fwd[2]);
+
+	const Vector vecEye(pLocal->origin[0], pLocal->origin[1], pLocal->origin[2]);
+	const float flCosCone = 0.9848f; // cos(10 Grad)
+	float flBest = -1.0f;
+	cl_entity_t* pBest = nullptr;
+	Vector vecBestOrigin;
+
+	for (int i = 1; i < 512; i++)
+	{
+		cl_entity_t* pEnt = gEngfuncs.GetEntityByIndex(i);
+		if (!pEnt || pEnt == pLocal || !pEnt->model || pEnt->model->type != mod_studio)
+			continue;
+
+		const Vector vecOrigin(pEnt->origin[0], pEnt->origin[1], pEnt->origin[2]);
+		Vector vecTo = vecOrigin - vecEye;
+		const float flDist = vecTo.Length();
+		if (flDist < 1.0f || flDist > 8192.0f)
+			continue;
+		const float flDot = DotProduct(vecTo.Normalize(), vecForward);
+		if (flDot < flCosCone)
+			continue;
+		if (flDot > flBest)
+		{
+			flBest = flDot;
+			pBest = pEnt;
+			vecBestOrigin = vecOrigin;
+		}
+	}
+
+	if (!pBest)
+		return;
+
+	float screen[3];
+	const float flWorld[3] = {vecBestOrigin.x, vecBestOrigin.y, vecBestOrigin.z};
+	if (0 != gEngfuncs.pTriAPI->WorldToScreen(const_cast<float*>(flWorld), screen))
+		return;
+
+	const int x = (int)((screen[0] + 1.0f) * 0.5f * ScreenWidth);
+	const int y = (int)((1.0f - screen[1]) * 0.5f * ScreenHeight);
+	const Rect& rc = m_pWeapon->rcAutoaim;
+	const int w = rc.right - rc.left;
+	const int h = rc.bottom - rc.top;
+
+	SPR_Set(m_pWeapon->hAutoaim, 255, 255, 255);
+	SPR_DrawHoles(0, x - w / 2, y - h / 2, &rc);
 }

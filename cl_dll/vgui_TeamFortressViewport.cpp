@@ -522,6 +522,16 @@ TeamFortressViewport::TeamFortressViewport(int x, int y, int wide, int tall) : P
 	m_pCurrentMenu = NULL;
 	m_pCurrentCommandMenu = NULL;
 
+	// Retail client.dll 0x10049860: the life-support casing is a VGUI layer
+	// anchored 128 pixels above the bottom edge.  The large image is explicitly
+	// sized, while the compact image retains its native 128x128 dimensions.
+	m_pGunmanHudLarge = new CImageLabel("metalhud", 0, tall - 128, 256, 128);
+	m_pGunmanHudLarge->setParent(this);
+	m_pGunmanHudLarge->setVisible(false);
+	m_pGunmanHudSmall = new CImageLabel("metalhud_small", 1, tall - 128);
+	m_pGunmanHudSmall->setParent(this);
+	m_pGunmanHudSmall->setVisible(false);
+
 	Initialize();
 	addInputSignal(new CViewPortInputHandler);
 
@@ -600,6 +610,12 @@ TeamFortressViewport::TeamFortressViewport(int x, int y, int wide, int tall) : P
 	m_pCommandMenus[m_PlayerMenu]->m_iSpectCmdMenu = true;
 
 	UpdatePlayerMenu(m_PlayerMenu);
+}
+
+void TeamFortressViewport::UpdateGunmanHud(bool visible, bool largeHud)
+{
+	m_pGunmanHudLarge->setVisible(visible && largeHud);
+	m_pGunmanHudSmall->setVisible(visible && !largeHud);
 }
 
 //-----------------------------------------------------------------------------

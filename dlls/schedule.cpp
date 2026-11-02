@@ -567,6 +567,18 @@ void CBaseMonster::SetTurnActivity()
 //=========================================================
 void CBaseMonster::StartTask(Task_t* pTask)
 {
+	// Retail CBaseMonster::StartTask handles private task 0x5f globally:
+	// select ACT_IDLE and complete unless TASK_FAILED is already set.
+	// This task lies beyond the SDK's shared task enum, so keep its verified
+	// numeric value local to the dispatcher.
+	if (pTask->iTask == 0x5f)
+	{
+		m_IdealActivity = ACT_IDLE;
+		if (!HasConditions(bits_COND_TASK_FAILED))
+			TaskComplete();
+		return;
+	}
+
 	switch (pTask->iTask)
 	{
 	case TASK_TURN_RIGHT:

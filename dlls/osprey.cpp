@@ -187,18 +187,18 @@ void COsprey::Precache()
 {
 	UTIL_PrecacheOther("monster_human_grunt");
 
-	PRECACHE_MODEL("models/osprey.mdl");
-	PRECACHE_MODEL("models/HVR.mdl");
+	PrecacheModel("models/osprey.mdl");
+	PrecacheModel("models/HVR.mdl");
 
-	PRECACHE_SOUND("apache/ap_rotor4.wav");
-	PRECACHE_SOUND("weapons/mortarhit.wav");
+	PrecacheSound("apache/ap_rotor4.wav");
+	PrecacheSound("weapons/mortarhit.wav");
 
-	m_iSpriteTexture = PRECACHE_MODEL("sprites/rope.spr");
+	m_iSpriteTexture = PrecacheModel("sprites/rope.spr");
 
-	m_iExplode = PRECACHE_MODEL("sprites/fexplo.spr");
-	m_iTailGibs = PRECACHE_MODEL("models/osprey_tailgibs.mdl");
-	m_iBodyGibs = PRECACHE_MODEL("models/osprey_bodygibs.mdl");
-	m_iEngineGibs = PRECACHE_MODEL("models/osprey_enginegibs.mdl");
+	m_iExplode = PrecacheModel("sprites/fexplo.spr");
+	m_iTailGibs = PrecacheModel("models/osprey_tailgibs.mdl");
+	m_iBodyGibs = PrecacheModel("models/osprey_bodygibs.mdl");
+	m_iEngineGibs = PrecacheModel("models/osprey_enginegibs.mdl");
 }
 
 void COsprey::CommandUse(CBaseEntity* pActivator, CBaseEntity* pCaller, USE_TYPE useType, float value)
@@ -578,6 +578,9 @@ void COsprey::DyingThink()
 		WRITE_BYTE(12);						 // framerate
 		WRITE_BYTE(TE_EXPLFLAG_NONE);
 		MESSAGE_END();
+		// Nachtrag 2026-09-06 (Nutzerwunsch: Erschuetterung+Lichtblitz bei
+		// jeder Explosion, siehe util.h/UTIL_ExplosionEffects).
+		UTIL_ExplosionEffects(vecSpot, 200.0f);
 
 		// lots of smoke
 		MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, vecSpot);

@@ -35,6 +35,16 @@ extern Vector VecBModelOrigin(entvars_t* pevBModel);
 
 #define TURRET_SHOTS 2
 #define TURRET_RANGE (100 * 12)
+// Gunman-Abweichung (RE-bestätigt, findings/entities/player_scripted_turret_sdk_diffs.md,
+// Nachtrag 2026-09-06): FireBullets()-Reichweite in Shoot() ist im Retail-Build auf
+// 2400 statt der SDK-eigenen TURRET_RANGE (1200) verdoppelt, fuer alle drei Klassen.
+// Nachtrag 2026-09-06 (Live-Bugreport MAYAN0B): derselbe Literal-Wert 0x960 (2400)
+// wird laut frischem Decompile von CBaseTurret::SearchThink/AutoSearchThink
+// (0x1005cd90/0x1005cef0, Look()-Aufruf ueber Vtable-Slot 0xf4) AUCH fuer die
+// Ziel-Erkennungsreichweite verwendet, nicht nur fuer den Schuss selbst - die
+// bisherige Uebernahme der SDK-eigenen TURRET_RANGE (1200) fuer Look() war zu
+// kurz und liess Tuerme den Spieler zu spaet/gar nicht erkennen.
+#define TURRET_SHOOT_RANGE 2400
 #define TURRET_SPREAD Vector(0, 0, 0)
 #define TURRET_TURNRATE 30 //angles per 0.1 second
 #define TURRET_MAXWAIT 15  // seconds turret will stay active w/o a target
@@ -271,18 +281,18 @@ void CBaseTurret::Spawn()
 
 void CBaseTurret::Precache()
 {
-	PRECACHE_SOUND("turret/tu_fire1.wav");
-	PRECACHE_SOUND("turret/tu_ping.wav");
-	PRECACHE_SOUND("turret/tu_active2.wav");
-	PRECACHE_SOUND("turret/tu_die.wav");
-	PRECACHE_SOUND("turret/tu_die2.wav");
-	PRECACHE_SOUND("turret/tu_die3.wav");
+	PrecacheSound("turret/tu_fire1.wav");
+	PrecacheSound("turret/tu_ping.wav");
+	PrecacheSound("turret/tu_active2.wav");
+	PrecacheSound("turret/tu_die.wav");
+	PrecacheSound("turret/tu_die2.wav");
+	PrecacheSound("turret/tu_die3.wav");
 	// PRECACHE_SOUND ("turret/tu_retract.wav"); // just use deploy sound to save memory
-	PRECACHE_SOUND("turret/tu_deploy.wav");
-	PRECACHE_SOUND("turret/tu_spinup.wav");
-	PRECACHE_SOUND("turret/tu_spindown.wav");
-	PRECACHE_SOUND("turret/tu_search.wav");
-	PRECACHE_SOUND("turret/tu_alert.wav");
+	PrecacheSound("turret/tu_deploy.wav");
+	PrecacheSound("turret/tu_spinup.wav");
+	PrecacheSound("turret/tu_spindown.wav");
+	PrecacheSound("turret/tu_search.wav");
+	PrecacheSound("turret/tu_alert.wav");
 }
 
 #define TURRET_GLOW_SPRITE "sprites/flare3.spr"
@@ -316,8 +326,8 @@ void CTurret::Spawn()
 void CTurret::Precache()
 {
 	CBaseTurret::Precache();
-	PRECACHE_MODEL("models/turret.mdl");
-	PRECACHE_MODEL(TURRET_GLOW_SPRITE);
+	PrecacheModel("models/turret.mdl");
+	PrecacheModel(TURRET_GLOW_SPRITE);
 }
 
 void CMiniTurret::Spawn()
@@ -343,10 +353,10 @@ void CMiniTurret::Spawn()
 void CMiniTurret::Precache()
 {
 	CBaseTurret::Precache();
-	PRECACHE_MODEL("models/miniturret.mdl");
-	PRECACHE_SOUND("weapons/hks1.wav");
-	PRECACHE_SOUND("weapons/hks2.wav");
-	PRECACHE_SOUND("weapons/hks3.wav");
+	PrecacheModel("models/miniturret.mdl");
+	PrecacheSound("weapons/hks1.wav");
+	PrecacheSound("weapons/hks2.wav");
+	PrecacheSound("weapons/hks3.wav");
 }
 
 void CBaseTurret::Initialize()
@@ -615,26 +625,26 @@ void CBaseTurret::ActiveThink()
 
 void CTurret::Shoot(Vector& vecSrc, Vector& vecDirToEnemy)
 {
-	FireBullets(1, vecSrc, vecDirToEnemy, TURRET_SPREAD, TURRET_RANGE, BULLET_MONSTER_12MM, 1);
-	EMIT_SOUND(ENT(pev), CHAN_WEAPON, "turret/tu_fire1.wav", 1, 0.6);
+	FireBullets(1, vecSrc, vecDirToEnemy, TURRET_SPREAD, TURRET_SHOOT_RANGE, BULLET_MONSTER_12MM, 1);
+	// Gunman-Abweichung (RE-bestaetigt): kein EMIT_SOUND im Retail-Decompilat trotz
+	// weiterhin precachtem "turret/tu_fire1.wav" - monster_turret feuert lautlos.
 	pev->effects = pev->effects | EF_MUZZLEFLASH;
 }
 
 
 void CMiniTurret::Shoot(Vector& vecSrc, Vector& vecDirToEnemy)
 {
-	FireBullets(1, vecSrc, vecDirToEnemy, TURRET_SPREAD, TURRET_RANGE, BULLET_MONSTER_9MM, 1);
+	FireBullets(1, vecSrc, vecDirToEnemy, TURRET_SPREAD, TURRET_SHOOT_RANGE, BULLET_MONSTER_9MM, 1);
 
-	switch (RANDOM_LONG(0, 2))
+	// Gunman-Abweichung (RE-bestaetigt): nur 2 statt 3 Zufallssounds erreichbar,
+	// RANDOM_LONG(0, 1) statt (0, 2) - hks3.wav bleibt precacht, aber toter Code.
+	switch (RANDOM_LONG(0, 1))
 	{
 	case 0:
 		EMIT_SOUND(ENT(pev), CHAN_WEAPON, "weapons/hks1.wav", 1, ATTN_NORM);
 		break;
 	case 1:
 		EMIT_SOUND(ENT(pev), CHAN_WEAPON, "weapons/hks2.wav", 1, ATTN_NORM);
-		break;
-	case 2:
-		EMIT_SOUND(ENT(pev), CHAN_WEAPON, "weapons/hks3.wav", 1, ATTN_NORM);
 		break;
 	}
 	pev->effects = pev->effects | EF_MUZZLEFLASH;
@@ -850,7 +860,7 @@ void CBaseTurret::SearchThink()
 	// Acquire Target
 	if (m_hEnemy == NULL)
 	{
-		Look(TURRET_RANGE);
+		Look(TURRET_SHOOT_RANGE);
 		m_hEnemy = BestVisibleEnemy();
 	}
 
@@ -908,7 +918,7 @@ void CBaseTurret::AutoSearchThink()
 
 	if (m_hEnemy == NULL)
 	{
-		Look(TURRET_RANGE);
+		Look(TURRET_SHOOT_RANGE);
 		m_hEnemy = BestVisibleEnemy();
 	}
 
@@ -1162,7 +1172,9 @@ LINK_ENTITY_TO_CLASS(monster_sentry, CSentry);
 void CSentry::Precache()
 {
 	CBaseTurret::Precache();
-	PRECACHE_MODEL("models/sentry.mdl");
+	PrecacheModel("models/sentry.mdl");
+	// Gunman-Abweichung (RE-bestaetigt): eigener Sentry-Feuersound, siehe CSentry::Shoot.
+	PrecacheSound("sentry/sentry_fire.wav");
 }
 
 void CSentry::Spawn()
@@ -1188,20 +1200,11 @@ void CSentry::Spawn()
 
 void CSentry::Shoot(Vector& vecSrc, Vector& vecDirToEnemy)
 {
-	FireBullets(1, vecSrc, vecDirToEnemy, TURRET_SPREAD, TURRET_RANGE, BULLET_MONSTER_MP5, 1);
+	FireBullets(1, vecSrc, vecDirToEnemy, TURRET_SPREAD, TURRET_SHOOT_RANGE, BULLET_MONSTER_MP5, 1);
 
-	switch (RANDOM_LONG(0, 2))
-	{
-	case 0:
-		EMIT_SOUND(ENT(pev), CHAN_WEAPON, "weapons/hks1.wav", 1, ATTN_NORM);
-		break;
-	case 1:
-		EMIT_SOUND(ENT(pev), CHAN_WEAPON, "weapons/hks2.wav", 1, ATTN_NORM);
-		break;
-	case 2:
-		EMIT_SOUND(ENT(pev), CHAN_WEAPON, "weapons/hks3.wav", 1, ATTN_NORM);
-		break;
-	}
+	// Gunman-Abweichung (RE-bestaetigt): eigener, im SDK nicht vorhandener
+	// Feuersound statt geteiltem hks1-3.wav-Satz, ohne Zufallsauswahl.
+	EMIT_SOUND(ENT(pev), CHAN_WEAPON, "sentry/sentry_fire.wav", 1, ATTN_NORM);
 	pev->effects = pev->effects | EF_MUZZLEFLASH;
 }
 
@@ -1296,6 +1299,204 @@ void CSentry::SentryDeath()
 		WRITE_SHORT(g_sModelIndexSmoke);
 		WRITE_BYTE(15); // scale * 10
 		WRITE_BYTE(8);	// framerate
+		MESSAGE_END();
+	}
+
+	if (pev->dmgtime + RANDOM_FLOAT(0, 8) > gpGlobals->time)
+	{
+		UTIL_Sparks(vecSrc);
+	}
+
+	if (m_fSequenceFinished && pev->dmgtime + 5 < gpGlobals->time)
+	{
+		pev->framerate = 0;
+		SetThink(NULL);
+	}
+}
+
+//=========================================================
+// monster_sentry_mini - CMiniSentry (Gunman Chronicles). Confirmed via
+// fresh decompile to be CSentry's smaller sibling, reusing the same
+// CBaseTurret machinery unchanged (findings/entity_review_list.csv
+// already noted the KeyValue set matches CBaseTurret::KeyValue 1:1;
+// re-verified this session rather than taken on faith - Spawn's
+// concrete stats below are freshly decompiled, not copied from
+// CSentry).
+//
+// Decompiled from gunman.dll: LINK @0x1005ddc0, vtable @0x100f5998
+// (only 3 slots override CBaseTurret's - Spawn/Precache/KeyValue, the
+// rest of the vtable including TakeDamage/Shoot/death handling is
+// inherited unchanged), Spawn @0x1005de50 -> shared tail
+// @0x1005d7c0 (== CBaseTurret::Spawn), Precache @0x1005def0 -> shared
+// tail @0x1005d760 (== CBaseTurret::Precache). Confirmed differences
+// from CSentry: model "models/small_sentry.mdl", health 50.0 (not
+// gSkillData.sentryHealth), bbox (-16,-16,0)/(16,16,32) i.e. no
+// retract/deploy height distinction reproduced in Spawn itself
+// (CSentry sets pev size from m_iRetractHeight after the fact; this
+// class's decompiled Spawn sets the final box directly) - kept
+// CSentry's retract/deploy/pitch member values as a reasonable
+// default since KeyValue is confirmed identical and no evidence this
+// class overrides them.
+//=========================================================
+class CMiniSentry : public CBaseTurret
+{
+public:
+	void Spawn() override;
+	void Precache() override;
+	void Shoot(Vector& vecSrc, Vector& vecDirToEnemy) override;
+	bool TakeDamage(entvars_t* pevInflictor, entvars_t* pevAttacker, float flDamage, int bitsDamageType) override;
+	void EXPORT SentryTouch(CBaseEntity* pOther);
+	void EXPORT SentryDeath();
+};
+
+LINK_ENTITY_TO_CLASS(monster_sentry_mini, CMiniSentry);
+
+void CMiniSentry::Precache()
+{
+	CBaseTurret::Precache();
+	PrecacheModel("models/small_sentry.mdl");
+	// Nachtrag 2026-09-06: CMiniSentry::Shoot() nutzt denselben eigenen
+	// Sound wie CSentry, siehe dort.
+	PrecacheSound("sentry/sentry_fire.wav");
+}
+
+void CMiniSentry::Spawn()
+{
+	Precache();
+	SET_MODEL(ENT(pev), "models/small_sentry.mdl");
+	pev->health = 50;
+	m_HackedGunPos = Vector(0, 0, 32);
+	// Nachtrag 2026-09-06 (Live-Bugreport MAYAN0B, "auch direkt davor
+	// passiert nichts"): pev->view_ofs fehlte hier komplett (blieb bei
+	// (0,0,0)) - CTurret/CMiniTurret/CSentry setzen alle konsistent
+	// pev->view_ofs.z == m_HackedGunPos.z. CBaseEntity::FVisible() tracet
+	// von pev->origin + pev->view_ofs ("Augenposition") zum Ziel; ohne
+	// diesen Offset startet die Sichtlinien-Pruefung am Wandsockel der
+	// Turret statt an ihrem Objektiv und kann durch die eigene
+	// Wandhalterung/Boden blockiert sein - die Turret erkennt den Spieler
+	// dann nie, unabhaengig von Entfernung.
+	pev->view_ofs.z = 32;
+	m_flMaxWait = 1E6;
+	m_flMaxSpin = 1E6;
+
+	CBaseTurret::Spawn();
+	m_iRetractHeight = 32;
+	m_iDeployHeight = 32;
+	m_iMinPitch = -60;
+	UTIL_SetSize(pev, Vector(-16, -16, 0), Vector(16, 16, 32));
+
+	SetTouch(&CMiniSentry::SentryTouch);
+	SetThink(&CMiniSentry::Initialize);
+	pev->nextthink = gpGlobals->time + 0.3;
+}
+
+void CMiniSentry::Shoot(Vector& vecSrc, Vector& vecDirToEnemy)
+{
+	// Nachtrag 2026-09-06 (RE-Nachtrag "die naechsten offenen RE-Fragen"):
+	// der aeltere Vtable-Befund ("CMiniSentry ueberschreibt Shoot/
+	// TakeDamage in Retail gar nicht, nur Spawn/Precache/KeyValue") war
+	// FALSCH - frischer Vtable-Slot-Abgleich gegen 0x100f5998 zeigt
+	// eigene, von CSentry/CTurret/CMiniTurret abweichende Adressen fuer
+	// Shoot (0x1005df10) UND TakeDamage (0x1005dfe0). Shoot() frisch
+	// decompiliert: Reichweite weiterhin 2400 (bereits korrekt), aber
+	// die Streuung ist VECTOR_CONE_10DEGREES (0.08716, exakter Bitmuster-
+	// Treffer gegen weapons.h) statt TURRET_SPREAD (0,0,0), und es wird
+	// EIN einzelner Sound "sentry/sentry_fire.wav" (Lautstaerke ~0.4)
+	// gespielt - identisch zu CSentry::Shoot, nicht die hks1/2/3.wav-
+	// Zufallsauswahl. EF_MUZZLEFLASH (pev->effects |= 2, exakt bestaetigt)
+	// war bereits korrekt gesetzt.
+	FireBullets(1, vecSrc, vecDirToEnemy, VECTOR_CONE_10DEGREES, TURRET_SHOOT_RANGE, BULLET_MONSTER_MP5, 1);
+
+	EMIT_SOUND(ENT(pev), CHAN_WEAPON, "sentry/sentry_fire.wav", 0.4, ATTN_NORM);
+	pev->effects = pev->effects | EF_MUZZLEFLASH;
+}
+
+bool CMiniSentry::TakeDamage(entvars_t* pevInflictor, entvars_t* pevAttacker, float flDamage, int bitsDamageType)
+{
+	if (0 == pev->takedamage)
+		return false;
+
+	if (!m_iOn)
+	{
+		SetThink(&CMiniSentry::Deploy);
+		SetUse(NULL);
+		pev->nextthink = gpGlobals->time + 0.1;
+	}
+
+	pev->health -= flDamage;
+	if (pev->health <= 0)
+	{
+		pev->health = 0;
+		pev->takedamage = DAMAGE_NO;
+		pev->dmgtime = gpGlobals->time;
+
+		ClearBits(pev->flags, FL_MONSTER);
+
+		SetUse(NULL);
+		SetThink(&CMiniSentry::SentryDeath);
+		SUB_UseTargets(this, USE_ON, 0);
+		pev->nextthink = gpGlobals->time + 0.1;
+
+		return false;
+	}
+
+	return true;
+}
+
+void CMiniSentry::SentryTouch(CBaseEntity* pOther)
+{
+	if (pOther && (pOther->IsPlayer() || (pOther->pev->flags & FL_MONSTER) != 0))
+	{
+		TakeDamage(pOther->pev, pOther->pev, 0, 0);
+	}
+}
+
+void CMiniSentry::SentryDeath()
+{
+	StudioFrameAdvance();
+	pev->nextthink = gpGlobals->time + 0.1;
+
+	if (pev->deadflag != DEAD_DEAD)
+	{
+		pev->deadflag = DEAD_DEAD;
+
+		float flRndSound = RANDOM_FLOAT(0, 1);
+
+		if (flRndSound <= 0.33)
+			EMIT_SOUND(ENT(pev), CHAN_BODY, "turret/tu_die.wav", 1.0, ATTN_NORM);
+		else if (flRndSound <= 0.66)
+			EMIT_SOUND(ENT(pev), CHAN_BODY, "turret/tu_die2.wav", 1.0, ATTN_NORM);
+		else
+			EMIT_SOUND(ENT(pev), CHAN_BODY, "turret/tu_die3.wav", 1.0, ATTN_NORM);
+
+		EMIT_SOUND_DYN(ENT(pev), CHAN_STATIC, "turret/tu_active2.wav", 0, 0, SND_STOP, 100);
+
+		SetBoneController(0, 0);
+		SetBoneController(1, 0);
+
+		SetTurretAnim(TURRET_ANIM_DIE);
+
+		pev->solid = SOLID_NOT;
+		pev->angles.y = UTIL_AngleMod(pev->angles.y + RANDOM_LONG(0, 2) * 120);
+
+		EyeOn();
+	}
+
+	EyeOff();
+
+	Vector vecSrc, vecAng;
+	GetAttachment(1, vecSrc, vecAng);
+
+	if (pev->dmgtime + RANDOM_FLOAT(0, 2) > gpGlobals->time)
+	{
+		MESSAGE_BEGIN(MSG_BROADCAST, SVC_TEMPENTITY);
+		WRITE_BYTE(TE_SMOKE);
+		WRITE_COORD(vecSrc.x + RANDOM_FLOAT(-16, 16));
+		WRITE_COORD(vecSrc.y + RANDOM_FLOAT(-16, 16));
+		WRITE_COORD(vecSrc.z - 32);
+		WRITE_SHORT(g_sModelIndexSmoke);
+		WRITE_BYTE(15);
+		WRITE_BYTE(8);
 		MESSAGE_END();
 	}
 

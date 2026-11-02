@@ -298,12 +298,12 @@ void CBaseButton::Precache()
 
 	if (FBitSet(pev->spawnflags, SF_BUTTON_SPARK_IF_OFF)) // this button should spark in OFF state
 	{
-		PRECACHE_SOUND("buttons/spark1.wav");
-		PRECACHE_SOUND("buttons/spark2.wav");
-		PRECACHE_SOUND("buttons/spark3.wav");
-		PRECACHE_SOUND("buttons/spark4.wav");
-		PRECACHE_SOUND("buttons/spark5.wav");
-		PRECACHE_SOUND("buttons/spark6.wav");
+		PrecacheSound("buttons/spark1.wav");
+		PrecacheSound("buttons/spark2.wav");
+		PrecacheSound("buttons/spark3.wav");
+		PrecacheSound("buttons/spark4.wav");
+		PrecacheSound("buttons/spark5.wav");
+		PrecacheSound("buttons/spark6.wav");
 	}
 
 	// get door button sounds, for doors which require buttons to open
@@ -311,14 +311,14 @@ void CBaseButton::Precache()
 	if (0 != m_bLockedSound)
 	{
 		pszSound = ButtonSound((int)m_bLockedSound);
-		PRECACHE_SOUND(pszSound);
+		PrecacheSound(pszSound);
 		m_ls.sLockedSound = ALLOC_STRING(pszSound);
 	}
 
 	if (0 != m_bUnlockedSound)
 	{
 		pszSound = ButtonSound((int)m_bUnlockedSound);
-		PRECACHE_SOUND(pszSound);
+		PrecacheSound(pszSound);
 		m_ls.sUnlockedSound = ALLOC_STRING(pszSound);
 	}
 
@@ -492,7 +492,7 @@ void CBaseButton::Spawn()
 	//a sound of 0 should not make a sound
 	//----------------------------------------------------
 	pszSound = ButtonSound(m_sounds);
-	PRECACHE_SOUND(pszSound);
+	PrecacheSound(pszSound);
 	pev->noise = ALLOC_STRING(pszSound);
 
 	Precache();
@@ -885,8 +885,15 @@ void CBaseButton::ButtonBackHome()
 		SetTouch(&CBaseButton::ButtonTouch);
 
 	// reset think for a sparking button
-	//func_rot_button's X Axis spawnflag overlaps with this one so don't use it here.
-	if (!FClassnameIs(pev, "func_rot_button") && FBitSet(pev->spawnflags, SF_BUTTON_SPARK_IF_OFF))
+	// Gunman-Abweichung (RE-bestaetigt, findings/entities/func_door_button_wall_sdk_diffs.md,
+	// Nachtrag 2026-09-06): das Retail-Decompilat von CBaseButton::ButtonBackHome hat KEINEN
+	// FClassnameIs(pev, "func_rot_button")-Ausschluss hier - die Z-Achsen-Rotationsflagge
+	// SF_DOOR_ROTATE_Z (0x40, siehe doors.h) kollidiert mit SF_BUTTON_SPARK_IF_OFF (ebenfalls
+	// 0x40) exakt wie im Community-Bugfix-Kommentar beschrieben, aber ohne den Ausschluss selbst.
+	// Mehrere Retail-Karten (z.B. west6e, REBAR2E, west6b, west4a, end1, rust8a) platzieren
+	// func_rot_button mit gesetztem Bit 0x40 -> in Gunman spraeht ein solcher Hebel nach dem
+	// Zurueckfahren tatsaechlich (Retail-Bug, hier bewusst reproduziert statt "korrigiert").
+	if (FBitSet(pev->spawnflags, SF_BUTTON_SPARK_IF_OFF))
 	{
 		SetThink(&CBaseButton::ButtonSpark);
 		pev->nextthink = pev->ltime + 0.5; // no hurry.
@@ -914,7 +921,7 @@ void CRotButton::Spawn()
 	//a sound of 0 should not make a sound
 	//----------------------------------------------------
 	pszSound = ButtonSound(m_sounds);
-	PRECACHE_SOUND(pszSound);
+	PrecacheSound(pszSound);
 	pev->noise = ALLOC_STRING(pszSound);
 
 	// set the axis of rotation
@@ -1051,7 +1058,7 @@ void CMomentaryRotButton::Spawn()
 	SET_MODEL(ENT(pev), STRING(pev->model));
 
 	const char* pszSound = ButtonSound(m_sounds);
-	PRECACHE_SOUND(pszSound);
+	PrecacheSound(pszSound);
 	pev->noise = ALLOC_STRING(pszSound);
 	m_lastUsed = false;
 }
@@ -1277,12 +1284,12 @@ void CEnvSpark::Spawn()
 
 void CEnvSpark::Precache()
 {
-	PRECACHE_SOUND("buttons/spark1.wav");
-	PRECACHE_SOUND("buttons/spark2.wav");
-	PRECACHE_SOUND("buttons/spark3.wav");
-	PRECACHE_SOUND("buttons/spark4.wav");
-	PRECACHE_SOUND("buttons/spark5.wav");
-	PRECACHE_SOUND("buttons/spark6.wav");
+	PrecacheSound("buttons/spark1.wav");
+	PrecacheSound("buttons/spark2.wav");
+	PrecacheSound("buttons/spark3.wav");
+	PrecacheSound("buttons/spark4.wav");
+	PrecacheSound("buttons/spark5.wav");
+	PrecacheSound("buttons/spark6.wav");
 }
 
 bool CEnvSpark::KeyValue(KeyValueData* pkvd)

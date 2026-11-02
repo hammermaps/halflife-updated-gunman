@@ -302,7 +302,7 @@ void CHeadCrab::Precache()
 	PRECACHE_SOUND_ARRAY(pDeathSounds);
 	PRECACHE_SOUND_ARRAY(pBiteSounds);
 
-	PRECACHE_MODEL("models/headcrab.mdl");
+	PrecacheModel("models/headcrab.mdl");
 }
 
 
@@ -503,7 +503,7 @@ void CBabyCrab::Spawn()
 
 void CBabyCrab::Precache()
 {
-	PRECACHE_MODEL("models/baby_headcrab.mdl");
+	PrecacheModel("models/baby_headcrab.mdl");
 	CHeadCrab::Precache();
 }
 

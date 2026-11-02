@@ -81,6 +81,11 @@ void CGrenade::Explode(TraceResult* pTrace, int bitsDamageType)
 	WRITE_BYTE(15);					   // framerate
 	WRITE_BYTE(TE_EXPLFLAG_NONE);
 	MESSAGE_END();
+	// Nachtrag 2026-09-06 (Nutzerwunsch: Erschuetterung+Lichtblitz bei
+	// jeder Explosion, siehe util.h/UTIL_ExplosionEffects). Zentrale
+	// Stelle - deckt alle CGrenade::ExplodeTouch-Aufrufer ab (Handgranate,
+	// Satchel, DML-Granate, Mortar, endboss_rocket, demoman_rocket usw.).
+	UTIL_ExplosionEffects(pev->origin, pev->dmg * 2.5f);
 
 	CSoundEnt::InsertSound(bits_SOUND_COMBAT, pev->origin, NORMAL_EXPLOSION_VOLUME, 3.0);
 	entvars_t* pevOwner;

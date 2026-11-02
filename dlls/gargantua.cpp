@@ -794,13 +794,13 @@ void CGargantua::Spawn()
 //=========================================================
 void CGargantua::Precache()
 {
-	PRECACHE_MODEL("models/garg.mdl");
-	PRECACHE_MODEL(GARG_EYE_SPRITE_NAME);
-	PRECACHE_MODEL(GARG_BEAM_SPRITE_NAME);
-	PRECACHE_MODEL(GARG_BEAM_SPRITE2);
-	gStompSprite = PRECACHE_MODEL(GARG_STOMP_SPRITE_NAME);
-	gGargGibModel = PRECACHE_MODEL(GARG_GIB_MODEL);
-	PRECACHE_SOUND(GARG_STOMP_BUZZ_SOUND);
+	PrecacheModel("models/garg.mdl");
+	PrecacheModel(GARG_EYE_SPRITE_NAME);
+	PrecacheModel(GARG_BEAM_SPRITE_NAME);
+	PrecacheModel(GARG_BEAM_SPRITE2);
+	gStompSprite = PrecacheModel(GARG_STOMP_SPRITE_NAME);
+	gGargGibModel = PrecacheModel(GARG_GIB_MODEL);
+	PrecacheSound(GARG_STOMP_BUZZ_SOUND);
 
 	PRECACHE_SOUND_ARRAY(pAttackHitSounds);
 	PRECACHE_SOUND_ARRAY(pBeamAttackSounds);

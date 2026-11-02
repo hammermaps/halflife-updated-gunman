@@ -245,6 +245,18 @@ char* EV_HLDM_DamageDecal(physent_t* pe)
 	return decalname;
 }
 
+// Temp-sprite wrapper for the shot/impact effects. The engine's default fadeSpeed (0.5, see
+// engine cl_tent.c CL_PrepareTEnt) keeps a FTENT_FADEOUT sprite visible for life + ~2 s, so
+// several hundred impacts piled up on the walls. fadeSpeed 8 ends the fade about 0.13 s after
+// 'life' has run out (Bugfix 2026-11-01, see findings/entities/bandit_impact_fade_2026-11-01.md).
+static TEMPENTITY* EV_TempSprite(float* pos, const float* dir, float scale, int modelIndex, int rendermode, int renderfx, float a, float life, int flags)
+{
+	TEMPENTITY* pTemp = gEngfuncs.pEfxAPI->R_TempSprite(pos, dir, scale, modelIndex, rendermode, renderfx, a, life, flags);
+	if (pTemp != nullptr && (flags & FTENT_FADEOUT) != 0)
+		pTemp->fadeSpeed = 8.0f;
+	return pTemp;
+}
+
 void EV_HLDM_GunshotDecalTrace(pmtrace_t* pTrace, char* decalName)
 {
 	int iRand;
@@ -971,7 +983,7 @@ void EV_FireGauss(event_args_t* args)
 				VectorMA(tr.endpos, 8.0, forward, vecSrc);
 				VectorMA(vecSrc, 8192.0, forward, vecDest);
 
-				gEngfuncs.pEfxAPI->R_TempSprite(tr.endpos, vec3_origin, 0.2, m_iGlow, kRenderGlow, kRenderFxNoDissipation, flDamage * n / 255.0, flDamage * n * 0.5 * 0.1, FTENT_FADEOUT);
+				EV_TempSprite(tr.endpos, vec3_origin, 0.2, m_iGlow, kRenderGlow, kRenderFxNoDissipation, flDamage * n / 255.0, flDamage * n * 0.5 * 0.1, FTENT_FADEOUT);
 
 				Vector fwd;
 				VectorAdd(tr.endpos, tr.plane.normal, fwd);
@@ -992,7 +1004,7 @@ void EV_FireGauss(event_args_t* args)
 				// tunnel
 				EV_HLDM_DecalGunshot(&tr, BULLET_MONSTER_12MM);
 
-				gEngfuncs.pEfxAPI->R_TempSprite(tr.endpos, vec3_origin, 1.0, m_iGlow, kRenderGlow, kRenderFxNoDissipation, flDamage / 255.0, 6.0, FTENT_FADEOUT);
+				EV_TempSprite(tr.endpos, vec3_origin, 1.0, m_iGlow, kRenderGlow, kRenderFxNoDissipation, flDamage / 255.0, 6.0, FTENT_FADEOUT);
 
 				// limit it to one hole punch
 				if (fHasPunched)
@@ -1049,7 +1061,7 @@ void EV_FireGauss(event_args_t* args)
 
 							EV_HLDM_DecalGunshot(&beam_tr, BULLET_MONSTER_12MM);
 
-							gEngfuncs.pEfxAPI->R_TempSprite(beam_tr.endpos, vec3_origin, 0.1, m_iGlow, kRenderGlow, kRenderFxNoDissipation, flDamage / 255.0, 6.0, FTENT_FADEOUT);
+							EV_TempSprite(beam_tr.endpos, vec3_origin, 0.1, m_iGlow, kRenderGlow, kRenderFxNoDissipation, flDamage / 255.0, 6.0, FTENT_FADEOUT);
 
 							// balls
 							{
@@ -1075,7 +1087,7 @@ void EV_FireGauss(event_args_t* args)
 					{
 						// slug doesn't punch through ever with primary
 						// fire, so leave a little glowy bit and make some balls
-						gEngfuncs.pEfxAPI->R_TempSprite(tr.endpos, vec3_origin, 0.2, m_iGlow, kRenderGlow, kRenderFxNoDissipation, 200.0 / 255.0, 0.3, FTENT_FADEOUT);
+						EV_TempSprite(tr.endpos, vec3_origin, 0.2, m_iGlow, kRenderGlow, kRenderFxNoDissipation, 200.0 / 255.0, 0.3, FTENT_FADEOUT);
 
 						{
 							Vector fwd;
@@ -1671,6 +1683,286 @@ void EV_VehiclePitchAdjust(event_args_t* args)
 		gEngfuncs.pEventAPI->EV_PlaySound(idx, origin, CHAN_STATIC, sz, m_flVolume, ATTN_NORM, SND_CHANGE_PITCH, pitch);
 	}
 }
+
+//======================
+//	   SNIPER SHOT START
+//======================
+// Retail events/snipershot.sc -> client.dll FUN_10008c60 (siehe findings/entities/bandit_laser_2026-10-31.md).
+// Auswertung wie Retail: origin = Start, angles = Blickrichtung, bparam1 = "grosser" Schuss (Ringe entlang des Strahls,
+// groesseres Licht). Retail baut Strahl und Ringe ueber einen eigenen Effekt-Manager (FUN_10002810/FUN_10002ae0), dessen
+// Renderer nicht rekonstruiert ist; hier mit R_BeamPoints/R_TempSprite nachgebildet.
+void EV_SniperShot(event_args_t* args)
+{
+	const int idx = args->entindex;
+	Vector origin = args->origin;
+	Vector angles = args->angles;
+	Vector forward, right, up, vecSrc;
+	pmtrace_t tr;
+
+	AngleVectors(angles, forward, right, up);
+
+	if (EV_IsPlayer(idx))
+		EV_GetGunPosition(args, vecSrc, origin);
+	else
+		vecSrc = origin; // Retail addiert hier +28 in z auf den uebergebenen Ursprung
+
+	const int iBeam = gEngfuncs.pEventAPI->EV_FindModelIndex("sprites/gaussbeam2.spr");
+	const int iRing = gEngfuncs.pEventAPI->EV_FindModelIndex("sprites/gaussring.spr");
+	const int iPoof = gEngfuncs.pEventAPI->EV_FindModelIndex("sprites/gausspoof.spr");
+	const bool bBig = 0 != args->bparam1;
+
+	Vector vecEnd = vecSrc + forward * 8192;
+	gEngfuncs.pEventAPI->EV_SetUpPlayerPrediction(false, true);
+	gEngfuncs.pEventAPI->EV_PushPMStates();
+	gEngfuncs.pEventAPI->EV_SetSolidPlayers(idx - 1);
+	gEngfuncs.pEventAPI->EV_SetTraceHull(2);
+	gEngfuncs.pEventAPI->EV_PlayerTrace(vecSrc, vecEnd, PM_STUDIO_BOX, -1, &tr);
+	gEngfuncs.pEventAPI->EV_PopPMStates();
+
+	gEngfuncs.pEfxAPI->R_BeamPoints(vecSrc, tr.endpos, iBeam, 0.1f, bBig ? 0.6f : 0.4f, 0, 1.0f, 0, 0, 0, 1.0f, 1.0f, 1.0f);
+
+	if (bBig)
+	{
+		// Ringe im Abstand von 80 Einheiten entlang des Strahls
+		const float flLength = (tr.endpos - vecSrc).Length();
+		for (float flDist = 80.0f; flDist < flLength; flDist += 80.0f)
+		{
+			Vector vecPos = vecSrc + forward * flDist;
+			EV_TempSprite(vecPos, vec3_origin, 0.25f, iRing, kRenderTransAdd, kRenderFxNone, 1.0f, 0.1f, FTENT_FADEOUT);
+		}
+	}
+
+	EV_TempSprite(tr.endpos, vec3_origin, 0.5f, iPoof, kRenderTransAdd, kRenderFxNone, 1.0f, 0.5f, FTENT_SPRANIMATE | FTENT_FADEOUT);
+
+	dlight_t* dl = gEngfuncs.pEfxAPI->CL_AllocDlight(0);
+	dl->origin = tr.endpos;
+	dl->radius = bBig ? 140.0f : 100.0f;
+	dl->color.r = 0;
+	dl->color.g = 255;
+	dl->color.b = 0;
+	dl->die = gEngfuncs.GetClientTime() + 0.1f;
+	dl->decay = 80.0f;
+
+	if (gEngfuncs.pfnGetCvarFloat("r_decals") != 0.0f)
+	{
+		physent_t* pe = gEngfuncs.pEventAPI->EV_GetPhysent(tr.ent);
+		if (pe && (pe->solid == SOLID_BSP || pe->movetype == MOVETYPE_PUSHSTEP))
+		{
+			gEngfuncs.pEfxAPI->R_DecalShoot(
+				gEngfuncs.pEfxAPI->Draw_DecalIndex(gEngfuncs.pEfxAPI->Draw_DecalIndexFromName((char*)"{pulse2")),
+				gEngfuncs.pEventAPI->EV_IndexFromTrace(&tr), 0, tr.endpos, 0);
+		}
+	}
+}
+//======================
+//	    SNIPER SHOT END
+//======================
+
+
+//======================
+//	 GAUSS PISTOL START
+//======================
+// Retail events/gauss.sc (Rapid-Schuss der Gauss-Pistole) -> client.dll FUN_10007940, events/ChargedImpact.sc ->
+// FUN_10009300 (Einschlag der Ladekugel). Ablauf aus dem Dekompilat (findings/client/gauss_client_handler_2026-10-31.md);
+// der Effekt-Manager des Retail-Clients ist nicht rekonstruiert, hier mit R_BeamPoints/R_TempSprite nachgebildet.
+void EV_GaussPistol(event_args_t* args)
+{
+	const int idx = args->entindex;
+	Vector origin = args->origin;
+	Vector angles = args->angles;
+	Vector forward, right, up, vecSrc;
+	pmtrace_t tr;
+
+	AngleVectors(angles, forward, right, up);
+
+	if (EV_IsLocal(idx))
+	{
+		V_PunchAxis(0, -2.2f);
+		gEngfuncs.pEventAPI->EV_WeaponAnimation(3, 0);
+	}
+
+	gEngfuncs.pEventAPI->EV_PlaySound(idx, origin, CHAN_WEAPON, "weapons/gauss_fire4.wav", 1.0f, 0.8f, 0,
+		85 + gEngfuncs.pfnRandomLong(0, 31));
+
+	if (EV_IsPlayer(idx))
+		EV_GetGunPosition(args, vecSrc, origin);
+	else
+		vecSrc = origin;
+
+	const int iBeam = gEngfuncs.pEventAPI->EV_FindModelIndex("sprites/gaussbeam2.spr");
+	const int iPark = gEngfuncs.pEventAPI->EV_FindModelIndex("sprites/gausspark.spr");
+	const int iPuff = gEngfuncs.pEventAPI->EV_FindModelIndex("sprites/gausspuff.spr");
+
+	Vector vecEnd = vecSrc + forward * 8192;
+	gEngfuncs.pEventAPI->EV_SetUpPlayerPrediction(false, true);
+	gEngfuncs.pEventAPI->EV_PushPMStates();
+	gEngfuncs.pEventAPI->EV_SetSolidPlayers(idx - 1);
+	gEngfuncs.pEventAPI->EV_SetTraceHull(2);
+	gEngfuncs.pEventAPI->EV_PlayerTrace(vecSrc, vecEnd, PM_STUDIO_BOX, -1, &tr);
+	gEngfuncs.pEventAPI->EV_PopPMStates();
+
+	gEngfuncs.pEfxAPI->R_BeamPoints(vecSrc, tr.endpos, iBeam, 0.1f, 0.8f, 0, 0.5f, 0, 0, 0, 1.0f, 1.0f, 1.0f);
+
+	physent_t* pe = gEngfuncs.pEventAPI->EV_GetPhysent(tr.ent);
+	if (pe && pe->solid != SOLID_BSP && pe->movetype != MOVETYPE_PUSHSTEP)
+	{
+		gEngfuncs.pEfxAPI->R_Sprite_Spray(tr.endpos, tr.plane.normal, iPark, 15, 50, 100);
+	}
+	else
+	{
+		EV_TempSprite(Vector(tr.endpos) + Vector(tr.plane.normal) * 3.0f, vec3_origin, 0.3f, iPuff, kRenderTransAdd, kRenderFxNone, 1.0f, 0.5f, FTENT_SPRANIMATE | FTENT_FADEOUT);
+		if (gEngfuncs.pfnGetCvarFloat("r_decals") != 0.0f && pe)
+		{
+			gEngfuncs.pEfxAPI->R_DecalShoot(
+				gEngfuncs.pEfxAPI->Draw_DecalIndex(gEngfuncs.pEfxAPI->Draw_DecalIndexFromName((char*)"{pulse2")),
+				gEngfuncs.pEventAPI->EV_IndexFromTrace(&tr), 0, tr.endpos, 0);
+		}
+	}
+}
+
+void EV_ChargedImpact(event_args_t* args)
+{
+	const int idx = args->entindex;
+	Vector forward, right, up;
+	pmtrace_t tr;
+
+	AngleVectors(args->angles, forward, right, up);
+
+	const int iPuff = gEngfuncs.pEventAPI->EV_FindModelIndex("sprites/gausspuff.spr");
+	const int iBig = gEngfuncs.pEventAPI->EV_FindModelIndex("sprites/gaussbig.spr");
+	Vector vecStart = args->origin;
+	Vector vecEnd = vecStart + forward * 2048;
+
+	gEngfuncs.pEventAPI->EV_SetUpPlayerPrediction(false, true);
+	gEngfuncs.pEventAPI->EV_PushPMStates();
+	gEngfuncs.pEventAPI->EV_SetSolidPlayers(idx - 1);
+	gEngfuncs.pEventAPI->EV_SetTraceHull(2);
+	gEngfuncs.pEventAPI->EV_PlayerTrace(vecStart, vecEnd, PM_STUDIO_BOX, -1, &tr);
+	gEngfuncs.pEventAPI->EV_PopPMStates();
+
+	gEngfuncs.pEventAPI->EV_PlaySound(idx, tr.endpos, CHAN_AUTO, "weapons/gauss_spritebig.wav", 1.0f, 0.8f, 0,
+		85 + gEngfuncs.pfnRandomLong(0, 31));
+
+	Vector vecPos = Vector(tr.endpos) + Vector(tr.plane.normal) * 5.0f;
+	EV_TempSprite(vecPos, vec3_origin, 1.5f, iBig, kRenderTransAdd, kRenderFxNone, 1.0f, 0.5f, FTENT_SPRANIMATE | FTENT_FADEOUT);
+	for (int i = 0; i < 14; i++)
+	{
+		Vector vecVel(gEngfuncs.pfnRandomFloat(-60, 60), gEngfuncs.pfnRandomFloat(-60, 60), gEngfuncs.pfnRandomFloat(-60, 60));
+		EV_TempSprite(vecPos, vecVel, 0.4f, iPuff, kRenderTransAdd, kRenderFxNone, 1.0f, 0.5f, FTENT_SPRANIMATE | FTENT_FADEOUT);
+	}
+
+	dlight_t* dl = gEngfuncs.pEfxAPI->CL_AllocDlight(0);
+	dl->origin = tr.endpos;
+	dl->radius = 130.0f;
+	dl->color.r = 0;
+	dl->color.g = 150;
+	dl->color.b = 255;
+	dl->die = gEngfuncs.GetClientTime() + 0.1f;
+	dl->decay = 80.0f;
+
+	if (gEngfuncs.pfnGetCvarFloat("r_decals") != 0.0f)
+	{
+		physent_t* pe = gEngfuncs.pEventAPI->EV_GetPhysent(tr.ent);
+		if (pe && (pe->solid == SOLID_BSP || pe->movetype == MOVETYPE_PUSHSTEP))
+		{
+			gEngfuncs.pEfxAPI->R_DecalShoot(
+				gEngfuncs.pEfxAPI->Draw_DecalIndex(gEngfuncs.pEfxAPI->Draw_DecalIndexFromName((char*)"{charge")),
+				gEngfuncs.pEventAPI->EV_IndexFromTrace(&tr), 0, tr.endpos, 0);
+		}
+	}
+}
+//======================
+//	  GAUSS PISTOL END
+//======================
+
+//======================
+//	  RAPID IMPACT START
+//======================
+// Retail events/RapidImpact.sc -> client.dll FUN_10009860 (Einschlag eines CFastShot). origin = Projektilposition,
+// angles = Flugrichtung. Der Client sucht die getroffene Flaeche mit einer 2048 Einheiten langen Spur.
+void EV_RapidImpact(event_args_t* args)
+{
+	const int idx = args->entindex;
+	Vector forward, right, up;
+	pmtrace_t tr;
+
+	AngleVectors(args->angles, forward, right, up);
+
+	const int iPuff = gEngfuncs.pEventAPI->EV_FindModelIndex("sprites/gausspuff.spr");
+	Vector vecEnd = Vector(args->origin) + forward * 2048;
+
+	gEngfuncs.pEventAPI->EV_SetUpPlayerPrediction(false, true);
+	gEngfuncs.pEventAPI->EV_PushPMStates();
+	gEngfuncs.pEventAPI->EV_SetSolidPlayers(idx - 1);
+	gEngfuncs.pEventAPI->EV_SetTraceHull(2);
+	gEngfuncs.pEventAPI->EV_PlayerTrace(args->origin, vecEnd, PM_STUDIO_BOX, -1, &tr);
+	gEngfuncs.pEventAPI->EV_PopPMStates();
+
+	Vector vecPos = Vector(tr.endpos) + Vector(tr.plane.normal) * 5.0f;
+
+	gEngfuncs.pEventAPI->EV_PlaySound(idx, vecPos, CHAN_AUTO, "weapons/gauss_spritesmall.wav", 1.0f, 0.8f, 0,
+		85 + gEngfuncs.pfnRandomLong(0, 31));
+
+	EV_TempSprite(vecPos, vec3_origin, 0.3f, iPuff, kRenderTransAdd, kRenderFxNone, 1.0f, 0.5f, FTENT_SPRANIMATE | FTENT_FADEOUT);
+
+	if (gEngfuncs.pfnGetCvarFloat("r_decals") != 0.0f)
+	{
+		physent_t* pe = gEngfuncs.pEventAPI->EV_GetPhysent(tr.ent);
+		if (pe && (pe->solid == SOLID_BSP || pe->movetype == MOVETYPE_PUSHSTEP))
+		{
+			gEngfuncs.pEfxAPI->R_DecalShoot(
+				gEngfuncs.pEfxAPI->Draw_DecalIndex(gEngfuncs.pEfxAPI->Draw_DecalIndexFromName((char*)"{shot5")),
+				gEngfuncs.pEventAPI->EV_IndexFromTrace(&tr), 0, tr.endpos, 0);
+		}
+	}
+}
+//======================
+//	   RAPID IMPACT END
+//======================
+
+//======================
+//	 CHEMICAL SPRAY START
+//======================
+// Retail events/ChemicalSpray.sc -> client.dll FUN_10009cd0 (Spur der Chemie-Granate, iparam1 = Skin 0 gruen, 3 rot,
+// 2 orange, sonst gelb). Spritespray (10 Stueck, Geschwindigkeit 50, Streuung 100) an der Flaeche entlang der Flugbahn.
+void EV_ChemicalSpray(event_args_t* args)
+{
+	const int idx = args->entindex;
+	const char* pszSprite;
+	switch (args->iparam1)
+	{
+	case 0:
+		pszSprite = "sprites/greensplash.spr";
+		break;
+	case 3:
+		pszSprite = "sprites/redsplash.spr";
+		break;
+	case 2:
+		pszSprite = "sprites/orangesplash.spr";
+		break;
+	default:
+		pszSprite = "sprites/yellowsplash.spr";
+		break;
+	}
+	const int iModel = gEngfuncs.pEventAPI->EV_FindModelIndex(pszSprite);
+
+	Vector origin = args->origin;
+	Vector vecEnd = origin + Vector(args->velocity) * 10.0f;
+	pmtrace_t tr;
+
+	gEngfuncs.pEventAPI->EV_SetUpPlayerPrediction(false, true);
+	gEngfuncs.pEventAPI->EV_PushPMStates();
+	gEngfuncs.pEventAPI->EV_SetSolidPlayers(idx - 1);
+	gEngfuncs.pEventAPI->EV_SetTraceHull(2);
+	gEngfuncs.pEventAPI->EV_PlayerTrace(origin, vecEnd, PM_STUDIO_BOX, -1, &tr);
+	gEngfuncs.pEventAPI->EV_PopPMStates();
+
+	if (0 == tr.allsolid)
+		gEngfuncs.pEfxAPI->R_Sprite_Spray(origin, tr.plane.normal, iModel, 10, 50, 100);
+}
+//======================
+//	  CHEMICAL SPRAY END
+//======================
 
 bool EV_TFC_IsAllyTeam(int iTeam1, int iTeam2)
 {

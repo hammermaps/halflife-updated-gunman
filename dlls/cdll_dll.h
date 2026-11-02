@@ -58,6 +58,30 @@ enum WeaponId
 	WEAPON_TRIPMINE,
 	WEAPON_SATCHEL,
 	WEAPON_SNARK,
+	// Gunman retail IDs. Duplicate numeric values with the legacy HL names
+	// above are intentional; those entities are no longer built or registered.
+	WEAPON_FISTS = 1,
+	WEAPON_AICORE = 7,
+	WEAPON_DMLGRENADE = 13,
+	WEAPON_BEAMGUN = 14,
+	WEAPON_DML = 16,
+	WEAPON_SHOTGUN_GUNMAN = 17,
+	WEAPON_CHEMGUN = 19,
+	WEAPON_MINIGUN = 28,
+	WEAPON_GAUSSPISTOL = 30,
+	// Gunman-only DML customization pickups (dml_customization.cpp) - silent,
+	// never-deployed permanent inventory flags read by weapon_dml/weapon_dmlGrenade
+	// to select their Trigger-type/Payload-type. Own enum numbering (like
+	// WEAPON_FISTS/WEAPON_AICORE above) - NOT the same as the confirmed
+	// retail m_iId constants (5/6/9/10/11/12 at this+0x1b in the decompile),
+	// which collide with this enum's own stock-weapon slots (CHAINGUN=5,
+	// CROSSBOW=6, GAUSS=9, EGON=10, HORNETGUN=11, HANDGRENADE=12).
+	WEAPON_CUST_DMLGRENDETONATE = 5,
+	WEAPON_CUST_DMLGRENPAYLOAD = 6,
+	WEAPON_CUST_DMLLAUNCH = 9,
+	WEAPON_CUST_DMLFLIGHTPATH = 10,
+	WEAPON_CUST_DMLDETONATE = 11,
+	WEAPON_CUST_DMLPAYLOAD = 12,
 
 	WEAPON_SUIT = 31
 };

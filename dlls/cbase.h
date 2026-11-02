@@ -109,8 +109,21 @@ typedef void (CBaseEntity::*USEPTR)(CBaseEntity* pActivator, CBaseEntity* pCalle
 #define CLASS_PLAYER_BIOWEAPON 12 // hornets and snarks.launched by players
 #define CLASS_ALIEN_BIOWEAPON 13  // hornets and snarks.launched by the alien menace
 #define CLASS_BARNACLE 99		  // special because no one pays attention to it, and it eats a wide cross-section of creatures.
+// Confirmed via decompiled Classify() of monster_cricket and monster_hatchetfish
+// (both return the literal constant 17) - a distinct Gunman-only small-creature
+// class, not the same as stock CLASS_INSECT(10).
+#define CLASS_INSECT_CRICKET 17
+// Confirmed via decompiled Classify() of monster_raptor/monster_rheptor
+// (CRaptor): returns the literal 15 for the default (hostile) skin, 5
+// (== CLASS_ALIEN_MILITARY) for the skin==1 "tame/friendly" variant.
+#define CLASS_ALIEN_PREDATOR_RAPTOR 15
 
 #define CLASS_VEHICLE 14
+
+// Gunman-specific boss classification constant, confirmed via fresh
+// decompile of monster_endboss::Classify() (literal 0x14=20), see
+// endboss.cpp.
+#define CLASS_ALIEN_BOSS 20
 
 class CBaseEntity;
 class CBaseToggle;

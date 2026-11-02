@@ -211,6 +211,9 @@ void CEnvExplosion::Use(CBaseEntity* pActivator, CBaseEntity* pCaller, USE_TYPE 
 		WRITE_BYTE(TE_EXPLFLAG_NONE);
 		MESSAGE_END();
 	}
+	// Nachtrag 2026-09-06 (Nutzerwunsch: Erschuetterung+Lichtblitz bei
+	// jeder Explosion, siehe util.h/UTIL_ExplosionEffects).
+	UTIL_ExplosionEffects(pev->origin, m_iMagnitude * 2.5f);
 
 	// do damage
 	if ((pev->spawnflags & SF_ENVEXPLOSION_NODAMAGE) == 0)

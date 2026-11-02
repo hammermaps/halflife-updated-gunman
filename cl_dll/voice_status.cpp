@@ -23,6 +23,7 @@
 #include "vgui_loadtga.h"
 #include "vgui_helpers.h"
 #include "VGUI_MouseCode.h"
+#include "gunman_engine_target.h"
 
 
 
@@ -192,6 +193,33 @@ int CVoiceStatus::Init(
 	m_VoiceHeadModel = 0;
 	memset(m_Labels, 0, sizeof(m_Labels));
 
+	m_bInSquelchMode = false;
+
+	m_pHelper = pHelper;
+	m_pParentPanel = pParentPanel;
+	gHUD.AddHudElem(this);
+	m_iFlags = HUD_ACTIVE;
+	HOOK_MESSAGE(VoiceMask);
+	HOOK_MESSAGE(ReqState);
+
+	// Cache the game directory for use when we shut down
+	const char* pchGameDirT = gEngfuncs.pfnGetGameDirectory();
+	m_pchGameDir = (char*)malloc(strlen(pchGameDirT) + 1);
+	strcpy(m_pchGameDir, pchGameDirT);
+
+	return 1;
+}
+
+
+void CVoiceStatus::InitializeVGuiElements()
+{
+#if defined(GUNMAN_ENGINE_XASH3D)
+	// See VGui_Startup: keep the client-side VGUI1 overlay disabled on Xash3D.
+	return;
+#else
+	if (m_pLocalLabel)
+		return;
+
 	for (int i = 0; i < MAX_VOICE_SPEAKERS; i++)
 	{
 		CVoiceLabel* pLabel = &m_Labels[i];
@@ -217,27 +245,17 @@ int CVoiceStatus::Init(
 	}
 
 	m_pLocalLabel = new ImagePanel(NULL);
-
-	m_bInSquelchMode = false;
-
-	m_pHelper = pHelper;
-	m_pParentPanel = pParentPanel;
-	gHUD.AddHudElem(this);
-	m_iFlags = HUD_ACTIVE;
-	HOOK_MESSAGE(VoiceMask);
-	HOOK_MESSAGE(ReqState);
-
-	// Cache the game directory for use when we shut down
-	const char* pchGameDirT = gEngfuncs.pfnGetGameDirectory();
-	m_pchGameDir = (char*)malloc(strlen(pchGameDirT) + 1);
-	strcpy(m_pchGameDir, pchGameDirT);
-
-	return 1;
+#endif
 }
 
 
 bool CVoiceStatus::VidInit()
 {
+#if defined(GUNMAN_ENGINE_XASH3D)
+	return true;
+#endif
+
+	InitializeVGuiElements();
 	FreeBitmaps();
 
 
@@ -305,6 +323,8 @@ void CVoiceStatus::Frame(double frametime)
 	}
 
 	m_BlinkTimer += frametime;
+	if (!m_pLocalLabel)
+		return;
 
 	// Update speaker labels.
 	if (m_pHelper->CanShowSpeakerLabels())

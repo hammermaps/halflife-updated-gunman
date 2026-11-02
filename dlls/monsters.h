@@ -155,17 +155,27 @@ public:
 	void EXPORT BounceGibTouch(CBaseEntity* pOther);
 	void EXPORT StickyGibTouch(CBaseEntity* pOther);
 	void EXPORT WaitTillLand();
+	void EXPORT GibSmokeThink();
 	void LimitVelocity();
 
 	int ObjectCaps() override { return (CBaseEntity::ObjectCaps() & ~FCAP_ACROSS_TRANSITION) | FCAP_DONT_SAVE; }
 	static void SpawnHeadGib(entvars_t* pevVictim);
 	static void SpawnRandomGibs(entvars_t* pevVictim, int cGibs, bool human);
 	static void SpawnStickyGibs(entvars_t* pevVictim, Vector vecOrigin, int cGibs);
+	// Nachtrag 2026-09-06: wie SpawnRandomGibs, aber mit einem
+	// beliebigen, vom Aufrufer vorgegebenen Gib-Modell statt der fest
+	// verdrahteten hgibs.mdl/agibs.mdl - siehe CBaseMonster::
+	// CustomGibModel() in basemonster.h. Nutzt immer body=0 (kein
+	// Submodel-Anzahl-Raten je Modell), also keine Sub-Varianten
+	// zwischen den Gib-Stuecken, nur Position/Physik variiert.
+	static void SpawnCustomGibs(entvars_t* pevVictim, int cGibs, const char* szGibModel, int body = 0,
+								float velocityScale = 1.0f, bool headshotStyle = false, int smokeType = 0);
 
 	int m_bloodColor;
 	int m_cBloodDecals;
 	int m_material;
 	float m_lifeTime;
+	int m_iGibSmokeSprite;
 };
 
 

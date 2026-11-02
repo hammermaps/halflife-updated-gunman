@@ -99,13 +99,11 @@ CBaseEntity* UTIL_FindEntityInSphere(CBaseEntity* pStartEntity, const Vector& ve
 Vector UTIL_VecToAngles(const Vector& vec) { return 0; }
 CSprite* CSprite::SpriteCreate(const char* pSpriteName, const Vector& origin, bool animate) { return 0; }
 void CBeam::PointEntInit(const Vector& start, int endIndex) {}
-const Vector& CBeam::GetStartPos() { return g_vecZero; }
-const Vector& CBeam::GetEndPos() { return g_vecZero; }
 CBeam* CBeam::BeamCreate(const char* pSpriteName, int width) { return NULL; }
 void CSprite::Expand(float scaleSpeed, float fadeSpeed) {}
 
 
-CBaseEntity* CBaseMonster::CheckTraceHullAttack(float flDist, int iDamage, int iDmgType) { return NULL; }
+CBaseEntity* CBaseMonster::CheckTraceHullAttack(float flDist, int iDamage, int iDmgType, TraceResult* pTrace, Vector* pTraceDir) { return NULL; }
 void CBaseMonster::Eat(float flFullDuration) {}
 bool CBaseMonster::FShouldEat() { return true; }
 void CBaseMonster::BarnacleVictimBitten(entvars_t* pevBarnacle) {}
@@ -207,6 +205,7 @@ void CBaseMonster::MonsterInitDead() {}
 bool CBaseMonster::BBoxFlat() { return true; }
 bool CBaseMonster::GetEnemy() { return false; }
 void CBaseMonster::TraceAttack(entvars_t* pevAttacker, float flDamage, Vector vecDir, TraceResult* ptr, int bitsDamageType) {}
+void CBaseMonster::TraceBleed(float flDamage, Vector vecDir, TraceResult* ptr, int bitsDamageType) {}
 CBaseEntity* CBaseMonster::DropItem(const char* pszItemName, const Vector& vecPos, const Vector& vecAng) { return NULL; }
 bool CBaseMonster::ShouldFadeOnDeath() { return false; }
 void CBaseMonster::RadiusDamage(entvars_t* pevInflictor, entvars_t* pevAttacker, float flDamage, int iClassIgnore, int bitsDamageType) {}

@@ -212,12 +212,12 @@ void CFuncTank::Spawn()
 void CFuncTank::Precache()
 {
 	if (!FStringNull(m_iszSpriteSmoke))
-		PRECACHE_MODEL((char*)STRING(m_iszSpriteSmoke));
+		PrecacheModel((char*)STRING(m_iszSpriteSmoke));
 	if (!FStringNull(m_iszSpriteFlash))
-		PRECACHE_MODEL((char*)STRING(m_iszSpriteFlash));
+		PrecacheModel((char*)STRING(m_iszSpriteFlash));
 
 	if (!FStringNull(pev->noise))
-		PRECACHE_SOUND((char*)STRING(pev->noise));
+		PrecacheSound((char*)STRING(pev->noise));
 }
 
 
@@ -894,6 +894,176 @@ void CFuncTankLaser::Fire(const Vector& barrelEnd, const Vector& forward, entvar
 	}
 }
 
+//=========================================================
+// func_tanklaserrust - CFuncRustTankLaser (Gunman Chronicles).
+//
+// Retail is a CFuncTank derivative with a 0x310-byte private payload,
+// not a thin CFuncTankLaser asset variant. The decompiled Rust-only
+// callbacks create two xbeam1 beams and a rustbeam_end sprite, trace
+// both beams with the tank spread, and maintain begin/loop/end sounds:
+// GetRustBeams @0x1001d2d0, Think @0x1001d650, Use/cleanup
+// @0x1001d720, Fire @0x1001d810. The retained "laserentity" key is
+// accepted by Retail but does not select the stock single-env_laser
+// firing path.
+//=========================================================
+class CFuncRustTankLaser : public CFuncTank
+{
+public:
+	void Precache() override;
+	bool KeyValue(KeyValueData* pkvd) override;
+	void Activate() override;
+	void Think() override;
+	void Fire(const Vector& barrelEnd, const Vector& forward, entvars_t* pevAttacker) override;
+
+	bool Save(CSave& save) override;
+	bool Restore(CRestore& restore) override;
+	static TYPEDESCRIPTION m_SaveData[];
+
+private:
+	bool EnsureBeams();
+	void StopBeams();
+
+	CBeam* m_pPrimaryBeam = nullptr;
+	CBeam* m_pSecondaryBeam = nullptr;
+	CSprite* m_pEndSprite = nullptr;
+	float m_flLastBeamFire = 0;
+	float m_flNextLoopSound = 0;
+};
+LINK_ENTITY_TO_CLASS(func_tanklaserrust, CFuncRustTankLaser);
+
+TYPEDESCRIPTION CFuncRustTankLaser::m_SaveData[] =
+	{
+		DEFINE_FIELD(CFuncRustTankLaser, m_pPrimaryBeam, FIELD_CLASSPTR),
+		DEFINE_FIELD(CFuncRustTankLaser, m_pSecondaryBeam, FIELD_CLASSPTR),
+		DEFINE_FIELD(CFuncRustTankLaser, m_pEndSprite, FIELD_CLASSPTR),
+		DEFINE_FIELD(CFuncRustTankLaser, m_flLastBeamFire, FIELD_TIME),
+		DEFINE_FIELD(CFuncRustTankLaser, m_flNextLoopSound, FIELD_TIME),
+	};
+
+IMPLEMENT_SAVERESTORE(CFuncRustTankLaser, CFuncTank);
+
+void CFuncRustTankLaser::Precache()
+{
+	PrecacheModel("sprites/xbeam1.spr");
+	PrecacheModel("sprites/rustbeam_end.spr");
+	PrecacheSound("rustbot/rustbot_turret_begin.wav");
+	PrecacheSound("rustbot/rustbot_turret_end.wav");
+	PrecacheSound("rustbot/rustbot_turret_loop.wav");
+	CFuncTank::Precache();
+}
+
+bool CFuncRustTankLaser::KeyValue(KeyValueData* pkvd)
+{
+	if (FStrEq(pkvd->szKeyName, "laserentity"))
+	{
+		pev->message = ALLOC_STRING(pkvd->szValue);
+		return true;
+	}
+
+	return CFuncTank::KeyValue(pkvd);
+}
+
+bool CFuncRustTankLaser::EnsureBeams()
+{
+	if (!m_pPrimaryBeam)
+	{
+		m_pPrimaryBeam = CBeam::BeamCreate("sprites/xbeam1.spr", 40);
+		if (!m_pPrimaryBeam)
+			return false;
+		m_pPrimaryBeam->SetColor(255, 255, 255);
+		m_pPrimaryBeam->SetBrightness(255);
+		m_pPrimaryBeam->SetNoise(10);
+	}
+
+	if (!m_pSecondaryBeam)
+	{
+		m_pSecondaryBeam = CBeam::BeamCreate("sprites/xbeam1.spr", 55);
+		if (!m_pSecondaryBeam)
+		{
+			UTIL_Remove(m_pPrimaryBeam);
+			m_pPrimaryBeam = nullptr;
+			return false;
+		}
+		m_pSecondaryBeam->SetColor(255, 255, 255);
+		m_pSecondaryBeam->SetBrightness(255);
+		m_pSecondaryBeam->SetNoise(10);
+	}
+
+	return true;
+}
+
+void CFuncRustTankLaser::StopBeams()
+{
+	if (m_pEndSprite)
+	{
+		m_pEndSprite->Expand(10.0f, 500.0f);
+		m_pEndSprite = nullptr;
+	}
+
+	if (m_pPrimaryBeam)
+		UTIL_Remove(m_pPrimaryBeam);
+	if (m_pSecondaryBeam)
+		UTIL_Remove(m_pSecondaryBeam);
+
+	m_pPrimaryBeam = nullptr;
+	m_pSecondaryBeam = nullptr;
+	m_flLastBeamFire = 0;
+	m_flNextLoopSound = 0;
+	EMIT_SOUND(ENT(pev), CHAN_WEAPON, "rustbot/rustbot_turret_end.wav", 1.0, ATTN_NORM);
+}
+
+void CFuncRustTankLaser::Activate()
+{
+	if (!EnsureBeams())
+	{
+		UTIL_Remove(this);
+		ALERT(at_error, "Laser tank with no env_laser!\n");
+	}
+}
+
+void CFuncRustTankLaser::Think()
+{
+	if (m_pPrimaryBeam && gpGlobals->time - m_flLastBeamFire > 0.2f)
+		StopBeams();
+
+	CFuncTank::Think();
+}
+
+void CFuncRustTankLaser::Fire(const Vector& barrelEnd, const Vector& forward, entvars_t* pevAttacker)
+{
+	if (m_fireLast == 0 || !EnsureBeams())
+	{
+		CFuncTank::Fire(barrelEnd, forward, pevAttacker);
+		return;
+	}
+
+	if (m_flLastBeamFire == 0)
+		EMIT_SOUND(ENT(pev), CHAN_WEAPON, "rustbot/rustbot_turret_begin.wav", 1.0, ATTN_NORM);
+	if (gpGlobals->time >= m_flNextLoopSound)
+	{
+		EMIT_SOUND(ENT(pev), CHAN_STATIC, "rustbot/rustbot_turret_loop.wav", 1.0, ATTN_NORM);
+		m_flNextLoopSound = gpGlobals->time + 1.0f;
+	}
+
+	UTIL_MakeAimVectors(pev->angles);
+	TraceResult tr;
+	TankTrace(barrelEnd, forward, gTankSpread[m_spread], tr);
+
+	m_pPrimaryBeam->PointsInit(barrelEnd, tr.vecEndPos);
+	m_pSecondaryBeam->PointsInit(barrelEnd, tr.vecEndPos);
+	if (!m_pEndSprite)
+	{
+		m_pEndSprite = CSprite::SpriteCreate("sprites/rustbeam_end.spr", tr.vecEndPos, true);
+		if (m_pEndSprite)
+			m_pEndSprite->SetTransparency(kRenderTransAdd, 255, 255, 255, 255, kRenderFxNoDissipation);
+	}
+	if (m_pEndSprite)
+		UTIL_SetOrigin(m_pEndSprite->pev, tr.vecEndPos);
+
+	m_flLastBeamFire = gpGlobals->time;
+	CFuncTank::Fire(barrelEnd, forward, pevAttacker);
+}
+
 class CFuncTankRocket : public CFuncTank
 {
 public:
@@ -904,7 +1074,8 @@ LINK_ENTITY_TO_CLASS(func_tankrocket, CFuncTankRocket);
 
 void CFuncTankRocket::Precache()
 {
-	UTIL_PrecacheOther("rpg_rocket");
+	// Retail func_tankrocket uses Gunman's DML projectile, not the SDK RPG.
+	UTIL_PrecacheOther("dmlRocket");
 	CFuncTank::Precache();
 }
 
@@ -919,9 +1090,14 @@ void CFuncTankRocket::Fire(const Vector& barrelEnd, const Vector& forward, entva
 		int bulletCount = (gpGlobals->time - m_fireLast) * m_fireRate;
 		if (bulletCount > 0)
 		{
+			// Keep the retail catch-up limit; a delayed think must not emit an
+			// unbounded number of projectiles.
+			if (bulletCount > 2)
+				bulletCount = 2;
+
 			for (i = 0; i < bulletCount; i++)
 			{
-				CBaseEntity* pRocket = CBaseEntity::Create("rpg_rocket", barrelEnd, pev->angles, edict());
+				CBaseEntity* pRocket = CBaseEntity::Create("dmlRocket", barrelEnd, pev->angles, edict());
 			}
 			CFuncTank::Fire(barrelEnd, forward, pev);
 		}

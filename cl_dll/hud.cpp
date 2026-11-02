@@ -90,6 +90,26 @@ cvar_t* r_decals = nullptr;
 void ShutdownInput();
 
 //DECLARE_MESSAGE(m_Logo, Logo)
+// Retail "SliderX" (Chemgun-Regler, Server schickt Regler-Nr. und Wert); die Retail-Oberflaeche ist nicht nachgebaut,
+// die Werte werden nur abgelegt.
+int g_rgSliderValues[48];
+
+int __MsgFunc_SliderX(const char* pszName, int iSize, void* pbuf)
+{
+	BEGIN_READ(pbuf, iSize);
+	const int iSlider = READ_BYTE();
+	const int iValue = READ_BYTE();
+	if (iSlider >= 0 && iSlider < 48)
+		g_rgSliderValues[iSlider] = iValue;
+	return 1;
+}
+
+// Retail "Zoom" (Sniper-Zoom der Gauss-Pistole): Handler CHudZoom (hud_zoom.cpp)
+void CHud::SetZoomSensitivity(float flRatio)
+{
+	m_flMouseSensitivity = flRatio > 0 ? IN_GetMouseSensitivity() * flRatio * CVAR_GET_FLOAT("zoom_sensitivity_ratio") : 0;
+}
+
 int __MsgFunc_Logo(const char* pszName, int iSize, void* pbuf)
 {
 	return static_cast<int>(gHUD.MsgFunc_Logo(pszName, iSize, pbuf));
@@ -284,6 +304,7 @@ int __MsgFunc_AllowSpec(const char* pszName, int iSize, void* pbuf)
 void CHud::Init()
 {
 	HOOK_MESSAGE(Logo);
+	HOOK_MESSAGE(SliderX);
 	HOOK_MESSAGE(ResetHUD);
 	HOOK_MESSAGE(GameMode);
 	HOOK_MESSAGE(InitHUD);
@@ -321,6 +342,10 @@ void CHud::Init()
 
 	CVAR_CREATE("hud_classautokill", "1", FCVAR_ARCHIVE | FCVAR_USERINFO); // controls whether or not to suicide immediately on TF class switch
 	CVAR_CREATE("hud_takesshots", "0", FCVAR_ARCHIVE);					   // controls whether or not to automatically take screenshots at the end of a round
+	// Gunman's Life-Support-Gauge HUD (CHudHealth/CHudBattery) switches between a
+	// compact and a large layout based on this cvar and screen width, RE-confirmed
+	// in findings/client/client_dll_kickoff.md Nachtrag 8 - not a stock SDK cvar.
+	CVAR_CREATE("hud_smallhud", "0", FCVAR_ARCHIVE);
 
 
 	m_iLogo = 0;
@@ -357,10 +382,13 @@ void CHud::Init()
 
 	m_Ammo.Init();
 	m_Health.Init();
+	m_Temperature.Init();
+	m_Zoom.Init();
 	m_SayText.Init();
 	m_Spectator.Init();
 	m_Geiger.Init();
 	m_Train.Init();
+	m_Tank.Init();
 	m_Battery.Init();
 	m_Flash.Init();
 	m_Message.Init();
@@ -431,11 +459,9 @@ void CHud::VidInit()
 	m_hsprLogo = 0;
 	m_hsprCursor = 0;
 
-	if (ScreenWidth > 2560 && ScreenHeight > 1600)
-		m_iRes = 2560;
-	else if (ScreenWidth >= 1280 && ScreenHeight > 720)
-		m_iRes = 1280;
-	else if (ScreenWidth >= 640)
+	// The staged Gunman HUD has 320/640 resources only. Keep high-resolution
+	// layout scaling separate from the resource family selected here.
+	if (ScreenWidth >= 640)
 		m_iRes = 640;
 	else
 		m_iRes = 320;
@@ -510,9 +536,12 @@ void CHud::VidInit()
 
 	m_Ammo.VidInit();
 	m_Health.VidInit();
+	m_Temperature.VidInit();
+	m_Zoom.VidInit();
 	m_Spectator.VidInit();
 	m_Geiger.VidInit();
 	m_Train.VidInit();
+	m_Tank.VidInit();
 	m_Battery.VidInit();
 	m_Flash.VidInit();
 	m_Message.VidInit();

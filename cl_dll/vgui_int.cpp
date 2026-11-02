@@ -23,6 +23,7 @@
 #include "camera.h"
 #include "in_defs.h"
 #include "vgui_TeamFortressViewport.h"
+#include "gunman_engine_target.h"
 
 using namespace vgui;
 
@@ -38,6 +39,12 @@ void* VGui_GetPanel()
 
 void VGui_Startup()
 {
+#if defined(GUNMAN_ENGINE_XASH3D)
+	// FWGS hlsdk-portable leaves VGUI1 disabled by default.  Xash3D's main
+	// menu is VGUI2-based; its VGUI1 bridge does not initialise the Scheme
+	// required by this legacy Team Fortress viewport when a level loads.
+	return;
+#else
 	Panel* root = (Panel*)VGui_GetPanel();
 	root->setBgColor(128, 128, 0, 0);
 	//root->setNonPainted(false);
@@ -62,10 +69,21 @@ void VGui_Startup()
 		gViewPort = new TeamFortressViewport(0, 0, root->getWide(), root->getTall());
 		gViewPort->setParent(root);
 	}
+#endif
 }
 
 void VGui_Shutdown()
 {
 	delete gViewPort;
 	gViewPort = NULL;
+}
+
+bool VGui_UpdateGunmanHud(bool visible, bool largeHud)
+{
+	if (gViewPort != NULL)
+	{
+		gViewPort->UpdateGunmanHud(visible, largeHud);
+		return true;
+	}
+	return false;
 }

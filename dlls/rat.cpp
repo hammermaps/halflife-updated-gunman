@@ -90,7 +90,7 @@ void CRat::Spawn()
 //=========================================================
 void CRat::Precache()
 {
-	PRECACHE_MODEL("models/bigrat.mdl");
+	PrecacheModel("models/bigrat.mdl");
 }
 
 //=========================================================

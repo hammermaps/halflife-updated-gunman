@@ -57,19 +57,19 @@ void CPython::Spawn()
 
 void CPython::Precache()
 {
-	PRECACHE_MODEL("models/v_357.mdl");
-	PRECACHE_MODEL("models/w_357.mdl");
-	PRECACHE_MODEL("models/p_357.mdl");
+	PrecacheModel("models/v_357.mdl");
+	PrecacheModel("models/w_357.mdl");
+	PrecacheModel("models/p_357.mdl");
 
-	PRECACHE_MODEL("models/w_357ammobox.mdl");
-	PRECACHE_SOUND("items/9mmclip1.wav");
+	PrecacheModel("models/w_357ammobox.mdl");
+	PrecacheSound("items/9mmclip1.wav");
 
-	PRECACHE_SOUND("weapons/357_reload1.wav");
-	PRECACHE_SOUND("weapons/357_cock1.wav");
-	PRECACHE_SOUND("weapons/357_shot1.wav");
-	PRECACHE_SOUND("weapons/357_shot2.wav");
+	PrecacheSound("weapons/357_reload1.wav");
+	PrecacheSound("weapons/357_cock1.wav");
+	PrecacheSound("weapons/357_shot1.wav");
+	PrecacheSound("weapons/357_shot2.wav");
 
-	m_usFirePython = PRECACHE_EVENT(1, "events/python.sc");
+	m_usFirePython = PrecacheEvent(1, "events/python.sc");
 }
 
 bool CPython::Deploy()
@@ -261,8 +261,8 @@ class CPythonAmmo : public CBasePlayerAmmo
 	}
 	void Precache() override
 	{
-		PRECACHE_MODEL("models/w_357ammobox.mdl");
-		PRECACHE_SOUND("items/9mmclip1.wav");
+		PrecacheModel("models/w_357ammobox.mdl");
+		PrecacheSound("items/9mmclip1.wav");
 	}
 	bool AddAmmo(CBaseEntity* pOther) override
 	{

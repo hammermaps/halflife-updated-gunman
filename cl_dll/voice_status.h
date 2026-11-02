@@ -87,6 +87,7 @@ public:
 	
 	// ackPosition is the bottom position of where CVoiceStatus will draw the voice acknowledgement labels.
 	virtual bool VidInit();
+	void InitializeVGuiElements();
 
 
 public:

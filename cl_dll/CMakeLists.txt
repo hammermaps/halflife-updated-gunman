@@ -81,6 +81,7 @@ target_sources(client PRIVATE
 	GameStudioModelRenderer.cpp
 	geiger.cpp
 	health.cpp
+	temperature.cpp
 	hud.cpp
 	hud_msg.cpp
 	hud_redraw.cpp
@@ -95,10 +96,12 @@ target_sources(client PRIVATE
 	saytext.cpp
 	statusbar.cpp
 	status_icons.cpp
+	hud_zoom.cpp
 	StudioModelRenderer.cpp
 	studio_util.cpp
 	text_message.cpp
 	train.cpp
+	tank.cpp
 	tri.cpp
 	util.cpp
 	vgui_ClassMenu.cpp
@@ -126,21 +129,7 @@ target_sources(client PRIVATE
 	../common/mathlib.cpp
 	../common/parsemsg.cpp
 
-	../dlls/crossbow.cpp
-	../dlls/crowbar.cpp
-	../dlls/egon.cpp
-	../dlls/gauss.cpp
-	../dlls/handgrenade.cpp
-	../dlls/hornetgun.cpp
-	../dlls/mp5.cpp
-	../dlls/python.cpp
-	../dlls/rpg.cpp
-	../dlls/satchel.cpp
-	../dlls/shotgun.cpp
-	../dlls/squeakgrenade.cpp
-	../dlls/tripmine.cpp
-	../dlls/weapons_shared.cpp
-	../dlls/glock.cpp
+../dlls/weapons_shared.cpp
 
 	../game_shared/filesystem_utils.cpp
 	../game_shared/vgui_checkbutton2.cpp

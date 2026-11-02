@@ -32,9 +32,18 @@
 
 extern Vector VecBModelOrigin(entvars_t* pevBModel);
 
-#define GERMAN_GIB_COUNT 4
 #define HUMAN_GIB_COUNT 6
 #define ALIEN_GIB_COUNT 4
+
+static const char* const g_szMonsterBloodSprayModels[] = {
+	nullptr,
+	"sprites/gorebot.spr",
+	"sprites/gorebeak.spr",
+	"sprites/gorexeno.spr",
+	"sprites/goretube.spr",
+	"sprites/gorehuman.spr",
+	"sprites/gorebirth.spr",
+};
 
 
 // HACKHACK -- The gib velocity equations don't work
@@ -52,12 +61,6 @@ void CGib::LimitVelocity()
 void CGib::SpawnStickyGibs(entvars_t* pevVictim, Vector vecOrigin, int cGibs)
 {
 	int i;
-
-	if (g_Language == LANGUAGE_GERMAN)
-	{
-		// no sticky gibs in germany right now!
-		return;
-	}
 
 	for (i = 0; i < cGibs; i++)
 	{
@@ -122,16 +125,8 @@ void CGib::SpawnHeadGib(entvars_t* pevVictim)
 {
 	CGib* pGib = GetClassPtr((CGib*)NULL);
 
-	if (g_Language == LANGUAGE_GERMAN)
-	{
-		pGib->Spawn("models/germangibs.mdl"); // throw one head
-		pGib->pev->body = 0;
-	}
-	else
-	{
-		pGib->Spawn("models/hgibs.mdl"); // throw one head
-		pGib->pev->body = 0;
-	}
+	pGib->Spawn("models/hgibs.mdl"); // throw one head
+	pGib->pev->body = 0;
 
 	if (pevVictim)
 	{
@@ -184,25 +179,17 @@ void CGib::SpawnRandomGibs(entvars_t* pevVictim, int cGibs, bool human)
 	{
 		CGib* pGib = GetClassPtr((CGib*)NULL);
 
-		if (g_Language == LANGUAGE_GERMAN)
+		if (human)
 		{
-			pGib->Spawn("models/germangibs.mdl");
-			pGib->pev->body = RANDOM_LONG(0, GERMAN_GIB_COUNT - 1);
+			// human pieces
+			pGib->Spawn("models/hgibs.mdl");
+			pGib->pev->body = RANDOM_LONG(1, HUMAN_GIB_COUNT - 1); // start at one to avoid throwing random amounts of skulls (0th gib)
 		}
 		else
 		{
-			if (human)
-			{
-				// human pieces
-				pGib->Spawn("models/hgibs.mdl");
-				pGib->pev->body = RANDOM_LONG(1, HUMAN_GIB_COUNT - 1); // start at one to avoid throwing random amounts of skulls (0th gib)
-			}
-			else
-			{
-				// aliens
-				pGib->Spawn("models/agibs.mdl");
-				pGib->pev->body = RANDOM_LONG(0, ALIEN_GIB_COUNT - 1);
-			}
+			// aliens
+			pGib->Spawn("models/agibs.mdl");
+			pGib->pev->body = RANDOM_LONG(0, ALIEN_GIB_COUNT - 1);
 		}
 
 		if (pevVictim)
@@ -245,6 +232,132 @@ void CGib::SpawnRandomGibs(entvars_t* pevVictim, int cGibs, bool human)
 			UTIL_SetSize(pGib->pev, Vector(0, 0, 0), Vector(0, 0, 0));
 		}
 		pGib->LimitVelocity();
+	}
+}
+
+
+// Nachtrag 2026-09-06 (In-Game-Test-Meldung: Rust Gunner wirft Fleisch-
+// statt Metallgibs): identisch zu SpawnRandomGibs, aber mit einem vom
+// Aufrufer vorgegebenen Gib-Modell (siehe CBaseMonster::CustomGibModel()
+// in basemonster.h) statt der fest verdrahteten hgibs.mdl/agibs.mdl.
+// Kein Submodel-Body-Index-Raten (immer body=0), da die Anzahl der
+// Sub-Varianten je Modell hier nicht bekannt ist.
+void CGib::SpawnCustomGibs(entvars_t* pevVictim, int cGibs, const char* szGibModel, int body,
+							   float velocityScale, bool headshotStyle, int smokeType)
+{
+	if (headshotStyle && FStrEq(szGibModel, "models/hgibs.mdl") && CVAR_GET_FLOAT("violence_germany") != 0.0f)
+		return;
+
+	int cSplat;
+
+	for (cSplat = 0; cSplat < cGibs; cSplat++)
+	{
+		CGib* pGib = GetClassPtr((CGib*)NULL);
+		pGib->Spawn(szGibModel);
+		pGib->pev->body = body;
+		pGib->m_iGibSmokeSprite = 0;
+
+		if (pevVictim)
+		{
+			if (headshotStyle)
+				pGib->pev->skin = pevVictim->skin;
+
+			if (headshotStyle)
+			{
+				UTIL_MakeVectors(pevVictim->angles);
+				pGib->pev->origin = pevVictim->origin + gpGlobals->v_forward * pevVictim->view_ofs.x -
+					gpGlobals->v_right * pevVictim->view_ofs.y + gpGlobals->v_up * pevVictim->view_ofs.z;
+				pGib->pev->origin.x += RANDOM_FLOAT(-4, 4);
+				pGib->pev->origin.y += RANDOM_FLOAT(-4, 4);
+				pGib->pev->origin.z += RANDOM_FLOAT(-4, 4);
+
+				edict_t* pentPlayer = FIND_CLIENT_IN_PVS(pGib->edict());
+				if (pentPlayer && RANDOM_LONG(0, 99) < 5)
+				{
+					entvars_t* pevPlayer = VARS(pentPlayer);
+					pGib->pev->velocity = ((pevPlayer->origin + pevPlayer->view_ofs) - pGib->pev->origin).Normalize() * 300;
+					pGib->pev->velocity.z += 100;
+				}
+				else
+				{
+					pGib->pev->velocity = Vector(RANDOM_FLOAT(-100, 100), RANDOM_FLOAT(-100, 100), RANDOM_FLOAT(200, 300));
+				}
+
+				pGib->pev->avelocity.x = RANDOM_FLOAT(100, 200);
+				pGib->pev->avelocity.y = RANDOM_FLOAT(100, 300);
+			}
+			else
+			{
+				pGib->pev->origin.x = pevVictim->absmin.x + pevVictim->size.x * (RANDOM_FLOAT(0, 1));
+				pGib->pev->origin.y = pevVictim->absmin.y + pevVictim->size.y * (RANDOM_FLOAT(0, 1));
+				pGib->pev->origin.z = pevVictim->absmin.z + pevVictim->size.z * (RANDOM_FLOAT(0, 1)) + 1;
+
+				pGib->pev->velocity = g_vecAttackDir * -1;
+				pGib->pev->velocity.x += RANDOM_FLOAT(-0.25, 0.25);
+				pGib->pev->velocity.y += RANDOM_FLOAT(-0.25, 0.25);
+				pGib->pev->velocity.z += RANDOM_FLOAT(-0.25, 0.25);
+				pGib->pev->velocity = pGib->pev->velocity * RANDOM_FLOAT(300, 400);
+
+				pGib->pev->avelocity.x = RANDOM_FLOAT(100, 200);
+				pGib->pev->avelocity.y = RANDOM_FLOAT(100, 300);
+			}
+
+			pGib->m_bloodColor = (CBaseEntity::Instance(pevVictim))->BloodColor();
+
+			if (headshotStyle)
+			{
+				if (pevVictim->health <= -200)
+					pGib->pev->velocity = pGib->pev->velocity * 4;
+				else if (pevVictim->health <= -50)
+					pGib->pev->velocity = pGib->pev->velocity * 2;
+				pGib->pev->velocity = pGib->pev->velocity * velocityScale;
+			}
+			else if (pevVictim->health > -50)
+				pGib->pev->velocity = pGib->pev->velocity * 0.7;
+			else if (pevVictim->health > -200)
+				pGib->pev->velocity = pGib->pev->velocity * 2;
+			else
+				pGib->pev->velocity = pGib->pev->velocity * 4;
+
+			pGib->pev->solid = SOLID_BBOX;
+			UTIL_SetSize(pGib->pev, Vector(0, 0, 0), Vector(0, 0, 0));
+		}
+		pGib->LimitVelocity();
+		if (headshotStyle && smokeType == 2)
+		{
+			pGib->m_iGibSmokeSprite = MODEL_INDEX(CVAR_GET_FLOAT("violence_germany") != 0.0f ?
+				"sprites/gorebot.spr" : "sprites/gibhuman.spr");
+			pGib->SetThink(&CGib::GibSmokeThink);
+			pGib->pev->nextthink = gpGlobals->time + 0.1f;
+			pGib->m_lifeTime = pGib->pev->nextthink + 25.0f;
+		}
+	}
+}
+
+void CGib::GibSmokeThink()
+{
+	pev->nextthink = gpGlobals->time + 0.1f;
+	if (m_lifeTime < gpGlobals->time)
+	{
+		SetThink(&CBaseEntity::SUB_StartFadeOut);
+		return;
+	}
+
+	if ((pev->flags & FL_ONGROUND) == 0)
+	{
+		MESSAGE_BEGIN(MSG_PAS, SVC_TEMPENTITY, pev->origin);
+		WRITE_BYTE(TE_SPRITE_SPRAY);
+		WRITE_COORD(pev->origin.x);
+		WRITE_COORD(pev->origin.y);
+		WRITE_COORD(pev->origin.z);
+		WRITE_COORD(0);
+		WRITE_COORD(0);
+		WRITE_COORD(1);
+		WRITE_SHORT(m_iGibSmokeSprite);
+		WRITE_BYTE(1);
+		WRITE_BYTE(100);
+		WRITE_BYTE(20);
+		MESSAGE_END();
 	}
 }
 
@@ -303,8 +416,18 @@ void CBaseMonster::GibMonster()
 
 	EMIT_SOUND(ENT(pev), CHAN_WEAPON, "common/bodysplat.wav", 1, ATTN_NORM);
 
+	// Nachtrag 2026-09-06: siehe CBaseMonster::CustomGibModel() -
+	// Klassen mit eigenem, bereits precachtem Gib-Modell (gunnergibs.mdl
+	// usw.) verwenden dieses statt der generischen Stock-SDK-Gibs.
+	const char* customGibModel = CustomGibModel();
+	if (customGibModel != nullptr)
+	{
+		if (CVAR_GET_FLOAT("violence_agibs") != 0)
+			CGib::SpawnCustomGibs(pev, 4, customGibModel);
+		gibbed = true;
+	}
 	// only humans throw skulls !!!UNDONE - eventually monsters will have their own sets of gibs
-	if (HasHumanGibs())
+	else if (HasHumanGibs())
 	{
 		if (CVAR_GET_FLOAT("violence_hgibs") != 0) // Only the player will ever get here
 		{
@@ -541,7 +664,12 @@ void CBaseMonster::CallGibMonster()
 {
 	bool fade = false;
 
-	if (HasHumanGibs())
+	if (CustomGibModel() != nullptr)
+	{
+		if (CVAR_GET_FLOAT("violence_agibs") == 0)
+			fade = true;
+	}
+	else if (HasHumanGibs())
 	{
 		if (CVAR_GET_FLOAT("violence_hgibs") == 0)
 			fade = true;
@@ -722,7 +850,7 @@ void CGib::BounceGibTouch(CBaseEntity* pOther)
 	}
 	else
 	{
-		if (g_Language != LANGUAGE_GERMAN && m_cBloodDecals > 0 && m_bloodColor != DONT_BLEED)
+		if (m_cBloodDecals > 0 && m_bloodColor != DONT_BLEED)
 		{
 			vecSpot = pev->origin + Vector(0, 0, 8); //move up a bit, and trace down.
 			UTIL_TraceLine(vecSpot, vecSpot + Vector(0, 0, -24), ignore_monsters, ENT(pev), &tr);
@@ -1043,9 +1171,9 @@ void RadiusDamage(Vector vecSrc, entvars_t* pevInflictor, entvars_t* pevAttacker
 	else
 		falloff = 1.0;
 
-	vecSrc.z += 1; // in case grenade is lying on the ground
-
 	const bool bInWater = (UTIL_PointContents(vecSrc) == CONTENTS_WATER);
+
+	vecSrc.z += 1; // in case grenade is lying on the ground
 
 	if (!pevAttacker)
 		pevAttacker = pevInflictor;
@@ -1126,7 +1254,7 @@ void CBaseMonster::RadiusDamage(Vector vecSrc, entvars_t* pevInflictor, entvars_
 //
 // Used for many contact-range melee attacks. Bites, claws, etc.
 //=========================================================
-CBaseEntity* CBaseMonster::CheckTraceHullAttack(float flDist, int iDamage, int iDmgType)
+CBaseEntity* CBaseMonster::CheckTraceHullAttack(float flDist, int iDamage, int iDmgType, TraceResult* pTrace, Vector* pTraceDir)
 {
 	TraceResult tr;
 
@@ -1134,6 +1262,8 @@ CBaseEntity* CBaseMonster::CheckTraceHullAttack(float flDist, int iDamage, int i
 		UTIL_MakeVectors(pev->angles);
 	else
 		UTIL_MakeAimVectors(pev->angles);
+	if (pTraceDir)
+		*pTraceDir = gpGlobals->v_forward;
 
 	Vector vecStart = pev->origin;
 	vecStart.z += pev->size.z * 0.5;
@@ -1143,6 +1273,9 @@ CBaseEntity* CBaseMonster::CheckTraceHullAttack(float flDist, int iDamage, int i
 
 	if (tr.pHit)
 	{
+		if (pTrace)
+			*pTrace = tr;
+
 		CBaseEntity* pEntity = CBaseEntity::Instance(tr.pHit);
 
 		if (iDamage > 0)
@@ -1649,6 +1782,49 @@ void CBaseEntity::TraceBleed(float flDamage, Vector vecDir, TraceResult* ptr, in
 			UTIL_BloodDecalTrace(&Bloodtr, BloodColor());
 		}
 	}
+}
+
+void CBaseMonster::TraceBleed(float flDamage, Vector vecDir, TraceResult* ptr, int bitsDamageType)
+{
+	// Retail CBaseMonster::TraceBleed first emits a profile-specific sprite spray,
+	// then runs the base wall-decal traces. The profile indices and sprite types
+	// come from the retail MonsterProfile table (column +0x0c).
+	static const int kProfileBloodSprayType[] = {
+		0, 5, 1, 5, 1, 0, 0, 0, 5, 5, 5, 0, 0, 1,
+		1, 1, 2, 6, 3, 4, 3, 5, 0, 0, 5, 6, 1,
+	};
+
+	const int iProfile = MonsterProfile();
+	if (ptr && iProfile > 0 && iProfile < (int)ARRAYSIZE(kProfileBloodSprayType))
+	{
+		const int iSprayType = kProfileBloodSprayType[iProfile];
+		if (iSprayType > 0 && iSprayType < (int)ARRAYSIZE(g_szMonsterBloodSprayModels) &&
+			CVAR_GET_FLOAT("violence_ablood") != 0.0f)
+		{
+			const int iSprite = MODEL_INDEX(g_szMonsterBloodSprayModels[iSprayType]);
+			if (iSprite > 0)
+			{
+				int iCount = (int)(flDamage * 0.5f);
+				iCount = V_min(iCount, 50);
+
+				MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, ptr->vecEndPos);
+				WRITE_BYTE(TE_SPRITE_SPRAY);
+				WRITE_COORD(ptr->vecEndPos.x);
+				WRITE_COORD(ptr->vecEndPos.y);
+				WRITE_COORD(ptr->vecEndPos.z);
+				WRITE_COORD(vecDir.x);
+				WRITE_COORD(vecDir.y);
+				WRITE_COORD(vecDir.z);
+				WRITE_SHORT(iSprite);
+				WRITE_BYTE(iCount);
+				WRITE_BYTE(100);
+				WRITE_BYTE(100);
+				MESSAGE_END();
+			}
+		}
+	}
+
+	CBaseEntity::TraceBleed(flDamage, vecDir, ptr, bitsDamageType);
 }
 
 //=========================================================

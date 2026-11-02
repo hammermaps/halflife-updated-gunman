@@ -546,15 +546,15 @@ void CISlave::Spawn()
 //=========================================================
 void CISlave::Precache()
 {
-	PRECACHE_MODEL("models/islave.mdl");
-	PRECACHE_MODEL("sprites/lgtning.spr");
-	PRECACHE_SOUND("debris/zap1.wav");
-	PRECACHE_SOUND("debris/zap4.wav");
-	PRECACHE_SOUND("weapons/electro4.wav");
-	PRECACHE_SOUND("hassault/hw_shoot1.wav");
-	PRECACHE_SOUND("zombie/zo_pain2.wav");
-	PRECACHE_SOUND("headcrab/hc_headbite.wav");
-	PRECACHE_SOUND("weapons/cbar_miss1.wav");
+	PrecacheModel("models/islave.mdl");
+	PrecacheModel("sprites/lgtning.spr");
+	PrecacheSound("debris/zap1.wav");
+	PrecacheSound("debris/zap4.wav");
+	PrecacheSound("weapons/electro4.wav");
+	PrecacheSound("hassault/hw_shoot1.wav");
+	PrecacheSound("zombie/zo_pain2.wav");
+	PrecacheSound("headcrab/hc_headbite.wav");
+	PrecacheSound("weapons/cbar_miss1.wav");
 
 	PRECACHE_SOUND_ARRAY(pAttackHitSounds);
 	PRECACHE_SOUND_ARRAY(pAttackMissSounds);

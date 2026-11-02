@@ -1,4 +1,10 @@
-add_library(hl SHARED $<$<PLATFORM_ID:Windows>:hl.def>)
+# MSVC's linker understands the SECTIONS directive in hl.def (used to
+# force .data writable); GNU ld's .def parser does not, so MinGW cross
+# builds use a filtered copy without it (a plain SHARED DLL's .data
+# section is writable by default under GNU ld anyway).
+add_library(hl SHARED
+	$<$<AND:$<PLATFORM_ID:Windows>,$<CXX_COMPILER_ID:MSVC>>:hl.def>
+	$<$<AND:$<PLATFORM_ID:Windows>,$<NOT:$<CXX_COMPILER_ID:MSVC>>>:hl.mingw.def>)
 
 set_common_properties(hl)
 
@@ -22,39 +28,54 @@ target_sources(hl PRIVATE
 	apache.cpp
 	barnacle.cpp
 	barney.cpp
+	beamgun.cpp
 	bigmomma.cpp
 	bloater.cpp
 	bmodels.cpp
 	bullsquid.cpp
 	buttons.cpp
 	cbase.cpp
+	chemgun.cpp
+	customize_items.cpp
+	cinematic2_misc.cpp
 	client.cpp
 	combat.cpp
 	controller.cpp
-	crossbow.cpp
-	crowbar.cpp
 	defaultai.cpp
+	dml.cpp
+	dml_customization.cpp
+	dmlgrenade.cpp
 	doors.cpp
 	effects.cpp
-	egon.cpp
+	endboss.cpp
+	end_misc.cpp
 	explode.cpp
+	fists.cpp
 	flyingmonster.cpp
 	func_break.cpp
 	func_tank.cpp
 	game.cpp
 	gamerules.cpp
 	gargantua.cpp
-	gauss.cpp
+	gausspistol.cpp
 	genericmonster.cpp
 	ggrenade.cpp
 	gman.cpp
-	handgrenade.cpp
+	gunman_custom_entities.cpp
 	hassassin.cpp
 	headcrab.cpp
 	healthkit.cpp
 	hgrunt.cpp
+	human_bandit.cpp
+	chemgrenade.cpp
+	fastshot.cpp
+	human_base.cpp
+	human_chopper.cpp
+	human_demoman.cpp
+	human_gunman.cpp
+	human_scientist.cpp
+	human_unarmed.cpp
 	hornet.cpp
-	hornetgun.cpp
 	houndeye.cpp
 	h_ai.cpp
 	h_battery.cpp
@@ -67,11 +88,20 @@ target_sources(hl PRIVATE
 	leech.cpp
 	lights.cpp
 	maprules.cpp
+	cutcontent_penta_battery.cpp
+	basebird.cpp
+	flightsteer.cpp
+	mayan0a_fauna.cpp
+	mayan0b_misc.cpp
+	mayan1_misc.cpp
+	mayan3a_misc.cpp
+	mayan4_misc.cpp
+	mayan6_misc.cpp
 	monstermaker.cpp
 	monsters.cpp
 	monsterstate.cpp
 	mortar.cpp
-	mp5.cpp
+	minigun.cpp
 	multiplay_gamerules.cpp
 	nihilanth.cpp
 	nodes.cpp
@@ -81,11 +111,18 @@ target_sources(hl PRIVATE
 	plane.cpp
 	plats.cpp
 	player.cpp
-	python.cpp
 	rat.cpp
 	roach.cpp
-	rpg.cpp
-	satchel.cpp
+	rust1_misc.cpp
+	rust2a_misc.cpp
+	rust2b_misc.cpp
+	rust4a_misc.cpp
+	rust4b_misc.cpp
+	rust5a_misc.cpp
+	rust6d_misc.cpp
+	rebar_fauna.cpp
+	rebar_misc.cpp
+	rust7_misc.cpp
 	schedule.cpp
 	scientist.cpp
 	scripted.cpp
@@ -96,22 +133,22 @@ target_sources(hl PRIVATE
 	soundent.cpp
 	spectator.cpp
 	squadmonster.cpp
-	squeakgrenade.cpp
 	subs.cpp
 	talkmonster.cpp
 	teamplay_gamerules.cpp
 	tempmonster.cpp
 	tentacle.cpp
 	triggers.cpp
-	tripmine.cpp
 	turret.cpp
 	UserMessages.cpp
 	util.cpp
 	vehicle.cpp
+	vehicle_tank.cpp
+	weapon_aicore.cpp
+	west1_misc.cpp
 	weapons.cpp
 	weapons_shared.cpp
 	world.cpp
-	glock.cpp
 	xen.cpp
 	zombie.cpp
 

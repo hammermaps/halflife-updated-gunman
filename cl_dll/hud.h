@@ -101,6 +101,8 @@ public:
 	bool Init() override;
 	bool VidInit() override;
 	bool Draw(float flTime) override;
+	// Naeherung (nicht Retail-belegt): Zielvisier-Sprite am Ziel im Blickkegel, siehe ammo.cpp.
+	void DrawAutoaimTarget();
 	void Think() override;
 	void Reset() override;
 	bool DrawWList(float flTime);
@@ -126,6 +128,9 @@ public:
 	void UserCmd_Close();
 	void UserCmd_NextWeapon();
 	void UserCmd_PrevWeapon();
+
+public:
+	WEAPON* GetCurrentWeapon() { return m_pWeapon; }
 
 private:
 	float m_fFade;
@@ -163,6 +168,7 @@ private:
 
 
 #include "health.h"
+#include "temperature.h"
 
 
 #define FADE_TIME 100
@@ -197,6 +203,35 @@ public:
 private:
 	HSPRITE m_hSprite;
 	int m_iPos;
+};
+
+// Gunman Battle Tank direction/impact display. Retail client.dll class
+// CHudTankControl, messages Tank/TankBody/TurretPos.
+class CHudTankControl : public CHudBase
+{
+public:
+	bool Init() override;
+	bool VidInit() override;
+	bool Draw(float flTime) override;
+	void Reset() override;
+	bool MsgFunc_Tank(const char* pszName, int iSize, void* pbuf);
+	bool MsgFunc_TankBody(const char* pszName, int iSize, void* pbuf);
+	bool MsgFunc_TurretPos(const char* pszName, int iSize, void* pbuf);
+
+private:
+	int m_iBodyState = 0;
+	int m_iTurretFrame = 0;
+	float m_flBodyStateUntil = 0;
+	cvar_t* m_pCvarTankHud = nullptr;
+	int m_iBodyTL = -1;
+	int m_iBodyTR = -1;
+	int m_iBodyBL = -1;
+	int m_iBodyBR = -1;
+	int m_iBodyHitTL = -1;
+	int m_iBodyHitTR = -1;
+	int m_iBodyHitBL = -1;
+	int m_iBodyHitBR = -1;
+	int m_iTurret = -1;
 };
 
 //
@@ -337,6 +372,13 @@ private:
 	int m_iBatMax;
 	float m_fFade;
 	int m_iHeight; // width of the battery innards
+
+	// Gunman's Life-Support-Gauge HUD look (RE-confirmed, findings/client/
+	// client_dll_kickoff.md Nachtrag 8): green/white armor bar-graph sprite
+	// shown only in the "large" HUD layout, analogous to CHudHealth's pulse
+	// graph.
+	int m_HUD_armor_graph;
+	struct cvar_s* m_pCvarSmallHud;
 };
 
 
@@ -444,6 +486,31 @@ private:
 //
 #define MAX_SPRITE_NAME_LENGTH 24
 
+// Retail CHudZoom: scope zoom of the gauss pistol sniper mode (hud_zoom.cpp)
+class CHudZoom : public CHudBase
+{
+public:
+	bool Init() override;
+	bool VidInit() override;
+	void Reset() override;
+	bool Draw(float flTime) override;
+	bool MsgFunc_Zoom(const char* pszName, int iSize, void* pbuf);
+
+private:
+	int m_iSprite = -1;
+	int m_iCurFov = 0;		 // +0x20
+	int m_iTargetFov = 15;	 // +0x38
+	int m_iFrame = 0;		 // +0x28
+	float m_flNextFovStep = 0; // +0x1c
+	float m_flNextFrame = 0;	 // +0x2c
+	float m_flNextDraw = 0;	 // +0x30
+	float m_flEndTime = 0;	 // +0x34
+	bool m_bAnimating = true;	 // +0x24
+	bool m_bDrawFlag = false;	 // +0x14
+	bool m_bReverse = false;	 // +0x3c
+	bool m_bWasZoomed = false;
+};
+
 class CHudStatusIcons : public CHudBase
 {
 public:
@@ -492,6 +559,10 @@ private:
 	int m_iSpriteCount;
 	int m_iSpriteCountAllRes;
 	float m_flMouseSensitivity;
+
+public:
+	void SetZoomSensitivity(float flRatio); // hud_zoom.cpp: flRatio = zoomed fov / default fov, 0 = reset
+private:
 	int m_iConcussionEffect;
 
 public:
@@ -559,10 +630,12 @@ public:
 
 	CHudAmmo m_Ammo;
 	CHudHealth m_Health;
+	CHudTemperature m_Temperature;
 	CHudSpectator m_Spectator;
 	CHudGeiger m_Geiger;
 	CHudBattery m_Battery;
 	CHudTrain m_Train;
+	CHudTankControl m_Tank;
 	CHudFlashlight m_Flash;
 	CHudMessage m_Message;
 	CHudStatusBar m_StatusBar;
@@ -572,6 +645,7 @@ public:
 	CHudAmmoSecondary m_AmmoSecondary;
 	CHudTextMessage m_TextMessage;
 	CHudStatusIcons m_StatusIcons;
+	CHudZoom m_Zoom;
 
 	void Init();
 	void VidInit();

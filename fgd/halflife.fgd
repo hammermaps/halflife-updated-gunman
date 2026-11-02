@@ -2712,3 +2712,92 @@
 @PointClass base(Targetname, RenderFields, Angles) flags(Angle) size(-16 -16 0, 16 16 64 ) studio("models/fungus(small).mdl") = xen_spore_small : "Xen Spore (small)" []
 @PointClass base(Targetname, RenderFields, Angles) flags(Angle) size(-40 -40 0, 40 40 120 ) studio("models/fungus.mdl") = xen_spore_medium : "Xen Spore (medium)" []
 @PointClass base(Targetname, RenderFields, Angles) flags(Angle) size(-90 -90 0, 90 90 220 ) studio("models/fungus(large).mdl") = xen_spore_large : "Xen Spore (large)" []
+
+//
+// Gunman Chronicles custom entities (re-project, Session 101+)
+//
+// Classes with no stock HL SDK counterpart, implemented incrementally in
+// src/halflife-updated-gm/dlls/gunman_custom_entities.cpp (and h_cycler.cpp
+// for gunman_cycler) as part of the map-driven Phase-5 reimplementation
+// (see agent.md §7, STATUS.md). Field defaults below match the actual
+// decompiled gunman.dll constructors/Spawn(), NOT always the retail
+// Gunman-ENG-GER/rewolf/halflife.fgd - several of that FGD's documented
+// defaults were confirmed wrong against the real compiled code and are
+// corrected here (noted per class). "Code ist Wahrheit, FGD ist nur
+// Entwickler-Doku."
+//
+
+@PointClass base(Monster) size(-16 -16 0, 16 16 72) = gunman_cycler : "Gunman Cycler"
+[
+	model(studio) : "model"
+	cyc_submodel1(integer) : "Body1" : 1
+	cyc_submodel2(integer) : "Body2" : 1
+	cyc_submodel3(integer) : "Body3" : 1
+]
+
+@PointClass size(-16 -16 0, 16 16 40) = decore_asteroid : "Asteroid"
+[
+	asteroidsize(choices) : "Asteroid type" : 1 =
+	[
+		0 : "big asteroid"
+		1 : "medium asteroid"
+		2 : "small asteroid"
+	]
+	// Gunman-eigene Erweiterung (re-project, nicht im Retail-FGD): siehe
+	// gunman_custom_entities.cpp's CDecoreAsteroid-Header. Bestehende
+	// Karten setzen diese Felder nicht - die Standardwerte greifen dann
+	// automatisch.
+	driftradius(integer) : "Drift radius (units, 0 = disabled)" : 24
+	driftspeed(integer) : "Drift speed (units/sec)" : 6
+]
+
+@PointClass base(Monster) size(-16 -16 0, 16 16 40) = monster_trainingbot : "Training bot"
+[
+	spawnflags(Flags) =
+	[
+		1024 : "No Distortion Rings" : 0
+	]
+]
+
+// Corrected vs. retail FGD: spritespeed default was documented as 100,
+// actual compiled default is 0; spritestartstate was documented as "On"
+// (1), actual compiled default is "Off" (0); spritefreq was documented
+// as 5, actual compiled default is 1. spritez is listed for editor
+// completeness but is dead/unreachable in the original KeyValue code
+// (a duplicated "spritex" string compare shadows it) - our
+// reimplementation reproduces that, so setting it here has no effect.
+@PointClass base(Targetname) sprite() = entity_spritegod : "SpriteSpray"
+[
+	spritename(sprite) : "Sprite" : ""
+	spritenoise(integer) : "Noise" : 50
+	spritespeed(integer) : "Speed" : 0
+	spritestartstate(choices) : "Start State" : 0 =
+	[
+		0: "Off"
+		1: "On"
+	]
+	spritecount(integer) : "NumberPerSpray" : 1
+	spritefreq(integer) : "Frequence-dividedBy10" : 1
+	spritex(integer) : "x Direction" : 0
+	spritey(integer) : "y Direction" : 0
+	spritez(integer) : "z Direction (dead - see above)" : 0
+	targetent(target_destination) : "Target" : ""
+]
+
+@PointClass base(Targetname) size(-16 -16 -16, 16 16 16) = player_speaker : "Player Speaker"
+[
+	sentencegroup(string) : "Name of group to play" : "!GENERAL1"
+	sentencelength(string) : "Length of sentence (unused by the actual code - kept for editor compatibility)" : "5.0"
+]
+
+@PointClass base(Targetname) size(-16 -16 -16, 16 16 16) = player_togglehud : "Player Toggle Hud" []
+
+// Corrected vs. retail FGD: wait was documented as 10, actual compiled
+// default is 1; random was documented as 20, actual compiled default is 0.
+@PointClass iconsprite("sprites/speaker.spr") = random_speaker : "Random Time Wav Player"
+[
+	rsnoise(sound) : "Path/filename.wav of WAV"
+	volume(string) : "Volume (0 to 1)" : "1"
+	wait(string) : "Minimum time for sound repetition" : "1"
+	random(string) : "Random amount added to wait" : "0"
+]

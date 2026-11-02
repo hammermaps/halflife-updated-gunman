@@ -293,7 +293,7 @@ void CZombie::Spawn()
 //=========================================================
 void CZombie::Precache()
 {
-	PRECACHE_MODEL("models/zombie.mdl");
+	PrecacheModel("models/zombie.mdl");
 
 	PRECACHE_SOUND_ARRAY(pAttackHitSounds);
 	PRECACHE_SOUND_ARRAY(pAttackMissSounds);

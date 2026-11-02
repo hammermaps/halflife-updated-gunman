@@ -488,6 +488,8 @@ private:
 	vgui::Cursor* _cursorArrow;
 
 	bool		 m_iInitialized;
+	CImageLabel* m_pGunmanHudLarge;
+	CImageLabel* m_pGunmanHudSmall;
 
 	CCommandMenu *m_pCommandMenus[ MAX_MENUS ];
 	CCommandMenu *m_pCurrentCommandMenu;
@@ -543,6 +545,7 @@ private:
 public:
 	TeamFortressViewport(int x,int y,int wide,int tall);
 	void Initialize( void );
+	void UpdateGunmanHud(bool visible, bool largeHud);
 
 	int		CreateCommandMenu( const char * menuFile, bool direction, int yOffset, bool flatDesign, float flButtonSizeX, float flButtonSizeY, int xOffset );
 	void	CreateScoreBoard( void );

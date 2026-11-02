@@ -270,8 +270,17 @@ void CGameRules::RefreshSkillData()
 	gSkillData.nihilanthHealth = GetSkillCvar("sk_nihilanth_health");
 	gSkillData.nihilanthZap = GetSkillCvar("sk_nihilanth_zap");
 
-	// Scientist
-	gSkillData.scientistHealth = GetSkillCvar("sk_scientist_health");
+	// Scientist (Nachtrag 2026-09-06, CVAR_REGISTER-Audit): das Stock-SDK-
+	// Cvar-Muster "sk_scientist_health<level>" existiert NICHT im retail
+	// gunman.dll (String-Suche: 0 Treffer). Der real registrierte Cvar
+	// heisst "sk_scientist_h<level>" (bestaetigt per String-Dump gegen
+	// gunman.dll UND per Eintrag in der echten Skill.cfg, 45/55/65) -
+	// dasselbe Kurzform-Namensmuster wie sk_bandit_h/sk_ourano_h/
+	// sk_raptor_h usw. monster_scientist (CScientist, stock-SDK-Klasse)
+	// ist mit 24 Platzierungen die meistgenutzte Klasse dieser Datei
+	// (per direktem grep -a gegen alle retail-.bsp) - hatte also bislang
+	// IMMER Health 0. Siehe game.cpp fuer die neue CVAR_REGISTER-Zeile.
+	gSkillData.scientistHealth = GetSkillCvar("sk_scientist_h");
 
 	// Snark
 	gSkillData.snarkHealth = GetSkillCvar("sk_snark_health");
@@ -290,7 +299,97 @@ void CGameRules::RefreshSkillData()
 	gSkillData.miniturretHealth = GetSkillCvar("sk_miniturret_health");
 
 	// Sentry Turret
-	gSkillData.sentryHealth = GetSkillCvar("sk_sentry_health");
+	// Nachtrag 2026-10-30 (RE-bestaetigt, frisch dekompiliert aus der Retail-
+	// gunman.dll): die Retail-RefreshSkillData (0x1001e860) liest hier keinen
+	// Cvar, sondern setzt das Skill-Feld konstant auf 1000.0 (0x447a0000,
+	// Schreibzugriff @0x1001ebe4, gelesen von CSentry::Spawn @0x1005d7c0 nach
+	// pev->health). Ein "sk_sentry_health"-String existiert in Retail nicht;
+	// der fruehere Cvar-Lookup lieferte darum immer 0 (Sentry mit Health 0).
+	// Gilt fuer monster_sentry; monster_sentry_mini setzt 50 selbst im Spawn.
+	gSkillData.sentryHealth = 1000.0f;
+
+	// Ourano (Nachtrag 2026-09-06, RE-bestaetigt gegen die echte Retail-
+	// Skill.cfg - eigene Gunman-Cvar-Namen "sk_ourano_h<level>", nicht
+	// das SDK-uebliche "sk_ourano_health<level>"-Muster).
+	gSkillData.ouranoHealth = GetSkillCvar("sk_ourano_h");
+	gSkillData.ouranoDamage = GetSkillCvar("sk_ourano_d");
+	gSkillData.percentRandomHealth = GetSkillCvar("sk_percent_random_h");
+
+	// Penta (Nachtrag 2026-09-06, Cut-Content-Rekonstruktion - Cvar-Werte
+	// aus der E3-2000-Beta-Skill.cfg uebernommen, in Retail entfernt).
+	gSkillData.pentaHealth = GetSkillCvar("sk_penta_h");
+	gSkillData.pentaBiteDamage = GetSkillCvar("sk_penta_bite_d");
+
+	// Maggot: retail Skill.cfg uses sk_maggot_h<level> (10/10/10).
+	gSkillData.maggotHealth = GetSkillCvar("sk_maggot_h");
+
+	// Retail Bandit Spawn and events 1/2 and 5/6 load DAT_10136e90,
+	// DAT_10136e9c and DAT_10136ea0, initialized from sk_bandit_h,
+	// sk_bandit_bolt_d and sk_bandit_fast_d respectively.
+	gSkillData.banditHealth = GetSkillCvar("sk_bandit_h");
+	gSkillData.banditBoltDamage = GetSkillCvar("sk_bandit_bolt_d");
+	gSkillData.banditFastDamage = GetSkillCvar("sk_bandit_fast_d");
+	gSkillData.gaussShotDamage = GetSkillCvar("sk_gaussshot_d");
+	gSkillData.gaussFastDamage = GetSkillCvar("sk_gaussfast_d");
+	gSkillData.gaussSlowDamage = GetSkillCvar("sk_gaussslow_d");
+	gSkillData.chopperHealth = GetSkillCvar("sk_chopper_h");
+	gSkillData.demomanHealth = GetSkillCvar("sk_demoman_h");
+	gSkillData.demomanRocketDamage = GetSkillCvar("sk_demoman_rocket_d");
+	gSkillData.humanKickDamage = GetSkillCvar("sk_human_kick_d");
+	gSkillData.grenadeSpeed = GetSkillCvar("sk_gren_speed");
+	gSkillData.banditLimpHealth = GetSkillCvar("sk_bandit_limp_h");
+	gSkillData.banditMeleeDamage = GetSkillCvar("sk_bandit_melee_d");
+	gSkillData.banditMechDamage = GetSkillCvar("sk_bandit_mech_d");
+	gSkillData.smallScorpionStingDamage = GetSkillCvar("sk_smlscorp_sting_d");
+	gSkillData.maggotDamage = GetSkillCvar("sk_maggot_d");
+	gSkillData.chemgunDamage = GetSkillCvar("sk_chemgun_d");
+	gSkillData.handGrenadeDamage = GetSkillCvar("sk_hand_grenade_d");
+	gSkillData.twoHandPunchDamage = GetSkillCvar("sk_twohandpunch_d");
+	gSkillData.armorSuitValue = GetSkillCvar("sk_armorsuit");
+	gSkillData.demomanLimpHealth = GetSkillCvar("sk_demoman_limp_h");
+	gSkillData.demomanShotgunDamage = GetSkillCvar("sk_demoman_sg_d");
+	gSkillData.mineDamage = GetSkillCvar("sk_mine_d");
+	gSkillData.dmlRocketDamage = GetSkillCvar("sk_dml_rocket_d");
+
+	// Critter: retail Skill.cfg uses dedicated health, larva-spit and bite
+	// families. Do not silently fall back to stock alien damage values.
+	gSkillData.critterHealth = GetSkillCvar("sk_critter_h");
+	gSkillData.critterSpitDamage = GetSkillCvar("sk_critter_spit_d");
+	gSkillData.critterMeleeDamage = GetSkillCvar("sk_critter_melee1_d");
+
+	// Tube: retail Skill.cfg uses sk_tube_h<level> (30/45/60).
+	gSkillData.tubeHealth = GetSkillCvar("sk_tube_h");
+
+	// Gator: retail Skill.cfg uses sk_gator_h<level> (40/50/60).
+	gSkillData.gatorHealth = GetSkillCvar("sk_gator_h");
+	gSkillData.gatorBiteDamage = GetSkillCvar("sk_gator_bite_d");
+
+	// Maya fauna: direct Retail Spawn/animation-handler references.
+	gSkillData.raptorHealth = GetSkillCvar("sk_raptor_h");
+	gSkillData.raptorBiteDamage = GetSkillCvar("sk_raptor_bite_d");
+	gSkillData.raptorJumpDamage = GetSkillCvar("sk_raptor_jump_d");
+	gSkillData.smallScorpionHealth = GetSkillCvar("sk_smlscorp_h");
+	gSkillData.smallScorpionClawDamage = GetSkillCvar("sk_smlscorp_claw_d");
+	gSkillData.largeScorpionHealth = GetSkillCvar("sk_lrgscorp_h");
+	gSkillData.largeScorpionClawDamage = GetSkillCvar("sk_lrgscorp_claw_d");
+	gSkillData.largeScorpionStingDamage = GetSkillCvar("sk_lrgscorp_sting_d");
+	gSkillData.rustbitHealth = GetSkillCvar("sk_rustbit_h");
+	gSkillData.rustbitShotDamage = GetSkillCvar("sk_rustbit_shot_d");
+	gSkillData.rustbitClawDamage = GetSkillCvar("sk_rustbit_claw_d");
+	gSkillData.rustbotHealth = GetSkillCvar("sk_rustbot_h");
+	gSkillData.rustbotMeleeDamage = GetSkillCvar("sk_rustbot_melee_d");
+	gSkillData.rustbotLongDamage = GetSkillCvar("sk_rustbot_long_d");
+	gSkillData.rustgunnerHealth = GetSkillCvar("sk_rustgunner_h");
+	gSkillData.rustgunnerRocketDamage = GetSkillCvar("sk_rustgunner_r_d");
+	gSkillData.rustgunnerMortarDamage = GetSkillCvar("sk_rustgunner_mr_d");
+	gSkillData.beakHealth = GetSkillCvar("sk_beak_h");
+	gSkillData.beakBiteDamage = GetSkillCvar("sk_beak_bite_d");
+	gSkillData.beakScrapeDamage = GetSkillCvar("sk_beak_scrape_d");
+	gSkillData.hatchetFishHealth = GetSkillCvar("sk_hatchetfish_h");
+	gSkillData.hatchetFishDamage = GetSkillCvar("sk_hatchetfish_d");
+	gSkillData.xenomeHealth = GetSkillCvar("sk_xenome_h");
+	gSkillData.xenomeMeleeDamage = GetSkillCvar("sk_xenomemelee_d");
+	gSkillData.xenomeDartDamage = GetSkillCvar("sk_xenomedart_d");
 
 	// PLAYER WEAPONS
 
@@ -311,6 +410,7 @@ void CGameRules::RefreshSkillData()
 
 	// Shotgun buckshot
 	gSkillData.plrDmgBuckshot = GetSkillCvar("sk_plr_buckshot");
+	gSkillData.gunmanBuckshotDamage = GetSkillCvar("sk_buckshot");
 
 	// Crossbow
 	gSkillData.plrDmgCrossbowClient = GetSkillCvar("sk_plr_xbow_bolt_client");
@@ -328,6 +428,8 @@ void CGameRules::RefreshSkillData()
 
 	// Hand Grendade
 	gSkillData.plrDmgHandGrenade = GetSkillCvar("sk_plr_hand_grenade");
+	gSkillData.gunmanOneHandPunchDamage = GetSkillCvar("sk_onehandpunch_d");
+	gSkillData.gunmanKnifeDamage = GetSkillCvar("sk_knife1_d");
 
 	// Satchel Charge
 	gSkillData.plrDmgSatchel = GetSkillCvar("sk_plr_satchel");

@@ -2176,6 +2176,12 @@ public:
 	float m_acceleration;
 	float m_deceleration;
 	bool m_state;
+
+	// Gunman Chronicles extensions (not in stock SDK; decompiled from
+	// gunman.dll CTriggerCamera::KeyValue @0x1005a940). See Use()/
+	// FollowTarget()/Spawn() for how each is consumed.
+	int m_instantAngle;
+	int m_overrideHack;
 };
 LINK_ENTITY_TO_CLASS(trigger_camera, CTriggerCamera);
 
@@ -2195,12 +2201,36 @@ TYPEDESCRIPTION CTriggerCamera::m_SaveData[] =
 		DEFINE_FIELD(CTriggerCamera, m_acceleration, FIELD_FLOAT),
 		DEFINE_FIELD(CTriggerCamera, m_deceleration, FIELD_FLOAT),
 		DEFINE_FIELD(CTriggerCamera, m_state, FIELD_BOOLEAN),
+		DEFINE_FIELD(CTriggerCamera, m_instantAngle, FIELD_INTEGER),
+		DEFINE_FIELD(CTriggerCamera, m_overrideHack, FIELD_INTEGER),
 };
 
 IMPLEMENT_SAVERESTORE(CTriggerCamera, CBaseDelay);
 
 void CTriggerCamera::Spawn()
 {
+	// Gunman Chronicles extension: overridehack==2 marks a camera whose
+	// ride is already ending (same sentinel FollowTarget() writes into
+	// m_overrideHack's storage slot at the end of a normal ride - see
+	// KeyValue's comment). Re-spawning such an entity (e.g. via a
+	// retrigger) immediately performs the ride-stop sequence instead of
+	// the normal one-time setup below (decompiled from gunman.dll
+	// CTriggerCamera::Spawn @0x1005a830).
+	if (m_overrideHack == 2)
+	{
+		auto player = static_cast<CBasePlayer*>(static_cast<CBaseEntity*>(m_hPlayer));
+		if (player->IsAlive())
+		{
+			SET_VIEW(player->edict(), player->edict());
+			player->EnableControl(true);
+		}
+
+		SUB_UseTargets(this, USE_TOGGLE, 0);
+		pev->avelocity = Vector(0, 0, 0);
+		m_state = false;
+		return;
+	}
+
 	pev->movetype = MOVETYPE_NOCLIP;
 	pev->solid = SOLID_NOT; // Remove model & collisions
 	pev->renderamt = 0;		// The engine won't draw this model if this is set to 0 and blending is on
@@ -2234,6 +2264,24 @@ bool CTriggerCamera::KeyValue(KeyValueData* pkvd)
 	else if (FStrEq(pkvd->szKeyName, "deceleration"))
 	{
 		m_deceleration = atof(pkvd->szValue);
+		return true;
+	}
+	else if (FStrEq(pkvd->szKeyName, "instantangle"))
+	{
+		// Gunman Chronicles extension. Consumed once in Use(): if 1, the
+		// camera's aim snaps to the target angle immediately instead of
+		// turning smoothly over subsequent FollowTarget() frames, then
+		// resets to 0 (one-shot).
+		m_instantAngle = atoi(pkvd->szValue);
+		return true;
+	}
+	else if (FStrEq(pkvd->szKeyName, "overridehack"))
+	{
+		// Gunman Chronicles extension. If 1, FollowTarget() skips its
+		// normal per-frame stop check (invalid target / m_flWait timeout),
+		// making the camera ride follow the target indefinitely until
+		// something else ends it. See Spawn()'s handling of the value 2.
+		m_overrideHack = atoi(pkvd->szValue);
 		return true;
 	}
 
@@ -2335,6 +2383,20 @@ void CTriggerCamera::Use(CBaseEntity* pActivator, CBaseEntity* pCaller, USE_TYPE
 	SetThink(&CTriggerCamera::FollowTarget);
 	pev->nextthink = gpGlobals->time;
 
+	// Gunman Chronicles extension: instantangle snaps the camera's aim to
+	// the target right away instead of leaving the first frame's turn to
+	// FollowTarget()'s smooth interpolation. One-shot: consumed and reset
+	// to 0 here (decompiled from gunman.dll CTriggerCamera::Use @0x1005ab50).
+	if (m_hTarget != NULL && m_instantAngle == 1)
+	{
+		Vector vecGoal = UTIL_VecToAngles(m_hTarget->pev->origin - pev->origin);
+		pev->angles.x = -vecGoal.x;
+		pev->angles.y = vecGoal.y;
+		pev->angles.z = vecGoal.z;
+		pev->avelocity = Vector(0, 0, 0);
+		m_instantAngle = 0;
+	}
+
 	m_moveDistance = 0;
 	Move();
 }
@@ -2345,7 +2407,12 @@ void CTriggerCamera::FollowTarget()
 	if (m_hPlayer == NULL)
 		return;
 
-	if (m_hTarget == NULL || m_flReturnTime < gpGlobals->time)
+	// Gunman Chronicles extension: overridehack==1 skips the normal
+	// stop-condition check below entirely, so the camera keeps following
+	// the target indefinitely regardless of an invalid target or an
+	// expired m_flReturnTime, until something else ends the ride
+	// (decompiled from gunman.dll CTriggerCamera::FollowTarget @0x1005af70).
+	if (m_overrideHack != 1 && (m_hTarget == NULL || m_flReturnTime < gpGlobals->time))
 	{
 		auto player = static_cast<CBasePlayer*>(static_cast<CBaseEntity*>(m_hPlayer));
 

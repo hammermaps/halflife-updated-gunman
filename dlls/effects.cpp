@@ -97,7 +97,7 @@ void CBubbling::Spawn()
 
 void CBubbling::Precache()
 {
-	m_bubbleModel = PRECACHE_MODEL("sprites/bubble.spr"); // Precache bubble sprite
+	m_bubbleModel = PrecacheModel("sprites/bubble.spr"); // Precache bubble sprite
 }
 
 
@@ -239,7 +239,7 @@ void CBeam::BeamInit(const char* pSpriteName, int width)
 	SetFrame(0);
 	SetScrollRate(0);
 	pev->model = MAKE_STRING(pSpriteName);
-	SetTexture(PRECACHE_MODEL((char*)pSpriteName));
+	SetTexture(PrecacheModel((char*)pSpriteName));
 	SetWidth(width);
 	pev->skin = 0;
 	pev->sequence = 0;
@@ -506,7 +506,7 @@ void CLightning::Spawn()
 
 void CLightning::Precache()
 {
-	m_spriteTexture = PRECACHE_MODEL((char*)STRING(m_iszSpriteName));
+	m_spriteTexture = PrecacheModel((char*)STRING(m_iszSpriteName));
 	CBeam::Precache();
 }
 
@@ -987,9 +987,9 @@ void CLaser::Spawn()
 
 void CLaser::Precache()
 {
-	pev->modelindex = PRECACHE_MODEL((char*)STRING(pev->model));
+	pev->modelindex = PrecacheModel((char*)STRING(pev->model));
 	if (!FStringNull(m_iszSpriteName))
-		PRECACHE_MODEL((char*)STRING(m_iszSpriteName));
+		PrecacheModel((char*)STRING(m_iszSpriteName));
 }
 
 
@@ -1141,7 +1141,7 @@ void CGlow::Spawn()
 	pev->effects = 0;
 	pev->frame = 0;
 
-	PRECACHE_MODEL((char*)STRING(pev->model));
+	PrecacheModel((char*)STRING(pev->model));
 	SET_MODEL(ENT(pev), STRING(pev->model));
 
 	m_maxFrame = (float)MODEL_FRAMES(pev->modelindex) - 1;
@@ -1205,7 +1205,7 @@ void CSprite::Spawn()
 
 void CSprite::Precache()
 {
-	PRECACHE_MODEL((char*)STRING(pev->model));
+	PrecacheModel((char*)STRING(pev->model));
 
 	// Reset attachment after save/restore
 	if (pev->aiment)
@@ -1384,14 +1384,7 @@ LINK_ENTITY_TO_CLASS(gibshooter, CGibShooter);
 
 void CGibShooter::Precache()
 {
-	if (g_Language == LANGUAGE_GERMAN)
-	{
-		m_iGibModelIndex = PRECACHE_MODEL("models/germanygibs.mdl");
-	}
-	else
-	{
-		m_iGibModelIndex = PRECACHE_MODEL("models/hgibs.mdl");
-	}
+	m_iGibModelIndex = PrecacheModel("models/hgibs.mdl");
 }
 
 
@@ -1573,7 +1566,7 @@ bool CEnvShooter::KeyValue(KeyValueData* pkvd)
 
 void CEnvShooter::Precache()
 {
-	m_iGibModelIndex = PRECACHE_MODEL((char*)STRING(pev->model));
+	m_iGibModelIndex = PrecacheModel((char*)STRING(pev->model));
 	CBreakable::MaterialSoundPrecache((Materials)m_iGibMaterial);
 }
 
@@ -1632,7 +1625,7 @@ void CTestEffect::Spawn()
 
 void CTestEffect::Precache()
 {
-	PRECACHE_MODEL("sprites/lgtning.spr");
+	PrecacheModel("sprites/lgtning.spr");
 }
 
 void CTestEffect::TestThink()
@@ -2033,7 +2026,7 @@ void CMessage::Spawn()
 void CMessage::Precache()
 {
 	if (!FStringNull(pev->noise))
-		PRECACHE_SOUND((char*)STRING(pev->noise));
+		PrecacheSound((char*)STRING(pev->noise));
 }
 
 bool CMessage::KeyValue(KeyValueData* pkvd)
@@ -2102,7 +2095,7 @@ public:
 
 void CEnvFunnel::Precache()
 {
-	m_iSprite = PRECACHE_MODEL("sprites/flare6.spr");
+	m_iSprite = PrecacheModel("sprites/flare6.spr");
 }
 
 LINK_ENTITY_TO_CLASS(env_funnel, CEnvFunnel);
@@ -2154,8 +2147,8 @@ public:
 
 void CEnvBeverage::Precache()
 {
-	PRECACHE_MODEL("models/can.mdl");
-	PRECACHE_SOUND("weapons/g_bounce3.wav");
+	PrecacheModel("models/can.mdl");
+	PrecacheSound("weapons/g_bounce3.wav");
 }
 
 LINK_ENTITY_TO_CLASS(env_beverage, CEnvBeverage);

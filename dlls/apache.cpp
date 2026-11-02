@@ -84,7 +84,9 @@ class CApache : public CBaseMonster
 	int m_iDoSmokePuff;
 	CBeam* m_pBeam;
 };
-LINK_ENTITY_TO_CLASS(monster_apache, CApache);
+// monster_apache ist in Retail dieselbe Klasse wie monster_human_chopper
+// (gleiche Vtable 0x100f7388, CChopper) - Link siehe human_chopper.cpp.
+// LINK_ENTITY_TO_CLASS(monster_apache, CApache);
 
 TYPEDESCRIPTION CApache::m_SaveData[] =
 	{
@@ -153,23 +155,23 @@ void CApache::Spawn()
 
 void CApache::Precache()
 {
-	PRECACHE_MODEL("models/apache.mdl");
+	PrecacheModel("models/apache.mdl");
 
-	PRECACHE_SOUND("apache/ap_rotor1.wav");
-	PRECACHE_SOUND("apache/ap_rotor2.wav");
-	PRECACHE_SOUND("apache/ap_rotor3.wav");
-	PRECACHE_SOUND("apache/ap_whine1.wav");
+	PrecacheSound("apache/ap_rotor1.wav");
+	PrecacheSound("apache/ap_rotor2.wav");
+	PrecacheSound("apache/ap_rotor3.wav");
+	PrecacheSound("apache/ap_whine1.wav");
 
-	PRECACHE_SOUND("weapons/mortarhit.wav");
+	PrecacheSound("weapons/mortarhit.wav");
 
-	m_iSpriteTexture = PRECACHE_MODEL("sprites/white.spr");
+	m_iSpriteTexture = PrecacheModel("sprites/white.spr");
 
-	PRECACHE_SOUND("turret/tu_fire1.wav");
+	PrecacheSound("turret/tu_fire1.wav");
 
-	PRECACHE_MODEL("sprites/lgtning.spr");
+	PrecacheModel("sprites/lgtning.spr");
 
-	m_iExplode = PRECACHE_MODEL("sprites/fexplo.spr");
-	m_iBodyGibs = PRECACHE_MODEL("models/metalplategibs_green.mdl");
+	m_iExplode = PrecacheModel("sprites/fexplo.spr");
+	m_iBodyGibs = PrecacheModel("models/metalplategibs_green.mdl");
 
 	UTIL_PrecacheOther("hvr_rocket");
 }
@@ -240,6 +242,9 @@ void CApache::DyingThink()
 		WRITE_BYTE(12);						 // framerate
 		WRITE_BYTE(TE_EXPLFLAG_NONE);
 		MESSAGE_END();
+		// Nachtrag 2026-09-06 (Nutzerwunsch: Erschuetterung+Lichtblitz bei
+		// jeder Explosion, siehe util.h/UTIL_ExplosionEffects).
+		UTIL_ExplosionEffects(pev->origin, 200.0f);
 
 		// lots of smoke
 		MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, pev->origin);
@@ -1038,9 +1043,9 @@ void CApacheHVR::Spawn()
 
 void CApacheHVR::Precache()
 {
-	PRECACHE_MODEL("models/HVR.mdl");
-	m_iTrail = PRECACHE_MODEL("sprites/smoke.spr");
-	PRECACHE_SOUND("weapons/rocket1.wav");
+	PrecacheModel("models/HVR.mdl");
+	m_iTrail = PrecacheModel("sprites/smoke.spr");
+	PrecacheSound("weapons/rocket1.wav");
 }
 
 

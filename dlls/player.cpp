@@ -28,6 +28,7 @@
 
 #include "cbase.h"
 #include "player.h"
+#include "dbg_log.h"
 #include "trains.h"
 #include "nodes.h"
 #include "weapons.h"
@@ -119,6 +120,11 @@ TYPEDESCRIPTION CBasePlayer::m_playerSaveData[] =
 		//DEFINE_FIELD(CBasePlayer, m_flSndRange, FIELD_FLOAT),
 
 		DEFINE_FIELD(CBasePlayer, m_flStartCharge, FIELD_TIME),
+
+		DEFINE_FIELD(CBasePlayer, m_iCustomizeType, FIELD_INTEGER),
+		DEFINE_FIELD(CBasePlayer, m_iCustomizeValue, FIELD_INTEGER),
+		DEFINE_FIELD(CBasePlayer, m_flLastCustomTime, FIELD_TIME),
+		DEFINE_FIELD(CBasePlayer, m_flTimeNextCustomAnim, FIELD_TIME),
 
 		//DEFINE_FIELD( CBasePlayer, m_fDeadTime, FIELD_FLOAT ), // only used in multiplayer games
 		//DEFINE_FIELD( CBasePlayer, m_fGameHUDInitialized, FIELD_INTEGER ), // only used in multiplayer games
@@ -1851,6 +1857,18 @@ void CBasePlayer::UpdateStatusBar()
 
 void CBasePlayer::PreThink()
 {
+	// Debug focus (dbg_focus): keep the view on the focused entity's center.
+	// fixangle applies the angles every frame, so mouse input does not move it.
+	if (m_hDbgFocus)
+	{
+		const Vector eye = pev->origin + pev->view_ofs;
+		Vector ang = UTIL_VecToAngles(m_hDbgFocus->Center() - eye);
+		ang.x = -ang.x; // Pitch-Vorzeichen wie in client.cpp (dbg_focus)
+		pev->v_angle = ang;
+		pev->angles = ang;
+		pev->fixangle = 1;
+	}
+
 	int buttonsChanged = (m_afButtonLast ^ pev->button); // These buttons have changed this frame
 
 	// Debounced button codes for pressed/released
@@ -3072,11 +3090,11 @@ bool CBasePlayer::Restore(CRestore& restore)
 
 	bool status = restore.ReadFields("PLAYER", this, m_playerSaveData, ARRAYSIZE(m_playerSaveData));
 
-	SAVERESTOREDATA* pSaveData = (SAVERESTOREDATA*)gpGlobals->pSaveData;
+	const SAVERESTOREDATA& saveData = restore.GetData();
 	// landmark isn't present.
-	if (0 == pSaveData->fUseLandmark)
+	if (0 == saveData.fUseLandmark)
 	{
-		ALERT(at_console, "No Landmark:%s\n", pSaveData->szLandmarkName);
+		ALERT(at_console, "No Landmark:%s\n", saveData.szLandmarkName);
 
 		// default to normal spawn
 		edict_t* pentSpawnSpot = EntSelectSpawnPoint(this);
@@ -3357,13 +3375,10 @@ void CBloodSplat::Spray()
 {
 	TraceResult tr;
 
-	if (g_Language != LANGUAGE_GERMAN)
-	{
-		UTIL_MakeVectors(pev->angles);
-		UTIL_TraceLine(pev->origin, pev->origin + gpGlobals->v_forward * 128, ignore_monsters, pev->owner, &tr);
+	UTIL_MakeVectors(pev->angles);
+	UTIL_TraceLine(pev->origin, pev->origin + gpGlobals->v_forward * 128, ignore_monsters, pev->owner, &tr);
 
-		UTIL_BloodDecalTrace(&tr, BLOOD_COLOR_RED);
-	}
+	UTIL_BloodDecalTrace(&tr, BLOOD_COLOR_RED);
 	SetThink(&CBloodSplat::SUB_Remove);
 	pev->nextthink = gpGlobals->time + 0.1;
 }
@@ -3610,29 +3625,25 @@ void CBasePlayer::CheatImpulseCommands(int iImpulse)
 	case 101:
 		gEvilImpulse101 = true;
 		GiveNamedItem("item_suit");
-		GiveNamedItem("item_battery");
-		GiveNamedItem("weapon_crowbar");
-		GiveNamedItem("weapon_9mmhandgun");
-		GiveNamedItem("ammo_9mmclip");
+
+		// Gunman retail arsenal. The former SDK block spawned every stock
+		// Half-Life weapon, which is invalid now that those entities and their
+		// conflicting IDs have been removed from the game DLL.
+		GiveNamedItem("weapon_fists");
+		GiveNamedItem("weapon_gausspistol");
 		GiveNamedItem("weapon_shotgun");
-		GiveNamedItem("ammo_buckshot");
-		GiveNamedItem("weapon_9mmAR");
-		GiveNamedItem("ammo_9mmAR");
-		GiveNamedItem("ammo_ARgrenades");
-		GiveNamedItem("weapon_handgrenade");
-		GiveNamedItem("weapon_tripmine");
-		GiveNamedItem("weapon_357");
-		GiveNamedItem("ammo_357");
-		GiveNamedItem("weapon_crossbow");
-		GiveNamedItem("ammo_crossbow");
-		GiveNamedItem("weapon_egon");
-		GiveNamedItem("weapon_gauss");
-		GiveNamedItem("ammo_gaussclip");
-		GiveNamedItem("weapon_rpg");
-		GiveNamedItem("ammo_rpgclip");
-		GiveNamedItem("weapon_satchel");
-		GiveNamedItem("weapon_snark");
-		GiveNamedItem("weapon_hornetgun");
+		GiveNamedItem("weapon_beamgun");
+		GiveNamedItem("weapon_minigun");
+		GiveNamedItem("weapon_SPchemicalgun");
+		GiveNamedItem("weapon_dml");
+		GiveNamedItem("weapon_dmlGrenade");
+
+		GiveAmmo(BUCKSHOT_MAX_CARRY, "buckshot", BUCKSHOT_MAX_CARRY);
+		GiveAmmo(BATTERY_MAX_CARRY, "battery", BATTERY_MAX_CARRY);
+		GiveAmmo(_9MM_MAX_CARRY, "9mm", _9MM_MAX_CARRY);
+		GiveAmmo(URANIUM_MAX_CARRY, "uranium", URANIUM_MAX_CARRY);
+		GiveAmmo(50, "ChemicalAcid", 50);
+		GiveAmmo(DML_MAX_CARRY, "missiles", DML_MAX_CARRY);
 
 		gEvilImpulse101 = false;
 		break;
@@ -3983,6 +3994,7 @@ void CBasePlayer::ItemPostFrame()
 	}
 
 	ImpulseCommands();
+
 
 	// check again if the player is using a tank if they started using it in PlayerUse
 	if (m_pTank != NULL)
@@ -4850,6 +4862,49 @@ bool CBasePlayer::HasPlayerItemFromID(int nID)
 }
 
 //=========================================================
+// PlayerCustomization - "custupdate" client command handler,
+// bound by default to "+custom" (right mouse button, "Customize weapon").
+//
+// Reconstructed from gunman.dll (retail), fresh decompile 2026-09-05:
+// the dispatcher at 0x10009d68 (fastcall-style, EDX = this) switches on an
+// integer type field at this+0x44:
+//   type < 0            -> ALERT("PlayerCustomization:  Unknown customization type!\n")
+//   type == 0, 1, 2      -> no-op, return (return without action)
+//   type == 3            -> read value field at this+0x94, forward it to a
+//                           weapon method (0x10043640) that clamps it to
+//                           1-7 or stores -1 if out of range
+//   type > 3             -> same "Unknown customization type!" error
+//
+// this+0x44/this+0x94 are player fields (mapped here to m_iCustomizeType/
+// m_iCustomizeValue). What actually WRITES those fields at pickup time
+// (a "Custom_Encode" networked message and per-item Spawn/Touch logic
+// referenced by strings "customization_knife"/"customization_sniper"/
+// "customization_coolers" in both client.dll and gunman.dll) was NOT
+// recoverable this session - none of the "cust_2GaussPistolSniper"/
+// "cust_2MinigunCooled"/"cust_1fistsKnife" pickup entities exist in this
+// codebase yet (matching plans/findings from the DML customization
+// investigation: the whole customization-item pickup chain is a larger,
+// still-open reconstruction task). Until that exists, m_iCustomizeType
+// stays at its default (0), so this handler is reachable (fixes the
+// "Unknown command: +custom"/"-custom" console errors) but is a
+// documented no-op in practice - exactly matching decompiled types 0-2.
+//=========================================================
+void CBasePlayer::PlayerCustomization()
+{
+	if (m_iCustomizeType < 0 || m_iCustomizeType > 3)
+	{
+		ALERT(at_console, "PlayerCustomization:  Unknown customization type!\n");
+		return;
+	}
+
+	if (m_iCustomizeType != 3)
+		return;
+
+	if (m_pActiveItem)
+		m_pActiveItem->ApplyCustomizationValue(m_iCustomizeValue);
+}
+
+//=========================================================
 //
 //=========================================================
 bool CBasePlayer::SwitchWeapon(CBasePlayerItem* pWeapon)
@@ -4920,7 +4975,8 @@ class CDeadHEV : public CBaseMonster
 {
 public:
 	void Spawn() override;
-	int Classify() override { return CLASS_HUMAN_MILITARY; }
+	// Retail monster_hevsuit_dead Classify @0x10043c00 returns 5 (stock HL: HUMAN_MILITARY).
+	int Classify() override { return CLASS_ALIEN_MILITARY; }
 
 	bool KeyValue(KeyValueData* pkvd) override;
 
@@ -4948,7 +5004,7 @@ LINK_ENTITY_TO_CLASS(monster_hevsuit_dead, CDeadHEV);
 //=========================================================
 void CDeadHEV::Spawn()
 {
-	PRECACHE_MODEL("models/player.mdl");
+	PrecacheModel("models/player.mdl");
 	SET_MODEL(ENT(pev), "models/player.mdl");
 
 	pev->effects = 0;
@@ -4997,7 +5053,12 @@ void CStripWeapons::Use(CBaseEntity* pActivator, CBaseEntity* pCaller, USE_TYPE 
 	}
 
 	if (pPlayer)
+	{
+		// Retail Use @0x10043e10 calls the Gunman RemoveAllItems(1) variant,
+		// which ends with GiveNamedItem("weapon_fists") (@0x1003c8e0).
 		pPlayer->RemoveAllItems(false);
+		pPlayer->GiveNamedItem("weapon_fists");
+	}
 }
 
 

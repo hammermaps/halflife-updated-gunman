@@ -21,6 +21,7 @@
 #include "decals.h"
 #include "gamerules.h"
 #include "game.h"
+#include "gunman_engine_target.h"
 #include "pm_shared.h"
 
 void EntvarsKeyvalue(entvars_t* pev, KeyValueData* pkvd);
@@ -649,7 +650,7 @@ bool CBaseEntity::Restore(CRestore& restore)
 		maxs = pev->maxs;
 
 
-		PRECACHE_MODEL((char*)STRING(pev->model));
+		PrecacheModel((char*)STRING(pev->model));
 		SET_MODEL(ENT(pev), STRING(pev->model));
 		UTIL_SetSize(pev, mins, maxs); // Reset them
 	}

@@ -79,7 +79,7 @@ void CLaserSpot::Revive()
 
 void CLaserSpot::Precache()
 {
-	PRECACHE_MODEL("sprites/laserdot.spr");
+	PrecacheModel("sprites/laserdot.spr");
 };
 
 LINK_ENTITY_TO_CLASS(rpg_rocket, CRpgRocket);
@@ -152,9 +152,9 @@ void CRpgRocket::RocketTouch(CBaseEntity* pOther)
 //=========================================================
 void CRpgRocket::Precache()
 {
-	PRECACHE_MODEL("models/rpgrocket.mdl");
-	m_iTrail = PRECACHE_MODEL("sprites/smoke.spr");
-	PRECACHE_SOUND("weapons/rocket1.wav");
+	PrecacheModel("models/rpgrocket.mdl");
+	m_iTrail = PrecacheModel("sprites/smoke.spr");
+	PrecacheSound("weapons/rocket1.wav");
 }
 
 
@@ -383,19 +383,19 @@ void CRpg::Spawn()
 
 void CRpg::Precache()
 {
-	PRECACHE_MODEL("models/w_rpg.mdl");
-	PRECACHE_MODEL("models/v_rpg.mdl");
-	PRECACHE_MODEL("models/p_rpg.mdl");
+	PrecacheModel("models/w_rpg.mdl");
+	PrecacheModel("models/v_rpg.mdl");
+	PrecacheModel("models/p_rpg.mdl");
 
-	PRECACHE_SOUND("items/9mmclip1.wav");
+	PrecacheSound("items/9mmclip1.wav");
 
 	UTIL_PrecacheOther("laser_spot");
 	UTIL_PrecacheOther("rpg_rocket");
 
-	PRECACHE_SOUND("weapons/rocketfire1.wav");
-	PRECACHE_SOUND("weapons/glauncher.wav"); // alternative fire sound
+	PrecacheSound("weapons/rocketfire1.wav");
+	PrecacheSound("weapons/glauncher.wav"); // alternative fire sound
 
-	m_usRpg = PRECACHE_EVENT(1, "events/rpg.sc");
+	m_usRpg = PrecacheEvent(1, "events/rpg.sc");
 }
 
 
@@ -600,8 +600,8 @@ class CRpgAmmo : public CBasePlayerAmmo
 	}
 	void Precache() override
 	{
-		PRECACHE_MODEL("models/w_rpgammo.mdl");
-		PRECACHE_SOUND("items/9mmclip1.wav");
+		PrecacheModel("models/w_rpgammo.mdl");
+		PrecacheSound("items/9mmclip1.wav");
 	}
 	bool AddAmmo(CBaseEntity* pOther) override
 	{

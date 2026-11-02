@@ -62,6 +62,8 @@ public:
 private:
 	HSPRITE m_hSprite;
 	HSPRITE m_hDamage;
+	HSPRITE m_hMetalHud;
+	HSPRITE m_hMetalHudSmall;
 
 	DAMAGE_IMAGE m_dmg[NUM_DMG_TYPES];
 	int m_bitsDamage;
@@ -69,4 +71,16 @@ private:
 	bool DrawDamage(float fTime);
 	void CalcDamageDirection(Vector vecFrom);
 	void UpdateTiles(float fTime, long bits);
+
+	// Gunman's "Life-Support-Gauge" HUD look (RE-confirmed, findings/client/
+	// client_dll_kickoff.md Nachtrag 8): cyan/red digit color instead of stock
+	// white/red, plus a scrolling EKG-style pulse-graph sprite shown only in
+	// the "large" HUD layout (hud_smallhud cvar off and screen wide enough).
+	int m_HUD_health_pulse;
+	float m_flPulseTime;
+	int m_iPulseOffset;
+	struct cvar_s* m_pCvarSmallHud;
+	void GetHealthColor(int& r, int& g, int& b);
+	void DrawPulseGraph();
+	void DrawMetalHudFallback(bool largeHud);
 };

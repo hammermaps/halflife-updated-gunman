@@ -40,17 +40,17 @@ void CCrowbar::Spawn()
 
 void CCrowbar::Precache()
 {
-	PRECACHE_MODEL("models/v_crowbar.mdl");
-	PRECACHE_MODEL("models/w_crowbar.mdl");
-	PRECACHE_MODEL("models/p_crowbar.mdl");
-	PRECACHE_SOUND("weapons/cbar_hit1.wav");
-	PRECACHE_SOUND("weapons/cbar_hit2.wav");
-	PRECACHE_SOUND("weapons/cbar_hitbod1.wav");
-	PRECACHE_SOUND("weapons/cbar_hitbod2.wav");
-	PRECACHE_SOUND("weapons/cbar_hitbod3.wav");
-	PRECACHE_SOUND("weapons/cbar_miss1.wav");
+	PrecacheModel("models/v_crowbar.mdl");
+	PrecacheModel("models/w_crowbar.mdl");
+	PrecacheModel("models/p_crowbar.mdl");
+	PrecacheSound("weapons/cbar_hit1.wav");
+	PrecacheSound("weapons/cbar_hit2.wav");
+	PrecacheSound("weapons/cbar_hitbod1.wav");
+	PrecacheSound("weapons/cbar_hitbod2.wav");
+	PrecacheSound("weapons/cbar_hitbod3.wav");
+	PrecacheSound("weapons/cbar_miss1.wav");
 
-	m_usCrowbar = PRECACHE_EVENT(1, "events/crowbar.sc");
+	m_usCrowbar = PrecacheEvent(1, "events/crowbar.sc");
 }
 
 bool CCrowbar::GetItemInfo(ItemInfo* p)

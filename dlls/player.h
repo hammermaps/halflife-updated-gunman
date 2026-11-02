@@ -94,6 +94,9 @@ public:
 	void Observer_CheckTarget();
 	void Observer_CheckProperties();
 	EHANDLE m_hObserverTarget;
+	// Debug only (dbg_focus, sv_cheats): while set, the view is fixed on this
+	// entity's Center() every frame. Cleared by "dbg_focus off".
+	EHANDLE m_hDbgFocus;
 	float m_flNextObserverInput;
 	int m_iObserverWeapon;	 // weapon of current tracked target
 	int m_iObserverLastMode; // last used observer mode
@@ -294,6 +297,17 @@ public:
 	void GiveNamedItem(const char* szName);
 	void GiveNamedItem(const char* szName, int defaultAmmo);
 	void EnableControl(bool fControl);
+
+	// "custupdate" client command handler ("+custom"/MOUSE2, "Customize weapon").
+	// Reconstructed from gunman.dll's decompiled dispatcher at 0x10009d68: switches
+	// on m_iCustomizeType (types 0-2 are no-ops here - knife/sniper customizations
+	// apply passively elsewhere - only type 3 forwards m_iCustomizeValue to the
+	// active weapon). See dlls/player.cpp for the full decompile citation.
+	void PlayerCustomization();
+	int m_iCustomizeType = 0;
+	int m_iCustomizeValue = -1;
+	float m_flLastCustomTime = 0;
+	float m_flTimeNextCustomAnim = 0;
 
 	int GiveAmmo(int iAmount, const char* szName, int iMax) override;
 	void SendAmmoUpdate();

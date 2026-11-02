@@ -27,6 +27,15 @@
 #define SF_MONSTERMAKER_START_ON 1	  // start active ( if has targetname )
 #define SF_MONSTERMAKER_CYCLIC 4	  // drop one monster every time fired.
 #define SF_MONSTERMAKER_MONSTERCLIP 8 // Children are blocked by monsterclip
+// Gunman-Erweiterungen (RE-bestaetigt, findings/entities/game_rules_multi_monstermaker_sdk_diffs.md,
+// Nachtrag 2026-09-06): zwei zusaetzliche FGD-Spawnflags gegenueber dem SDK.
+#define SF_MONSTERMAKER_WARPIN 16			// Warp In Effect - Partikel-/Sprite-Vorlauf vor dem Spawn
+#define SF_MONSTERMAKER_NOFALLTOGROUND 32 // Dont Fall to Ground - Kind wird nicht auf den Boden fallen gelassen
+
+// Vereinfachte Naeherung der im Retail-Decompilat gemessenen ~1.5-2s
+// Partikel-Vorlaufzeit von CMonsterMaker::MakerWarpThink (exakte
+// Zeitkonstante nicht byte-genau rekonstruierbar, siehe Findings).
+#define MONSTERMAKER_WARPIN_DELAY 1.5
 
 //=========================================================
 // MonsterMaker - this ent creates monsters during the game.
@@ -40,6 +49,9 @@ public:
 	void EXPORT ToggleUse(CBaseEntity* pActivator, CBaseEntity* pCaller, USE_TYPE useType, float value);
 	void EXPORT CyclicUse(CBaseEntity* pActivator, CBaseEntity* pCaller, USE_TYPE useType, float value);
 	void EXPORT MakerThink();
+	// Gunman-Erweiterung (RE-bestaetigt): Warp-In-Vorlaufeffekt vor dem eigentlichen Spawn,
+	// siehe SF_MONSTERMAKER_WARPIN. Kein SDK-Pendant.
+	void EXPORT MakerWarpThink();
 	void DeathNotice(entvars_t* pevChild) override; // monster maker children use this to tell the monster maker that they have died.
 	void MakeMonster();
 
@@ -60,6 +72,13 @@ public:
 
 	bool m_fActive;
 	bool m_fFadeChildren; // should we make the children fadeout?
+
+	// Gunman-Erweiterungen (RE-bestaetigt, siehe Findings-Nachtrag 2026-09-06):
+	int m_iSkin;					// "_skin" - wird auf pev->skin des gespawnten Kindes uebertragen (aktiv genutzt).
+	int m_iFadeStatus;				// "fadestatus" - wird geparst/gespeichert, im Retail-Build aber nirgends
+									// ausgelesen (bestaetigt toter Wert); hier nur zur FGD-Kompatibilitaet uebernommen.
+	bool m_fWarpInPending;			// true waehrend der Warp-In-Vorlaufphase (siehe MakerWarpThink).
+	float m_flWarpInFinished;		// Zeitpunkt, zu dem die Warp-In-Vorlaufphase endet und gespawnt wird.
 };
 
 LINK_ENTITY_TO_CLASS(monstermaker, CMonsterMaker);
@@ -73,6 +92,10 @@ TYPEDESCRIPTION CMonsterMaker::m_SaveData[] =
 		DEFINE_FIELD(CMonsterMaker, m_iMaxLiveChildren, FIELD_INTEGER),
 		DEFINE_FIELD(CMonsterMaker, m_fActive, FIELD_BOOLEAN),
 		DEFINE_FIELD(CMonsterMaker, m_fFadeChildren, FIELD_BOOLEAN),
+		DEFINE_FIELD(CMonsterMaker, m_iSkin, FIELD_INTEGER),
+		DEFINE_FIELD(CMonsterMaker, m_iFadeStatus, FIELD_INTEGER),
+		DEFINE_FIELD(CMonsterMaker, m_fWarpInPending, FIELD_BOOLEAN),
+		DEFINE_FIELD(CMonsterMaker, m_flWarpInFinished, FIELD_TIME),
 };
 
 
@@ -96,6 +119,17 @@ bool CMonsterMaker::KeyValue(KeyValueData* pkvd)
 		m_iszMonsterClassname = ALLOC_STRING(pkvd->szValue);
 		return true;
 	}
+	else if (FStrEq(pkvd->szKeyName, "_skin"))
+	{
+		m_iSkin = atoi(pkvd->szValue);
+		return true;
+	}
+	else if (FStrEq(pkvd->szKeyName, "fadestatus"))
+	{
+		// RE-bestaetigt toter Wert im Retail-Build, siehe m_iFadeStatus-Deklaration oben.
+		m_iFadeStatus = atoi(pkvd->szValue);
+		return true;
+	}
 
 	return CBaseMonster::KeyValue(pkvd);
 }
@@ -104,6 +138,11 @@ bool CMonsterMaker::KeyValue(KeyValueData* pkvd)
 void CMonsterMaker::Spawn()
 {
 	pev->solid = SOLID_NOT;
+
+	// Retail Spawn (monstermaker vtable slot 0, first 0x400 bytes): with spawnflags & 8 the capability
+	// word (+0x220) gets bit 0x4 (bits_CAP_STRAFE). Same flag as SF_MONSTERMAKER_MONSTERCLIP.
+	if ((pev->spawnflags & SF_MONSTERMAKER_MONSTERCLIP) != 0)
+		m_afCapability |= bits_CAP_STRAFE;
 
 	m_cLiveChildren = 0;
 	Precache();
@@ -153,6 +192,9 @@ void CMonsterMaker::Precache()
 	CBaseMonster::Precache();
 
 	UTIL_PrecacheOther(STRING(m_iszMonsterClassname));
+
+	if ((pev->spawnflags & SF_MONSTERMAKER_WARPIN) != 0)
+		PrecacheSound("ambience/ammo_respawn.wav");
 }
 
 //=========================================================
@@ -208,7 +250,13 @@ void CMonsterMaker::MakeMonster()
 	pevCreate = VARS(pent);
 	pevCreate->origin = pev->origin;
 	pevCreate->angles = pev->angles;
-	SetBits(pevCreate->spawnflags, SF_MONSTER_FALL_TO_GROUND);
+	// Gunman-Erweiterung (RE-bestaetigt): "_skin" wird vor dem Spawn direkt auf das Kind uebertragen.
+	pevCreate->skin = m_iSkin;
+
+	// Gunman-Erweiterung (RE-bestaetigt): SF_MONSTERMAKER_NOFALLTOGROUND unterdrueckt das sonst
+	// immer gesetzte SF_MONSTER_FALL_TO_GROUND-Flag.
+	if ((pev->spawnflags & SF_MONSTERMAKER_NOFALLTOGROUND) == 0)
+		SetBits(pevCreate->spawnflags, SF_MONSTER_FALL_TO_GROUND);
 
 	// Children hit monsterclip brushes
 	if ((pev->spawnflags & SF_MONSTERMAKER_MONSTERCLIP) != 0)
@@ -216,6 +264,21 @@ void CMonsterMaker::MakeMonster()
 
 	DispatchSpawn(ENT(pevCreate));
 	pevCreate->owner = edict();
+
+	// Gunman-Erweiterung (RE-bestaetigt): Warp-In-Effekt am eigentlichen Spawnpunkt -
+	// Sound plus vereinfachter Funkeneffekt (Retail nutzt eine TE-Beam-Nachricht mit
+	// mehreren Zufallsendpunkten, hier auf eine einzelne TE_SPARKS reduziert).
+	if ((pev->spawnflags & SF_MONSTERMAKER_WARPIN) != 0)
+	{
+		EMIT_SOUND(ENT(pev), CHAN_ITEM, "ambience/ammo_respawn.wav", 1, ATTN_NORM);
+
+		MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, pev->origin);
+		WRITE_BYTE(TE_SPARKS);
+		WRITE_COORD(pev->origin.x);
+		WRITE_COORD(pev->origin.y);
+		WRITE_COORD(pev->origin.z);
+		MESSAGE_END();
+	}
 
 	if (!FStringNull(pev->netname))
 	{
@@ -240,6 +303,16 @@ void CMonsterMaker::MakeMonster()
 //=========================================================
 void CMonsterMaker::CyclicUse(CBaseEntity* pActivator, CBaseEntity* pCaller, USE_TYPE useType, float value)
 {
+	// Gunman-Erweiterung (RE-bestaetigt): bei SF_MONSTERMAKER_WARPIN erst die
+	// Warp-In-Vorlaufsequenz starten, statt sofort zu spawnen.
+	if ((pev->spawnflags & SF_MONSTERMAKER_WARPIN) != 0)
+	{
+		m_fWarpInPending = false;
+		SetThink(&CMonsterMaker::MakerWarpThink);
+		pev->nextthink = gpGlobals->time;
+		return;
+	}
+
 	MakeMonster();
 }
 
@@ -270,9 +343,77 @@ void CMonsterMaker::ToggleUse(CBaseEntity* pActivator, CBaseEntity* pCaller, USE
 //=========================================================
 void CMonsterMaker::MakerThink()
 {
+	// Gunman-Erweiterung (RE-bestaetigt): bei SF_MONSTERMAKER_WARPIN erst die
+	// Warp-In-Vorlaufsequenz starten, statt in diesem Zyklus sofort zu spawnen.
+	if ((pev->spawnflags & SF_MONSTERMAKER_WARPIN) != 0)
+	{
+		m_fWarpInPending = false;
+		SetThink(&CMonsterMaker::MakerWarpThink);
+		pev->nextthink = gpGlobals->time;
+		return;
+	}
+
 	pev->nextthink = gpGlobals->time + m_flDelay;
 
 	MakeMonster();
+}
+
+//=========================================================
+// MakerWarpThink - Gunman-Erweiterung (RE-bestaetigt, kein SDK-Pendant):
+// mehrstufiger Partikel-/Sprite-Vorlauf vor dem eigentlichen MakeMonster()-Aufruf,
+// wenn SF_MONSTERMAKER_WARPIN gesetzt ist. Das Retail-Decompilat baut dafuer ein
+// animiertes CSprite plus vier zufaellig ausgerichtete Funken-/Blitzstrahlen auf;
+// hier auf einen einzelnen wiederholten TE_SPARKS-Effekt am Spawnpunkt vereinfacht
+// (siehe findings/entities/game_rules_multi_monstermaker_sdk_diffs.md).
+//=========================================================
+void CMonsterMaker::MakerWarpThink()
+{
+	pev->nextthink = gpGlobals->time + 0.1;
+
+	if (!m_fWarpInPending)
+	{
+		// erster Tick der Sequenz: Vorlaufeffekt starten.
+		m_fWarpInPending = true;
+		m_flWarpInFinished = gpGlobals->time + MONSTERMAKER_WARPIN_DELAY;
+
+		MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, pev->origin);
+		WRITE_BYTE(TE_SPARKS);
+		WRITE_COORD(pev->origin.x);
+		WRITE_COORD(pev->origin.y);
+		WRITE_COORD(pev->origin.z);
+		MESSAGE_END();
+		return;
+	}
+
+	if (gpGlobals->time < m_flWarpInFinished)
+	{
+		// weiterhin am Warten - periodisch Funken nachlegen.
+		if (RANDOM_LONG(0, 3) == 0)
+		{
+			MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, pev->origin);
+			WRITE_BYTE(TE_SPARKS);
+			WRITE_COORD(pev->origin.x);
+			WRITE_COORD(pev->origin.y);
+			WRITE_COORD(pev->origin.z);
+			MESSAGE_END();
+		}
+		return;
+	}
+
+	// Vorlaufzeit abgelaufen - jetzt tatsaechlich spawnen.
+	m_fWarpInPending = false;
+	MakeMonster();
+
+	if ((pev->spawnflags & SF_MONSTERMAKER_CYCLIC) != 0)
+	{
+		// Cyclic: nur ein Kind pro Use-Aufruf, danach wieder inaktiv.
+		SetThink(&CMonsterMaker::SUB_DoNothing);
+	}
+	else
+	{
+		SetThink(&CMonsterMaker::MakerThink);
+		pev->nextthink = gpGlobals->time + m_flDelay;
+	}
 }
 
 

@@ -292,8 +292,8 @@ void CLeech::AlertSound()
 
 void CLeech::Precache()
 {
-	//PRECACHE_MODEL("models/icky.mdl");
-	PRECACHE_MODEL("models/leech.mdl");
+	//PrecacheModel("models/icky.mdl");
+	PrecacheModel("models/leech.mdl");
 
 	PRECACHE_SOUND_ARRAY(pAttackSounds);
 	PRECACHE_SOUND_ARRAY(pAlertSounds);

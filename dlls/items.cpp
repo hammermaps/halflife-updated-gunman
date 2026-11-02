@@ -86,6 +86,17 @@ void CWorldItem::Spawn()
 }
 
 
+bool CItem::KeyValue(KeyValueData* pkvd)
+{
+	if (FStrEq(pkvd->szKeyName, "nopickupsound"))
+	{
+		m_iNoPickupSound = atoi(pkvd->szValue);
+		return true;
+	}
+
+	return CBaseEntity::KeyValue(pkvd);
+}
+
 void CItem::Spawn()
 {
 	pev->movetype = MOVETYPE_TOSS;
@@ -99,6 +110,32 @@ void CItem::Spawn()
 		ALERT(at_error, "Item %s fell out of level at %f,%f,%f", STRING(pev->classname), pev->origin.x, pev->origin.y, pev->origin.z);
 		UTIL_Remove(this);
 		return;
+	}
+
+	SetThink(&CItem::GlowThink);
+	pev->nextthink = gpGlobals->time;
+}
+
+void CItem::GlowThink()
+{
+	if (pev->effects & EF_NODRAW)
+	{
+		pev->nextthink = 0;
+		return;
+	}
+
+	if (pev->renderfx != kRenderFxGlowShell)
+	{
+		pev->effects |= EF_MUZZLEFLASH;
+		pev->renderfx = kRenderFxGlowShell;
+		pev->renderamt = 30;
+		pev->rendercolor = Vector(0, 100, 50);
+		pev->nextthink = gpGlobals->time + 2.2f;
+	}
+	else
+	{
+		pev->renderfx = kRenderFxNone;
+		pev->nextthink = gpGlobals->time;
 	}
 }
 
@@ -161,6 +198,8 @@ void CItem::Materialize()
 		EMIT_SOUND_DYN(ENT(pev), CHAN_WEAPON, "items/suitchargeok1.wav", 1, ATTN_NORM, 0, 150);
 		pev->effects &= ~EF_NODRAW;
 		pev->effects |= EF_MUZZLEFLASH;
+		SetThink(&CItem::GlowThink);
+		pev->nextthink = gpGlobals->time;
 	}
 
 	SetTouch(&CItem::ItemTouch);
@@ -178,7 +217,7 @@ class CItemSuit : public CItem
 	}
 	void Precache() override
 	{
-		PRECACHE_MODEL("models/w_suit.mdl");
+		PrecacheModel("models/w_suit.mdl");
 	}
 	bool MyTouch(CBasePlayer* pPlayer) override
 	{
@@ -209,8 +248,8 @@ class CItemBattery : public CItem
 	}
 	void Precache() override
 	{
-		PRECACHE_MODEL("models/w_battery.mdl");
-		PRECACHE_SOUND("items/gunpickup2.wav");
+		PrecacheModel("models/w_battery.mdl");
+		PrecacheSound("items/gunpickup2.wav");
 	}
 	bool MyTouch(CBasePlayer* pPlayer) override
 	{
@@ -265,7 +304,7 @@ class CItemAntidote : public CItem
 	}
 	void Precache() override
 	{
-		PRECACHE_MODEL("models/w_antidote.mdl");
+		PrecacheModel("models/w_antidote.mdl");
 	}
 	bool MyTouch(CBasePlayer* pPlayer) override
 	{
@@ -289,7 +328,7 @@ class CItemSecurity : public CItem
 	}
 	void Precache() override
 	{
-		PRECACHE_MODEL("models/w_security.mdl");
+		PrecacheModel("models/w_security.mdl");
 	}
 	bool MyTouch(CBasePlayer* pPlayer) override
 	{
@@ -310,7 +349,7 @@ class CItemLongJump : public CItem
 	}
 	void Precache() override
 	{
-		PRECACHE_MODEL("models/w_longjump.mdl");
+		PrecacheModel("models/w_longjump.mdl");
 	}
 	bool MyTouch(CBasePlayer* pPlayer) override
 	{

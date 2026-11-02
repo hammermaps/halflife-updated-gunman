@@ -333,8 +333,8 @@ void CNihilanth::Spawn()
 
 void CNihilanth::Precache()
 {
-	PRECACHE_MODEL("models/nihilanth.mdl");
-	PRECACHE_MODEL("sprites/lgtning.spr");
+	PrecacheModel("models/nihilanth.mdl");
+	PrecacheModel("sprites/lgtning.spr");
 	UTIL_PrecacheOther("nihilanth_energy_ball");
 	UTIL_PrecacheOther("monster_alien_controller");
 	UTIL_PrecacheOther("monster_alien_slave");
@@ -346,7 +346,7 @@ void CNihilanth::Precache()
 	PRECACHE_SOUND_ARRAY(pLaughSounds);
 	PRECACHE_SOUND_ARRAY(pPainSounds);
 	PRECACHE_SOUND_ARRAY(pDeathSounds);
-	PRECACHE_SOUND("debris/beamstart7.wav");
+	PrecacheSound("debris/beamstart7.wav");
 }
 
 
@@ -1319,16 +1319,16 @@ void CNihilanthHVR::Spawn()
 
 void CNihilanthHVR::Precache()
 {
-	PRECACHE_MODEL("sprites/flare6.spr");
-	PRECACHE_MODEL("sprites/nhth1.spr");
-	PRECACHE_MODEL("sprites/exit1.spr");
-	PRECACHE_MODEL("sprites/tele1.spr");
-	PRECACHE_MODEL("sprites/animglow01.spr");
-	PRECACHE_MODEL("sprites/xspark4.spr");
-	PRECACHE_MODEL("sprites/muzzleflash3.spr");
-	PRECACHE_SOUND("debris/zap4.wav");
-	PRECACHE_SOUND("weapons/electro4.wav");
-	PRECACHE_SOUND("x/x_teleattack1.wav");
+	PrecacheModel("sprites/flare6.spr");
+	PrecacheModel("sprites/nhth1.spr");
+	PrecacheModel("sprites/exit1.spr");
+	PrecacheModel("sprites/tele1.spr");
+	PrecacheModel("sprites/animglow01.spr");
+	PrecacheModel("sprites/xspark4.spr");
+	PrecacheModel("sprites/muzzleflash3.spr");
+	PrecacheSound("debris/zap4.wav");
+	PrecacheSound("weapons/electro4.wav");
+	PrecacheSound("x/x_teleattack1.wav");
 }
 
 

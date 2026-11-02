@@ -31,7 +31,7 @@ LINK_ENTITY_TO_CLASS(weapon_shotgun, CShotgun);
 void CShotgun::Spawn()
 {
 	Precache();
-	m_iId = WEAPON_SHOTGUN;
+	m_iId = WEAPON_SHOTGUN_GUNMAN;
 	SET_MODEL(ENT(pev), "models/w_shotgun.mdl");
 
 	m_iDefaultAmmo = SHOTGUN_DEFAULT_GIVE;
@@ -42,28 +42,28 @@ void CShotgun::Spawn()
 
 void CShotgun::Precache()
 {
-	PRECACHE_MODEL("models/v_shotgun.mdl");
-	PRECACHE_MODEL("models/w_shotgun.mdl");
-	PRECACHE_MODEL("models/p_shotgun.mdl");
+	PrecacheModel("models/v_shotgun.mdl");
+	PrecacheModel("models/w_shotgun.mdl");
+	PrecacheModel("models/p_shotgun.mdl");
 
-	m_iShell = PRECACHE_MODEL("models/shotgunshell.mdl"); // shotgun shell
+	m_iShell = PrecacheModel("models/shotgunshell.mdl"); // shotgun shell
 
-	PRECACHE_SOUND("items/9mmclip1.wav");
+	PrecacheSound("items/9mmclip1.wav");
 
-	PRECACHE_SOUND("weapons/dbarrel1.wav"); //shotgun
-	PRECACHE_SOUND("weapons/sbarrel1.wav"); //shotgun
+	PrecacheSound("weapons/dbarrel1.wav"); //shotgun
+	PrecacheSound("weapons/sbarrel1.wav"); //shotgun
 
-	PRECACHE_SOUND("weapons/reload1.wav"); // shotgun reload
-	PRECACHE_SOUND("weapons/reload3.wav"); // shotgun reload
+	PrecacheSound("weapons/reload1.wav"); // shotgun reload
+	PrecacheSound("weapons/reload3.wav"); // shotgun reload
 
 	//	PRECACHE_SOUND ("weapons/sshell1.wav");	// shotgun reload - played on client
 	//	PRECACHE_SOUND ("weapons/sshell3.wav");	// shotgun reload - played on client
 
-	PRECACHE_SOUND("weapons/357_cock1.wav"); // gun empty sound
-	PRECACHE_SOUND("weapons/scock1.wav");	 // cock gun
+	PrecacheSound("weapons/357_cock1.wav"); // gun empty sound
+	PrecacheSound("weapons/scock1.wav");	 // cock gun
 
-	m_usSingleFire = PRECACHE_EVENT(1, "events/shotgun1.sc");
-	m_usDoubleFire = PRECACHE_EVENT(1, "events/shotgun2.sc");
+	m_usSingleFire = PrecacheEvent(1, "events/shotgun1.sc");
+	m_usDoubleFire = PrecacheEvent(1, "events/shotgun2.sc");
 }
 
 bool CShotgun::GetItemInfo(ItemInfo* p)
@@ -77,7 +77,7 @@ bool CShotgun::GetItemInfo(ItemInfo* p)
 	p->iSlot = 2;
 	p->iPosition = 1;
 	p->iFlags = 0;
-	p->iId = m_iId = WEAPON_SHOTGUN;
+	p->iId = m_iId = WEAPON_SHOTGUN_GUNMAN;
 	p->iWeight = SHOTGUN_WEIGHT;
 
 	return true;
@@ -87,7 +87,9 @@ bool CShotgun::GetItemInfo(ItemInfo* p)
 
 bool CShotgun::Deploy()
 {
-	return DefaultDeploy("models/v_shotgun.mdl", "models/p_shotgun.mdl", SHOTGUN_DRAW, "shotgun");
+	// Retail CShotgun::Deploy passes animation index 0 to the common deploy helper.
+	// In v_shotgun.mdl sequence 0 is "draw"; SHOTGUN_DRAW is the stock-HL index 6.
+	return DefaultDeploy("models/v_shotgun.mdl", "models/p_shotgun.mdl", 0, "shotgun");
 }
 
 void CShotgun::PrimaryAttack()
@@ -365,13 +367,13 @@ class CShotgunAmmo : public CBasePlayerAmmo
 	void Spawn() override
 	{
 		Precache();
-		SET_MODEL(ENT(pev), "models/w_shotbox.mdl");
+		SET_MODEL(ENT(pev), "models/shotgunammo.mdl");
 		CBasePlayerAmmo::Spawn();
 	}
 	void Precache() override
 	{
-		PRECACHE_MODEL("models/w_shotbox.mdl");
-		PRECACHE_SOUND("items/9mmclip1.wav");
+		PrecacheModel("models/shotgunammo.mdl");
+		PrecacheSound("items/9mmclip1.wav");
 	}
 	bool AddAmmo(CBaseEntity* pOther) override
 	{
@@ -384,3 +386,13 @@ class CShotgunAmmo : public CBasePlayerAmmo
 	}
 };
 LINK_ENTITY_TO_CLASS(ammo_buckshot, CShotgunAmmo);
+
+#ifndef CLIENT_DLL
+// Retail: beim Aufnehmen die Anpassungs-Items verteilen (customize_items.cpp)
+void CShotgun::AddToPlayer(CBasePlayer* pPlayer)
+{
+	CBasePlayerWeapon::AddToPlayer(pPlayer);
+	pPlayer->GiveNamedItem("cust_1ShotgunSpread");
+	pPlayer->GiveNamedItem("cust_2ShotgunShells");
+}
+#endif

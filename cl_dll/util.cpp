@@ -30,11 +30,9 @@ HSPRITE LoadSprite(const char* pszName)
 	int iRes;
 	char sz[256]; 
 
-	if (ScreenWidth > 2560 && ScreenHeight > 1600)
-		iRes = 2560;
-	else if (ScreenWidth >= 1280 && ScreenHeight > 720)
-		iRes = 1280;
-	else if (ScreenWidth >= 640)
+	// Gunman ships only 320- and 640-wide HUD sprite sheets. Higher
+	// resolutions use the 640 set and are scaled by the renderer/layout.
+	if (ScreenWidth >= 640)
 		iRes = 640;
 	else
 		iRes = 320;

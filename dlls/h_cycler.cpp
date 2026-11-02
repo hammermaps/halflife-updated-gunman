@@ -69,6 +69,71 @@ public:
 LINK_ENTITY_TO_CLASS(cycler, CGenericCycler);
 
 
+// Gunman Chronicles extension of the generic cycler. Used ~340 times
+// across the retail maps as a generic "place a static/animated model"
+// prop (GoldSrc has no dedicated prop_static/prop_dynamic), not as an
+// interactive damageable cycler - hence the collision/damage removal
+// below. Decompiled from gunman.dll CGunmanCycler::Spawn @0x10022660
+// (see findings/entities/gunman_cycler.md and ghidra/logs/cycler_combat.txt).
+class CGunmanCycler : public CGenericCycler
+{
+public:
+	bool KeyValue(KeyValueData* pkvd) override;
+	void Spawn() override;
+
+private:
+	int m_iSubmodel1 = 1;
+	int m_iSubmodel2 = 1;
+	int m_iSubmodel3 = 1;
+};
+LINK_ENTITY_TO_CLASS(gunman_cycler, CGunmanCycler);
+
+bool CGunmanCycler::KeyValue(KeyValueData* pkvd)
+{
+	if (FStrEq(pkvd->szKeyName, "cyc_submodel1"))
+	{
+		m_iSubmodel1 = atoi(pkvd->szValue);
+		return true;
+	}
+	else if (FStrEq(pkvd->szKeyName, "cyc_submodel2"))
+	{
+		m_iSubmodel2 = atoi(pkvd->szValue);
+		return true;
+	}
+	else if (FStrEq(pkvd->szKeyName, "cyc_submodel3"))
+	{
+		m_iSubmodel3 = atoi(pkvd->szValue);
+		return true;
+	}
+
+	return CGenericCycler::KeyValue(pkvd);
+}
+
+void CGunmanCycler::Spawn()
+{
+	CGenericCycler::Spawn();
+
+	// Three independent bodygroup slots: keyvalues are 1-based
+	// ("Body1/2/3" in the FGD, default 1) but applied 0-based to the
+	// studio model's bodygroups 1/2/3. Only submodel1/2 get clamped to a
+	// minimum of 1 if left unset - submodel3 doesn't, a quirk of the
+	// original faithfully reproduced here rather than "fixed".
+	if (m_iSubmodel1 < 1)
+		m_iSubmodel1 = 1;
+	if (m_iSubmodel2 < 1)
+		m_iSubmodel2 = 1;
+
+	SetBodygroup(1, m_iSubmodel1 - 1);
+	SetBodygroup(2, m_iSubmodel2 - 1);
+	SetBodygroup(3, m_iSubmodel3 - 1);
+
+	// Forced after the base CCycler::Spawn() already set
+	// SOLID_SLIDEBOX/DAMAGE_YES: gunman_cycler has no collision and can't
+	// be damaged, matching its near-universal use as decorative geometry.
+	pev->solid = SOLID_NOT;
+	pev->takedamage = DAMAGE_NO;
+}
+
 
 // Probe droid imported for tech demo compatibility
 //
@@ -100,7 +165,7 @@ void CCycler::GenericCyclerSpawn(const char* szModel, Vector vecMin, Vector vecM
 	}
 
 	pev->classname = MAKE_STRING("cycler");
-	PRECACHE_MODEL(szModel);
+	PrecacheModel(szModel);
 	SET_MODEL(ENT(pev), szModel);
 
 	CCycler::Spawn();
@@ -253,7 +318,7 @@ void CCyclerSprite::Spawn()
 	m_animate = true;
 	m_lastTime = gpGlobals->time;
 
-	PRECACHE_MODEL((char*)STRING(pev->model));
+	PrecacheModel((char*)STRING(pev->model));
 	SET_MODEL(ENT(pev), STRING(pev->model));
 
 	m_maxFrame = (float)MODEL_FRAMES(pev->modelindex) - 1;
@@ -321,7 +386,7 @@ void CWeaponCycler::Spawn()
 	pev->solid = SOLID_SLIDEBOX;
 	pev->movetype = MOVETYPE_NONE;
 
-	PRECACHE_MODEL((char*)STRING(pev->model));
+	PrecacheModel((char*)STRING(pev->model));
 	SET_MODEL(ENT(pev), STRING(pev->model));
 	m_iszModel = pev->model;
 	m_iModel = pev->modelindex;
@@ -415,7 +480,7 @@ void CWreckage::Spawn()
 
 	if (!FStringNull(pev->model))
 	{
-		PRECACHE_MODEL((char*)STRING(pev->model));
+		PrecacheModel((char*)STRING(pev->model));
 		SET_MODEL(ENT(pev), STRING(pev->model));
 	}
 	// pev->scale = 5.0;
@@ -426,7 +491,7 @@ void CWreckage::Spawn()
 void CWreckage::Precache()
 {
 	if (!FStringNull(pev->model))
-		PRECACHE_MODEL((char*)STRING(pev->model));
+		PrecacheModel((char*)STRING(pev->model));
 }
 
 void CWreckage::Think()

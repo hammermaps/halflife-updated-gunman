@@ -18,9 +18,19 @@
 class CItem : public CBaseEntity
 {
 public:
+	bool KeyValue(KeyValueData* pkvd) override;
 	void Spawn() override;
 	CBaseEntity* Respawn() override;
+	void EXPORT GlowThink();
 	void EXPORT ItemTouch(CBaseEntity* pOther);
 	void EXPORT Materialize();
 	virtual bool MyTouch(CBasePlayer* pPlayer) { return false; }
+
+protected:
+	bool ShouldPlayPickupSound() const { return m_iNoPickupSound == 0; }
+
+private:
+	// Gunman retail addition: parsed from the map's nopickupsound key.
+	// The retail CItem does not add this field to its save table.
+	int m_iNoPickupSound = 0;
 };

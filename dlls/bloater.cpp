@@ -210,7 +210,7 @@ void CBloater::Spawn()
 //=========================================================
 void CBloater::Precache()
 {
-	PRECACHE_MODEL("models/floater.mdl");
+	PrecacheModel("models/floater.mdl");
 }
 
 //=========================================================

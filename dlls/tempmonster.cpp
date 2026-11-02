@@ -106,9 +106,9 @@ void CMyMonster:: Spawn()
 //=========================================================
 void CMyMonster:: Precache()
 {
-	PRECACHE_SOUND("mysound.wav");
+	PrecacheSound("mysound.wav");
 
-	PRECACHE_MODEL("models/mymodel.mdl");
+	PrecacheModel("models/mymodel.mdl");
 }	
 
 //=========================================================

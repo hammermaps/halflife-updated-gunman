@@ -254,7 +254,26 @@ extern void UTIL_MakeInvVectors(const Vector& vec, globalvars_t* pgv);
 extern void UTIL_SetOrigin(entvars_t* pev, const Vector& vecOrigin);
 extern void UTIL_EmitAmbientSound(edict_t* entity, const Vector& vecOrigin, const char* samp, float vol, float attenuation, int fFlags, int pitch);
 extern void UTIL_ParticleEffect(const Vector& vecOrigin, const Vector& vecDirection, unsigned int ulColor, unsigned int ulCount);
-extern void UTIL_ScreenShake(const Vector& center, float amplitude, float frequency, float duration, float radius);
+// Nachtrag 2026-09-06 (Nutzer-Meldung: mehreren Raketen-/Moerser-
+// Projektilklassen fehlte ein Flugschweif): gemeinsamer Helfer statt
+// Code-Duplikation je Klasse, nach dem bereits im Projekt etablierten
+// Muster von CRpgRocket::IgniteThink (rpg.cpp). iTrailSprite muss
+// vorher precacht sein (PrecacheModel-Rueckgabewert). bFuelLight fuegt
+// zusaetzlich pev->effects|=EF_LIGHT hinzu (Treibstoffverbrennungs-
+// Lichteffekt) - fuer echte Raketen sinnvoll, fuer rein ballistische
+// (nicht angetriebene) Moerser-Granaten auf false setzen.
+extern void UTIL_RocketTrail(CBaseEntity* pRocket, int iTrailSprite, bool bFuelLight = true);
+// Nachtrag 2026-09-06 (Nutzerwunsch: Erschuetterung + auf die Umgebung
+// begrenzter Lichtblitz mit Fade-Out fuer JEDE Explosion): gemeinsamer
+// Helfer statt Code-Duplikation an den >20 TE_EXPLOSION-Stellen im
+// Projekt. KEIN RE-Fund - eine bewusste Gameplay-Feel-Ergaenzung
+// (TE_EXPLOSION zeichnet zwar bereits ein kurzes, engine-internes
+// Leuchten, aber weder eine Bildschirm-Erschuetterung noch einen
+// separat steuerbaren, radiusbegrenzten Fade-Out-Lichtblitz). radius
+// begrenzt sowohl die Erschuetterung als auch den TE_DLIGHT-Radius auf
+// die unmittelbare Umgebung, nicht die ganze Karte.
+extern void UTIL_ExplosionEffects(const Vector& origin, float radius);
+extern void UTIL_ScreenShake(const Vector& center, float amplitude, float frequency, float duration, float radius, bool bGroundOnly = true);
 extern void UTIL_ScreenShakeAll(const Vector& center, float amplitude, float frequency, float duration);
 extern void UTIL_ShowMessage(const char* pString, CBaseEntity* pPlayer);
 extern void UTIL_ShowMessageAll(const char* pString);
@@ -297,6 +316,16 @@ extern void UTIL_DecalTrace(TraceResult* pTrace, int decalNumber);
 extern void UTIL_PlayerDecalTrace(TraceResult* pTrace, int playernum, int decalNumber, bool bIsCustom);
 extern void UTIL_GunshotDecalTrace(TraceResult* pTrace, int decalNumber);
 extern void UTIL_Sparks(const Vector& position);
+
+// Emit a PVS-scoped TE_DLIGHT. Radius and decay are in world units and rounded
+// down to protocol 10-unit steps; life is seconds.
+// Re-emit short-lived lights from a Think callback for moving, persistent
+// effects (weapon muzzle flashes and explosions usually need one emission).
+extern void UTIL_DynamicLight(const Vector& origin, float radius, int red, int green, int blue, float life, float decay = 0.0f);
+
+// Entity/attachment keyed TE_ELIGHT for compact lights that move with a
+// studio model (for example muzzle flashes or a model's glowing core).
+extern void UTIL_AttachedDynamicLight(CBaseEntity* pEntity, int attachment, const Vector& origin, float radius, int red, int green, int blue, float life, float decay = 0.0f);
 extern void UTIL_Ricochet(const Vector& position, float scale);
 extern void UTIL_StringToVector(float* pVector, const char* pString);
 extern void UTIL_StringToIntArray(int* pVector, int count, const char* pString);
@@ -394,11 +423,8 @@ void DBG_AssertFunction(bool fExpr, const char* szExpr, const char* szFile, int 
 // Un-comment only as needed
 //
 #define LANGUAGE_ENGLISH 0
-#define LANGUAGE_GERMAN 1
 #define LANGUAGE_FRENCH 2
 #define LANGUAGE_BRITISH 3
-
-inline DLL_GLOBAL int g_Language;
 
 #define AMBIENT_SOUND_STATIC 0 // medium radius attenuation
 #define AMBIENT_SOUND_EVERYWHERE 1
@@ -530,11 +556,42 @@ void EMIT_SOUND_SUIT(edict_t* entity, const char* sample);
 void EMIT_GROUPID_SUIT(edict_t* entity, int isentenceg);
 void EMIT_GROUPNAME_SUIT(edict_t* entity, const char* groupname);
 
-#define PRECACHE_SOUND_ARRAY(a)                \
-	{                                          \
-		for (int i = 0; i < ARRAYSIZE(a); i++) \
-			PRECACHE_SOUND((char*)a[i]);       \
-	}
+// Central server-side sound precache. The server verifies sound/<path>, logs a
+// missing file once per map and precaches common/null.wav as a safe fallback.
+// Shared weapon sources are also linked into client.dll, where precaching is a
+// no-op engine callback and must not require the server utility implementation.
+#ifdef CLIENT_DLL
+inline void PrecacheSound(const char* sample)
+{
+	PRECACHE_SOUND((char*)sample);
+}
+
+inline int PrecacheModel(const char* model)
+{
+	return PRECACHE_MODEL((char*)model);
+}
+
+inline unsigned short PrecacheEvent(int type, const char* eventScript)
+{
+	return PRECACHE_EVENT(type, (char*)eventScript);
+}
+
+inline void ResetPrecacheSoundCache() {}
+#else
+void PrecacheSound(const char* sample);
+int PrecacheModel(const char* model);
+unsigned short PrecacheEvent(int type, const char* eventScript);
+void ResetPrecacheSoundCache();
+#endif
+
+template <size_t N>
+inline void PrecacheSound(const char* const (&sounds)[N])
+{
+	for (size_t i = 0; i < N; ++i)
+		PrecacheSound(sounds[i]);
+}
+
+#define PRECACHE_SOUND_ARRAY(a) PrecacheSound(a)
 
 #define EMIT_SOUND_ARRAY_DYN(chan, array) \
 	EMIT_SOUND_DYN(ENT(pev), chan, array[RANDOM_LONG(0, ARRAYSIZE(array) - 1)], 1.0, ATTN_NORM, 0, RANDOM_LONG(95, 105));

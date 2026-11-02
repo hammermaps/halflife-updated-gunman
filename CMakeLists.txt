@@ -38,6 +38,16 @@ cmake_path(GET CMAKE_INSTALL_PREFIX STEM MOD_NAME)
 set(HalfLife_HLDS_DIRECTORY "" CACHE PATH "Path to the Half-Life Dedicated Server directory. Must be specified to automatically set up dedicated server debugging settings and to copy libraries")
 
 option(HalfLife_LTO "Enable Link-Time Optimization" OFF)
+option(Gunman_Xash3D "Build the Gunman DLLs for Xash3D FWGS instead of stock GoldSrc" OFF)
+
+# Keep the engine target explicit and mutually exclusive.  New reconstruction
+# code must use the corresponding #if/#else branches, never infer the engine
+# from the host platform (both targets are Linux i386 builds here).
+if(Gunman_Xash3D)
+	set(GUNMAN_ENGINE_TARGET_DEFINITIONS GUNMAN_ENGINE_XASH3D=1)
+else()
+	set(GUNMAN_ENGINE_TARGET_DEFINITIONS GUNMAN_ENGINE_GOLDSRC=1)
+endif()
 
 if(HalfLife_LTO)
 	check_ipo_supported()
@@ -56,10 +66,16 @@ function(set_common_properties TARGET_NAME)
 
 	target_compile_features(${TARGET_NAME} PRIVATE cxx_std_17)
 
+	# CLIENT_WEAPONS only for the client DLL (client-side weapon prediction). The server DLL must use
+	# gpGlobals->time as the weapon time base (UTIL_WeaponTimeBase); with the define it returned 0 on the server.
+	if(TARGET_NAME STREQUAL "client")
+		target_compile_definitions(${TARGET_NAME} PRIVATE CLIENT_WEAPONS)
+	endif()
+
 	target_compile_definitions(${TARGET_NAME} PRIVATE
 		_CRT_SECURE_NO_WARNINGS
+		${GUNMAN_ENGINE_TARGET_DEFINITIONS}
 		$<$<CONFIG:DEBUG>:_DEBUG>
-		CLIENT_WEAPONS
 		# These are defined for OSX as well
 		$<$<PLATFORM_ID:Linux, Darwin>:POSIX _POSIX LINUX _LINUX GNUC>
 		$<$<PLATFORM_ID:Darwin>:OSX _OSX>

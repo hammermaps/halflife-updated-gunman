@@ -59,8 +59,8 @@ void CHealthKit::Spawn()
 
 void CHealthKit::Precache()
 {
-	PRECACHE_MODEL("models/w_medkit.mdl");
-	PRECACHE_SOUND("items/smallmedkit1.wav");
+	PrecacheModel("models/w_medkit.mdl");
+	PrecacheSound("items/smallmedkit1.wav");
 }
 
 bool CHealthKit::MyTouch(CBasePlayer* pPlayer)
@@ -170,9 +170,9 @@ void CWallHealth::Spawn()
 
 void CWallHealth::Precache()
 {
-	PRECACHE_SOUND("items/medshot4.wav");
-	PRECACHE_SOUND("items/medshotno1.wav");
-	PRECACHE_SOUND("items/medcharge4.wav");
+	PrecacheSound("items/medshot4.wav");
+	PrecacheSound("items/medshotno1.wav");
+	PrecacheSound("items/medcharge4.wav");
 }
 
 

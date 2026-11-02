@@ -84,6 +84,10 @@ DLL_DECALLIST gDecals[] = {
 	{"{smscorch3", 0}, // DECAL_SMALLSCORCH3,	// Small scorch mark
 	{"{mommablob", 0}, // DECAL_MOMMABIRTH		// BM Birth spray
 	{"{mommablob", 0}, // DECAL_MOMMASPLAT		// BM Mortar spray?? need decal
+	{"{cg_grn", 0},	   // DECAL_CG_GRN
+	{"{cg_yel", 0},	   // DECAL_CG_YEL
+	{"{cg_orn", 0},	   // DECAL_CG_ORN
+	{"{cg_red", 0},	   // DECAL_CG_RED
 };
 
 /*
@@ -501,6 +505,9 @@ void CWorld::Spawn()
 
 void CWorld::Precache()
 {
+	// Sound precaches are level resources. Never carry the deduplication cache
+	// into the next map, where the engine has a new resource table.
+	ResetPrecacheSoundCache();
 	// Flag this entity for removal if it's not the actual world entity.
 	if (World != this)
 	{
@@ -557,30 +564,22 @@ void CWorld::Precache()
 	ClientPrecache();
 
 	// sounds used from C physics code
-	PRECACHE_SOUND("common/null.wav"); // clears sound channels
+	PrecacheSound("common/null.wav"); // clears sound channels
 
-	PRECACHE_SOUND("items/suitchargeok1.wav"); //!!! temporary sound for respawning weapons.
-	PRECACHE_SOUND("items/gunpickup2.wav");	   // player picks up a gun.
+	PrecacheSound("items/suitchargeok1.wav"); //!!! temporary sound for respawning weapons.
+	PrecacheSound("items/gunpickup2.wav");	   // player picks up a gun.
 
-	PRECACHE_SOUND("common/bodydrop3.wav"); // dead bodies hitting the ground (animation events)
-	PRECACHE_SOUND("common/bodydrop4.wav");
+	PrecacheSound("common/bodydrop3.wav"); // dead bodies hitting the ground (animation events)
+	PrecacheSound("common/bodydrop4.wav");
 
-	g_Language = (int)CVAR_GET_FLOAT("sv_language");
-	if (g_Language == LANGUAGE_GERMAN)
-	{
-		PRECACHE_MODEL("models/germangibs.mdl");
-	}
-	else
-	{
-		PRECACHE_MODEL("models/hgibs.mdl");
-		PRECACHE_MODEL("models/agibs.mdl");
-	}
+	PrecacheModel("models/hgibs.mdl");
+	PrecacheModel("models/agibs.mdl");
 
-	PRECACHE_SOUND("weapons/ric1.wav");
-	PRECACHE_SOUND("weapons/ric2.wav");
-	PRECACHE_SOUND("weapons/ric3.wav");
-	PRECACHE_SOUND("weapons/ric4.wav");
-	PRECACHE_SOUND("weapons/ric5.wav");
+	PrecacheSound("weapons/ric1.wav");
+	PrecacheSound("weapons/ric2.wav");
+	PrecacheSound("weapons/ric3.wav");
+	PrecacheSound("weapons/ric4.wav");
+	PrecacheSound("weapons/ric5.wav");
 	//
 	// Setup light animation tables. 'a' is total darkness, 'z' is maxbright.
 	//

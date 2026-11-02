@@ -62,6 +62,10 @@ enum decal_e
 	DECAL_SMALLSCORCH3, // Small scorch mark
 	DECAL_MOMMABIRTH,	// Big momma birth splatter
 	DECAL_MOMMASPLAT,
+	DECAL_CG_GRN, // Gunman: Chemie-Dekale (gruen/gelb/orange/rot)
+	DECAL_CG_YEL,
+	DECAL_CG_ORN,
+	DECAL_CG_RED,
 };
 
 typedef struct

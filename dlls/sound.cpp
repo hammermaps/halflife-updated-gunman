@@ -228,7 +228,7 @@ void CAmbientGeneric::Precache()
 	if (!FStringNull(pev->message) && strlen(szSoundFile) > 1)
 	{
 		if (*szSoundFile != '!')
-			PRECACHE_SOUND(szSoundFile);
+			PrecacheSound(szSoundFile);
 	}
 	// init all dynamic modulation parms
 	InitModulationParms();
@@ -1053,7 +1053,8 @@ int USENTENCEG_PickSequential(int isentenceg, char* szfound, int ipick, bool fre
 {
 	char* szgroupname;
 	unsigned char count;
-	char sznum[8];
+	// Enough room for every decimal int value, including sign and terminator.
+	char sznum[12];
 
 	if (!fSentencesInit)
 		return -1;

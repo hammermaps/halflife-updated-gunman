@@ -136,10 +136,10 @@ void CSatchelCharge::SatchelThink()
 
 void CSatchelCharge::Precache()
 {
-	PRECACHE_MODEL("models/grenade.mdl");
-	PRECACHE_SOUND("weapons/g_bounce1.wav");
-	PRECACHE_SOUND("weapons/g_bounce2.wav");
-	PRECACHE_SOUND("weapons/g_bounce3.wav");
+	PrecacheModel("models/grenade.mdl");
+	PrecacheSound("weapons/g_bounce1.wav");
+	PrecacheSound("weapons/g_bounce2.wav");
+	PrecacheSound("weapons/g_bounce3.wav");
 }
 
 void CSatchelCharge::BounceSound()
@@ -227,11 +227,11 @@ void CSatchel::Spawn()
 
 void CSatchel::Precache()
 {
-	PRECACHE_MODEL("models/v_satchel.mdl");
-	PRECACHE_MODEL("models/v_satchel_radio.mdl");
-	PRECACHE_MODEL("models/w_satchel.mdl");
-	PRECACHE_MODEL("models/p_satchel.mdl");
-	PRECACHE_MODEL("models/p_satchel_radio.mdl");
+	PrecacheModel("models/v_satchel.mdl");
+	PrecacheModel("models/v_satchel_radio.mdl");
+	PrecacheModel("models/w_satchel.mdl");
+	PrecacheModel("models/p_satchel.mdl");
+	PrecacheModel("models/p_satchel_radio.mdl");
 
 	UTIL_PrecacheOther("monster_satchel");
 }

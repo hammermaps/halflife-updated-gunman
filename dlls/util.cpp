@@ -22,6 +22,9 @@
 
 #include "extdll.h"
 #include "util.h"
+#include <map>
+#include <set>
+#include <string>
 #include "cbase.h"
 #include "saverestore.h"
 #include <time.h>
@@ -691,7 +694,7 @@ static short FixedSigned16(float value, float scale)
 // UNDONE: Allow caller to shake clients not ONGROUND?
 // UNDONE: Fix falloff model (disabled)?
 // UNDONE: Affect user controls?
-void UTIL_ScreenShake(const Vector& center, float amplitude, float frequency, float duration, float radius)
+void UTIL_ScreenShake(const Vector& center, float amplitude, float frequency, float duration, float radius, bool bGroundOnly)
 {
 	int i;
 	float localAmplitude;
@@ -704,7 +707,7 @@ void UTIL_ScreenShake(const Vector& center, float amplitude, float frequency, fl
 	{
 		CBaseEntity* pPlayer = UTIL_PlayerByIndex(i);
 
-		if (!pPlayer || (pPlayer->pev->flags & FL_ONGROUND) == 0) // Don't shake if not onground
+		if (!pPlayer || (bGroundOnly && (pPlayer->pev->flags & FL_ONGROUND) == 0)) // Don't shake if not onground
 			continue;
 
 		localAmplitude = 0;
@@ -1033,6 +1036,54 @@ void UTIL_ParticleEffect(const Vector& vecOrigin, const Vector& vecDirection, un
 }
 
 
+void UTIL_ExplosionEffects(const Vector& origin, float radius)
+{
+	// Nachtrag 2026-09-06 (Nutzerwunsch: Erschuetterungsstaerke an der
+	// Explosionsstaerke festmachen, bis zu einem Minimum): radius steht
+	// hier stellvertretend fuer die Explosionsstaerke (die Aufrufer
+	// leiten ihn ueberwiegend aus dmg*2.5 o.ae. ab, siehe die einzelnen
+	// UTIL_ExplosionEffects-Aufrufstellen). Lineare Skalierung mit
+	// Mindestwert, kein RE-Fund.
+	constexpr float MIN_AMPLITUDE = 2.0f;
+	constexpr float AMPLITUDE_PER_RADIUS_UNIT = 1.0f / 40.0f;
+	float amplitude = V_max(MIN_AMPLITUDE, radius * AMPLITUDE_PER_RADIUS_UNIT);
+
+	UTIL_ScreenShake(origin, amplitude, 3.0, 1.0, radius);
+
+	MESSAGE_BEGIN(MSG_PAS, SVC_TEMPENTITY, origin);
+	WRITE_BYTE(TE_DLIGHT);
+	WRITE_COORD(origin.x);
+	WRITE_COORD(origin.y);
+	WRITE_COORD(origin.z);
+	WRITE_BYTE((int)(V_min(radius, 2550.0f) / 10.0f)); // radius/10
+	WRITE_BYTE(255);									// r
+	WRITE_BYTE(200);									// g
+	WRITE_BYTE(100);									// b
+	WRITE_BYTE(8);										// life/10 (0.8s)
+	WRITE_BYTE(20);										// decay (fade-out)
+	MESSAGE_END();
+}
+
+
+void UTIL_RocketTrail(CBaseEntity* pRocket, int iTrailSprite, bool bFuelLight)
+{
+	if (bFuelLight)
+		pRocket->pev->effects |= EF_LIGHT;
+
+	MESSAGE_BEGIN(MSG_BROADCAST, SVC_TEMPENTITY);
+	WRITE_BYTE(TE_BEAMFOLLOW);
+	WRITE_SHORT(pRocket->entindex());
+	WRITE_SHORT(iTrailSprite);
+	WRITE_BYTE(20);	 // life
+	WRITE_BYTE(8);	 // width
+	WRITE_BYTE(224); // r
+	WRITE_BYTE(224); // g
+	WRITE_BYTE(224); // b
+	WRITE_BYTE(80);	 // brightness
+	MESSAGE_END();
+}
+
+
 float UTIL_Approach(float target, float value, float speed)
 {
 	float delta = target - value;
@@ -1165,9 +1216,6 @@ void UTIL_BloodStream(const Vector& origin, const Vector& direction, int color, 
 	if (!UTIL_ShouldShowBlood(color))
 		return;
 
-	if (g_Language == LANGUAGE_GERMAN && color == BLOOD_COLOR_RED)
-		color = 0;
-
 
 	MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, origin);
 	WRITE_BYTE(TE_BLOODSTREAM);
@@ -1189,9 +1237,6 @@ void UTIL_BloodDrips(const Vector& origin, const Vector& direction, int color, i
 
 	if (color == DONT_BLEED || amount == 0)
 		return;
-
-	if (g_Language == LANGUAGE_GERMAN && color == BLOOD_COLOR_RED)
-		color = 0;
 
 	if (g_pGameRules->IsMultiplayer())
 	{
@@ -1365,6 +1410,87 @@ void UTIL_Sparks(const Vector& position)
 	WRITE_COORD(position.x);
 	WRITE_COORD(position.y);
 	WRITE_COORD(position.z);
+	MESSAGE_END();
+}
+
+void UTIL_DynamicLight(const Vector& origin, float radius, int red, int green, int blue, float life, float decay)
+{
+	// Xash/GoldSrc decodes radius and decay bytes by multiplying each by 10;
+	// lifetime is decoded in tenths of a second.
+	// Clamp at the transport boundary so every caller gets a valid message.
+	auto EncodeRadius = [](float value) -> int
+	{
+		if (value <= 0.0f)
+			return 0;
+		if (value >= 2550.0f)
+			return 255;
+		return static_cast<int>(value / 10.0f);
+	};
+	auto EncodeTenths = [](float value) -> int
+	{
+		if (value <= 0.0f)
+			return 0;
+		if (value >= 25.5f)
+			return 255;
+		return static_cast<int>(value * 10.0f);
+	};
+	auto EncodeDecay = [](float value) -> int
+	{
+		if (value <= 0.0f)
+			return 0;
+		if (value >= 2550.0f)
+			return 255;
+		return static_cast<int>(value / 10.0f);
+	};
+	auto EncodeColor = [](int value) -> int
+	{
+		if (value < 0)
+			return 0;
+		return value > 255 ? 255 : value;
+	};
+
+	MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, origin);
+	WRITE_BYTE(TE_DLIGHT);
+	WRITE_COORD(origin.x);
+	WRITE_COORD(origin.y);
+	WRITE_COORD(origin.z);
+	WRITE_BYTE(EncodeRadius(radius));
+	WRITE_BYTE(EncodeColor(red));
+	WRITE_BYTE(EncodeColor(green));
+	WRITE_BYTE(EncodeColor(blue));
+	WRITE_BYTE(EncodeTenths(life));
+	WRITE_BYTE(EncodeDecay(decay));
+	MESSAGE_END();
+}
+
+void UTIL_AttachedDynamicLight(CBaseEntity* pEntity, int attachment, const Vector& origin, float radius, int red, int green, int blue, float life, float decay)
+{
+	if (!pEntity || attachment < 0)
+		return;
+
+	auto EncodeColor = [](int value) -> int
+	{
+		if (value < 0)
+			return 0;
+		return value > 255 ? 255 : value;
+	};
+
+	// GoldSrc encodes an attachment in the upper 4 bits of the keyed
+	// entity-light id; attachment 0 is represented by +0x1000.
+	const int lightKey = pEntity->entindex() + ((attachment + 1) << 12);
+
+	MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, origin);
+	WRITE_BYTE(TE_ELIGHT);
+	WRITE_SHORT(lightKey);
+	WRITE_COORD(origin.x);
+	WRITE_COORD(origin.y);
+	WRITE_COORD(origin.z);
+	WRITE_COORD(radius);
+	WRITE_BYTE(EncodeColor(red));
+	WRITE_BYTE(EncodeColor(green));
+	WRITE_BYTE(EncodeColor(blue));
+	WRITE_BYTE(static_cast<int>(life * 10.0f));
+	WRITE_COORD(decay);
 	MESSAGE_END();
 }
 
@@ -1607,6 +1733,152 @@ void UTIL_PrecacheOther(const char* szClassname)
 	if (pEntity)
 		pEntity->Precache();
 	REMOVE_ENTITY(pent);
+}
+
+namespace
+{
+std::set<std::string> g_precachedSounds;
+std::set<std::string> g_missingSounds;
+std::map<std::string, int> g_precachedModels;
+std::set<std::string> g_missingModels;
+std::map<std::pair<int, std::string>, unsigned short> g_precachedEvents;
+std::set<std::string> g_missingEvents;
+constexpr const char* kNullSound = "common/null.wav";
+constexpr const char* kNullModel = "models/null.mdl";
+constexpr const char* kNullSprite = "sprites/null.spr";
+constexpr const char* kNullEvent = "events/null.sc";
+
+bool SoundFileExists(const char* sample)
+{
+	char filename[260];
+	snprintf(filename, sizeof(filename), "sound/%s", sample);
+
+	int length = 0;
+	char* fileData = (char*)LOAD_FILE_FOR_ME(filename, &length);
+	if (!fileData)
+		return false;
+
+	FREE_FILE(fileData);
+	return true;
+}
+
+bool ResourceFileExists(const char* filename)
+{
+	int length = 0;
+	char* fileData = (char*)LOAD_FILE_FOR_ME((char*)filename, &length);
+	if (!fileData)
+		return false;
+
+	FREE_FILE(fileData);
+	return true;
+}
+
+bool IsSpritePath(const char* model)
+{
+	const size_t length = strlen(model);
+	return length >= 4 && !strcmp(model + length - 4, ".spr");
+}
+}
+
+void ResetPrecacheSoundCache()
+{
+	g_precachedSounds.clear();
+	g_missingSounds.clear();
+	g_precachedModels.clear();
+	g_missingModels.clear();
+	g_precachedEvents.clear();
+	g_missingEvents.clear();
+}
+
+void PrecacheSound(const char* sample)
+{
+	if (!sample || !*sample)
+	{
+		ALERT(at_error, "PrecacheSound: empty sound path; using %s\n", kNullSound);
+		g_engfuncs.pfnPrecacheSound((char*)kNullSound);
+		return;
+	}
+
+	const std::string key(sample);
+	if (!g_precachedSounds.insert(key).second)
+		return;
+
+	// Do not recurse if a broken installation also lacks the fallback.
+	if (key == kNullSound || SoundFileExists(sample))
+	{
+		g_engfuncs.pfnPrecacheSound((char*)sample);
+		return;
+	}
+
+	if (g_missingSounds.insert(key).second)
+		ALERT(at_error, "PrecacheSound: missing sound/%s; using %s\n", sample, kNullSound);
+
+	PrecacheSound(kNullSound);
+}
+
+int PrecacheModel(const char* model)
+{
+	if (!model || !*model)
+	{
+		ALERT(at_error, "PrecacheModel: empty model path; using %s\n", kNullModel);
+		return g_engfuncs.pfnPrecacheModel((char*)kNullModel);
+	}
+
+	// Brush models are owned by the BSP. Replacing a missing *<index> model
+	// with a studio/sprite fallback corrupts the brush model reference and can
+	// crash the engine, so they must always go straight to the engine.
+	if (model[0] == '*')
+		return g_engfuncs.pfnPrecacheModel((char*)model);
+
+	const std::string key(model);
+	const auto cached = g_precachedModels.find(key);
+	if (cached != g_precachedModels.end())
+		return cached->second;
+
+	const char* fallback = IsSpritePath(model) ? kNullSprite : kNullModel;
+	int index;
+	if (key == fallback || ResourceFileExists(model))
+	{
+		index = g_engfuncs.pfnPrecacheModel((char*)model);
+	}
+	else
+	{
+		if (g_missingModels.insert(key).second)
+			ALERT(at_error, "PrecacheModel: missing %s; using %s\n", model, fallback);
+		index = PrecacheModel(fallback);
+	}
+
+	g_precachedModels.emplace(key, index);
+	return index;
+}
+
+unsigned short PrecacheEvent(int type, const char* eventScript)
+{
+	if (!eventScript || !*eventScript)
+	{
+		ALERT(at_error, "PrecacheEvent: empty event path; using %s\n", kNullEvent);
+		return g_engfuncs.pfnPrecacheEvent(type, (char*)kNullEvent);
+	}
+
+	const std::pair<int, std::string> key(type, eventScript);
+	const auto cached = g_precachedEvents.find(key);
+	if (cached != g_precachedEvents.end())
+		return cached->second;
+
+	unsigned short index;
+	if (key.second == kNullEvent || ResourceFileExists(eventScript))
+	{
+		index = g_engfuncs.pfnPrecacheEvent(type, (char*)eventScript);
+	}
+	else
+	{
+		if (g_missingEvents.insert(key.second).second)
+			ALERT(at_error, "PrecacheEvent: missing %s; using %s\n", eventScript, kNullEvent);
+		index = PrecacheEvent(type, kNullEvent);
+	}
+
+	g_precachedEvents.emplace(key, index);
+	return index;
 }
 
 //=========================================================
@@ -2300,9 +2572,9 @@ int CRestore::ReadField(void* pBaseData, TYPEDESCRIPTION* pFields, int fieldCoun
 							if (!FStringNull(string) && m_precache)
 							{
 								if (pTest->fieldType == FIELD_MODELNAME)
-									PRECACHE_MODEL((char*)STRING(string));
+									PrecacheModel((char*)STRING(string));
 								else if (pTest->fieldType == FIELD_SOUNDNAME)
-									PRECACHE_SOUND((char*)STRING(string));
+									PrecacheSound((char*)STRING(string));
 							}
 						}
 						break;

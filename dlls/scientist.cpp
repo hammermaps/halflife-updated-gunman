@@ -72,12 +72,14 @@ enum
 class CScientist : public CTalkMonster
 {
 public:
+	int MonsterProfile() override { return 20; } // retail slot 59
 	void Spawn() override;
 	void Precache() override;
 
 	void SetYawSpeed() override;
 	int Classify() override;
 	void HandleAnimEvent(MonsterEvent_t* pEvent) override;
+	bool CheckMeleeAttack1(float flDot, float flDist) override;
 	void RunTask(Task_t* pTask) override;
 	void StartTask(Task_t* pTask) override;
 	int ObjectCaps() override { return CTalkMonster::ObjectCaps() | FCAP_IMPULSE_USE; }
@@ -104,6 +106,7 @@ public:
 	void PainSound() override;
 
 	void TalkInit();
+	bool KeyValue(KeyValueData* pkvd) override;
 
 	char* GetScientistModel() const;
 
@@ -119,6 +122,17 @@ private:
 	float m_painTime;
 	float m_healTime;
 	float m_fearTime;
+	// Retail CScientist::KeyValue stores the 20 sc_* strings. Eighteen have
+	// direct CTalkMonster sentence-group slots; sc_kill/sc_attack are retained
+	// for save compatibility until their Retail consumers are mapped.
+	string_t m_iszSentenceOverrides[20] = {};
+	// Retail +0x2ec: initialised to 1; CScientist::KeyValue("IsScared") can set it to 0.
+	int m_iClassifyBias = 1;
+	// Retail save table fields +0x2f0/+0x2f4/+0x2f8. Only m_iAIActive's
+	// schedule/state effect is fully mapped; the other values are retained.
+	int m_iAIActive = 1;
+	int m_iShouldClearVoiceChannel = 0;
+	int m_iBlockSound = 0;
 };
 
 LINK_ENTITY_TO_CLASS(monster_scientist, CScientist);
@@ -128,6 +142,11 @@ TYPEDESCRIPTION CScientist::m_SaveData[] =
 		DEFINE_FIELD(CScientist, m_painTime, FIELD_TIME),
 		DEFINE_FIELD(CScientist, m_healTime, FIELD_TIME),
 		DEFINE_FIELD(CScientist, m_fearTime, FIELD_TIME),
+		DEFINE_ARRAY(CScientist, m_iszSentenceOverrides, FIELD_STRING, 20),
+		DEFINE_FIELD(CScientist, m_iClassifyBias, FIELD_INTEGER),
+		DEFINE_FIELD(CScientist, m_iAIActive, FIELD_INTEGER),
+		DEFINE_FIELD(CScientist, m_iShouldClearVoiceChannel, FIELD_INTEGER),
+		DEFINE_FIELD(CScientist, m_iBlockSound, FIELD_INTEGER),
 };
 
 IMPLEMENT_SAVERESTORE(CScientist, CTalkMonster);
@@ -141,6 +160,67 @@ char* CScientist::GetScientistModel() const
 	}
 
 	return (char *)"models/scientist.mdl";
+}
+
+bool CScientist::KeyValue(KeyValueData* pkvd)
+{
+	struct SentenceOverride_t
+	{
+		const char* pszKey;
+		int iTalkGroup;
+	};
+	static const SentenceOverride_t overrides[] = {
+		{"sc_answer", TLK_ANSWER}, {"sc_question", TLK_QUESTION}, {"sc_idle", TLK_IDLE},
+		{"sc_stare", TLK_STARE}, {"sc_use", TLK_USE}, {"sc_unuse", TLK_UNUSE},
+		{"sc_stop", TLK_STOP}, {"sc_noshoot", TLK_NOSHOOT}, {"sc_hello", TLK_HELLO},
+		{"sc_plhurt1", TLK_PLHURT1}, {"sc_plhurt2", TLK_PLHURT2}, {"sc_plhurt3", TLK_PLHURT3},
+		{"sc_phello", TLK_PHELLO}, {"sc_pidle", TLK_PIDLE}, {"sc_pquestion", TLK_PQUESTION},
+		{"sc_smell", TLK_SMELL}, {"sc_wound", TLK_WOUND}, {"sc_mortal", TLK_MORTAL},
+		{"sc_kill", -1}, {"sc_attack", -1},
+	};
+
+	for (int i = 0; i < (int)ARRAYSIZE(overrides); ++i)
+	{
+		if (FStrEq(pkvd->szKeyName, overrides[i].pszKey))
+		{
+			m_iszSentenceOverrides[i] = ALLOC_STRING(pkvd->szValue);
+			return true;
+		}
+	}
+
+	if (FStrEq(pkvd->szKeyName, "IsScared"))
+	{
+		m_iClassifyBias = 0;
+		return true;
+	}
+	if (FStrEq(pkvd->szKeyName, "knife"))
+	{
+		if (atoi(pkvd->szValue) != 0)
+			pev->weapons |= 0x20;
+		else
+			pev->weapons &= ~0x20;
+		return true;
+	}
+	if (FStrEq(pkvd->szKeyName, "DefautAIState"))
+	{
+		// Retail handles the literal "0" by disabling its Scientist-specific
+		// state/schedule path; other values leave the constructor default.
+		if (FStrEq(pkvd->szValue, "0"))
+			m_iAIActive = 0;
+		return true;
+	}
+	if (FStrEq(pkvd->szKeyName, "clearvoice"))
+	{
+		m_iShouldClearVoiceChannel = atoi(pkvd->szValue) != 0;
+		return true;
+	}
+	if (FStrEq(pkvd->szKeyName, "blocksound"))
+	{
+		m_iBlockSound = atoi(pkvd->szValue) != 0;
+		return true;
+	}
+
+	return CTalkMonster::KeyValue(pkvd);
 }
 
 //=========================================================
@@ -590,7 +670,11 @@ void CScientist::RunTask(Task_t* pTask)
 //=========================================================
 int CScientist::Classify()
 {
-	return CLASS_HUMAN_PASSIVE;
+	// Retail @0x100d7d20 (re-decompiled 2026-10-31): never CLASS_HUMAN_PASSIVE.
+	// Retail returns 5 - (+0x2ec != 0) and only falls back to 4 in the German /
+	// violence_germany build; that censorship branch is deliberately not adopted
+	// (the SDK stays uncut). +0x2ec defaults to 1, so the result is 4.
+	return CLASS_ALIEN_MILITARY - (m_iClassifyBias != 0 ? 1 : 0);
 }
 
 
@@ -632,6 +716,25 @@ void CScientist::HandleAnimEvent(MonsterEvent_t* pEvent)
 {
 	switch (pEvent->event)
 	{
+	case 4:
+	case 5:
+	{
+		CBaseEntity* pHurt = CheckTraceHullAttack(64, 15, DMG_SLASH);
+		if (pHurt)
+		{
+			// Retail supplies a random punch on the victim and bleeds monster
+			// victims with sk_xenomemelee_d (global 0x10136f4c).
+			pHurt->pev->punchangle.x = (float)(RANDOM_LONG(0, 7) - 4);
+			pHurt->pev->punchangle.z = (float)(RANDOM_LONG(0, 7) - 4);
+			if (CBaseMonster* pMonster = pHurt->MyMonsterPointer())
+			{
+				TraceResult trBleed;
+				UTIL_TraceLine(GetGunPosition(), pMonster->BodyTarget(GetGunPosition()), dont_ignore_monsters, edict(), &trBleed);
+				pMonster->TraceBleed(gSkillData.xenomeMeleeDamage, g_vecZero, &trBleed, DMG_SLASH);
+			}
+		}
+		break;
+	}
 	case SCIENTIST_AE_HEAL: // Heal my target (if within range)
 		Heal();
 		break;
@@ -651,6 +754,18 @@ void CScientist::HandleAnimEvent(MonsterEvent_t* pEvent)
 	default:
 		CTalkMonster::HandleAnimEvent(pEvent);
 	}
+}
+
+// Retail slot 82: knife-only, 64-unit / 0.7-dot melee check. The original
+// also rejects classify values 18 and 19; those Gunman-only classes do not
+// have SDK names, so keep the observed numeric exclusions local here.
+bool CScientist::CheckMeleeAttack1(float flDot, float flDist)
+{
+	if (pev->weapons != 0x20 || flDist > 64.0f || flDot < 0.7f || m_hEnemy == NULL)
+		return false;
+
+	int enemyClass = m_hEnemy->Classify();
+	return enemyClass != 18 && enemyClass != 19;
 }
 
 //=========================================================
@@ -688,6 +803,8 @@ void CScientist::Spawn()
 		pev->skin = 1;
 
 	MonsterInit();
+	if (pev->weapons == 0x20)
+		m_afCapability |= bits_CAP_MELEE_ATTACK1;
 	SetUse(&CScientist::FollowerUse);
 }
 
@@ -696,18 +813,28 @@ void CScientist::Spawn()
 //=========================================================
 void CScientist::Precache()
 {
-	PRECACHE_MODEL(GetScientistModel());
-	PRECACHE_SOUND("scientist/sci_pain1.wav");
-	PRECACHE_SOUND("scientist/sci_pain2.wav");
-	PRECACHE_SOUND("scientist/sci_pain3.wav");
-	PRECACHE_SOUND("scientist/sci_pain4.wav");
-	PRECACHE_SOUND("scientist/sci_pain5.wav");
+	PrecacheModel(GetScientistModel());
+	PrecacheSound("gscientist/hurt1.wav");
+	PrecacheSound("gscientist/hurt5.wav");
+	PrecacheSound("gscientist/hurt6.wav");
 
 	// every new scientist must call this, otherwise
 	// when a level is loaded, nobody will talk (time is reset to 0)
 	TalkInit();
 
 	CTalkMonster::Precache();
+
+	// Apply explicit Gunman sentence groups after the generic UseSentence /
+	// UnUseSentence handling. Retail stores the sc_* fields independently.
+	static const int talkGroups[18] = {
+		TLK_ANSWER, TLK_QUESTION, TLK_IDLE, TLK_STARE, TLK_USE, TLK_UNUSE,
+		TLK_STOP, TLK_NOSHOOT, TLK_HELLO, TLK_PLHURT1, TLK_PLHURT2, TLK_PLHURT3,
+		TLK_PHELLO, TLK_PIDLE, TLK_PQUESTION, TLK_SMELL, TLK_WOUND, TLK_MORTAL};
+	for (int i = 0; i < (int)ARRAYSIZE(talkGroups); ++i)
+	{
+		if (!FStringNull(m_iszSentenceOverrides[i]))
+			m_szGrp[talkGroups[i]] = STRING(m_iszSentenceOverrides[i]);
+	}
 }
 
 // Init talk data
@@ -767,15 +894,9 @@ void CScientist::TalkInit()
 
 bool CScientist::TakeDamage(entvars_t* pevInflictor, entvars_t* pevAttacker, float flDamage, int bitsDamageType)
 {
-
-	if (pevInflictor && (pevInflictor->flags & FL_CLIENT) != 0)
-	{
-		Remember(bits_MEMORY_PROVOKED);
-		StopFollowing(true);
-	}
-
-	// make sure friends talk about it if player hurts scientist...
-	return CTalkMonster::TakeDamage(pevInflictor, pevAttacker, flDamage, bitsDamageType);
+	// Retail calls PainSound first and forwards damage with DMG_SLASH set.
+	PainSound();
+	return CTalkMonster::TakeDamage(pevInflictor, pevAttacker, flDamage, bitsDamageType | DMG_SLASH);
 }
 
 
@@ -784,16 +905,18 @@ bool CScientist::TakeDamage(entvars_t* pevInflictor, entvars_t* pevAttacker, flo
 // of sounds this monster regards. In the base class implementation,
 // monsters care about all sounds, but no scents.
 //=========================================================
-// Marphy Fact Files Fix - Restore scientist's sense of smell
 int CScientist::ISoundMask()
 {
-	return bits_SOUND_WORLD |
-		   bits_SOUND_COMBAT |
-		   bits_SOUND_CARCASS |
-		   bits_SOUND_MEAT |
-		   bits_SOUND_GARBAGE |
-		   bits_SOUND_DANGER |
-		   bits_SOUND_PLAYER;
+	// Retail FUN_100d87a0 returns a fixed mask while Scientist AI is disabled.
+	if (!m_iAIActive)
+		return 0x30310;
+
+	int iSoundMask = CTalkMonster::ISoundMask();
+	// Retail adds this undocumented sound category when `blocksound` is set.
+	if (m_iBlockSound)
+		iSoundMask |= 0x20000;
+
+	return iSoundMask;
 }
 
 //=========================================================
@@ -801,27 +924,27 @@ int CScientist::ISoundMask()
 //=========================================================
 void CScientist::PainSound()
 {
-	if (gpGlobals->time < m_painTime)
+	// Retail slot 136 checks IsAlive and ignores NONE, SCRIPT, DEAD and the
+	// custom 7 state. Its integer-rounded elapsed-time check gates at ~0.5 s.
+	if (!IsAlive() || fabsf(gpGlobals->time - m_painTime) <= 0.5f)
 		return;
 
-	m_painTime = gpGlobals->time + RANDOM_FLOAT(0.5, 0.75);
+	if (m_MonsterState == MONSTERSTATE_NONE || m_MonsterState == MONSTERSTATE_SCRIPT ||
+		m_MonsterState == MONSTERSTATE_DEAD || m_MonsterState == 7)
+		return;
 
-	switch (RANDOM_LONG(0, 4))
+	m_painTime = gpGlobals->time;
+
+	switch (RANDOM_LONG(0, 2))
 	{
 	case 0:
-		EMIT_SOUND_DYN(ENT(pev), CHAN_VOICE, "scientist/sci_pain1.wav", 1, ATTN_NORM, 0, GetVoicePitch());
+		EMIT_SOUND_DYN(ENT(pev), CHAN_VOICE, "gscientist/hurt1.wav", 1, ATTN_NORM, 0, GetVoicePitch());
 		break;
 	case 1:
-		EMIT_SOUND_DYN(ENT(pev), CHAN_VOICE, "scientist/sci_pain2.wav", 1, ATTN_NORM, 0, GetVoicePitch());
+		EMIT_SOUND_DYN(ENT(pev), CHAN_VOICE, "gscientist/hurt5.wav", 1, ATTN_NORM, 0, GetVoicePitch());
 		break;
-	case 2:
-		EMIT_SOUND_DYN(ENT(pev), CHAN_VOICE, "scientist/sci_pain3.wav", 1, ATTN_NORM, 0, GetVoicePitch());
-		break;
-	case 3:
-		EMIT_SOUND_DYN(ENT(pev), CHAN_VOICE, "scientist/sci_pain4.wav", 1, ATTN_NORM, 0, GetVoicePitch());
-		break;
-	case 4:
-		EMIT_SOUND_DYN(ENT(pev), CHAN_VOICE, "scientist/sci_pain5.wav", 1, ATTN_NORM, 0, GetVoicePitch());
+	default:
+		EMIT_SOUND_DYN(ENT(pev), CHAN_VOICE, "gscientist/hurt6.wav", 1, ATTN_NORM, 0, GetVoicePitch());
 		break;
 	}
 }
@@ -844,6 +967,26 @@ void CScientist::Killed(entvars_t* pevAttacker, int iGib)
 
 void CScientist::SetActivity(Activity newActivity)
 {
+	// BUG FIX (2026-09-05, Gunman-specific): monster_scientist is
+	// puppeted by scripted_sequence "waiting"/idle-pose loops in this
+	// project's maps just like the other Gunman NPCs (named,
+	// non-ACT_IDLE-tagged sequences). Without this guard,
+	// CTalkMonster::SetActivity(ACT_IDLE) (reached below, itself
+	// forwarding to CBaseMonster::SetActivity) stomps pev->sequence
+	// mid-animation, cutting the wait pose short and restarting it
+	// from frame 0 - same root cause as CFriendlyGunman/CGenericMonster/
+	// etc, see the feedback-setactivity-act-idle-stomps-scripted-sequence
+	// memory note. This is a deliberate deviation from the otherwise
+	// untouched stock CScientist implementation, needed because this
+	// project drives it via scripted_sequence in ways the stock SDK
+	// never anticipated.
+	if ((newActivity == ACT_IDLE || newActivity == ACT_RESET) && m_pCine != nullptr)
+	{
+		m_Activity = newActivity;
+		m_IdealActivity = newActivity;
+		return;
+	}
+
 	int iSequence;
 
 	iSequence = LookupActivity(newActivity);
@@ -912,6 +1055,11 @@ Schedule_t* CScientist::GetScheduleOfType(int Type)
 
 Schedule_t* CScientist::GetSchedule()
 {
+	// Retail delegates to base scheduling when DefautAIState disables the
+	// Scientist-specific AI path.
+	if (!m_iAIActive)
+		return CBaseMonster::GetSchedule();
+
 	// so we don't keep calling through the EHANDLE stuff
 	CBaseEntity* pEnemy = m_hEnemy;
 
@@ -1013,6 +1161,11 @@ Schedule_t* CScientist::GetSchedule()
 		TrySmellTalk();
 		break;
 	case MONSTERSTATE_COMBAT:
+		// Retail routes knife-equipped scientists through the generic combat
+		// scheduler; unarmed scientists keep their fearful cover behavior.
+		if (pev->weapons == 0x20)
+			return CBaseMonster::GetSchedule();
+
 		if (HasConditions(bits_COND_NEW_ENEMY))
 			return slFear; // Point and scream!
 
@@ -1056,6 +1209,23 @@ Schedule_t* CScientist::GetSchedule()
 
 MONSTERSTATE CScientist::GetIdealState()
 {
+	// Match Retail's inactive-AI fallback before Scientist fear/follow logic.
+	if (!m_iAIActive)
+		return CBaseMonster::GetIdealState();
+
+	// Retail clears the one-shot Scientist voice channel on the first damage
+	// or interesting-sound interruption. IsScared disables this gate.
+	if (m_iClassifyBias && HasConditions(bits_COND_LIGHT_DAMAGE | bits_COND_HEAVY_DAMAGE | bits_COND_HEAR_SOUND))
+	{
+		if (m_iShouldClearVoiceChannel)
+			EMIT_SOUND_DYN(ENT(pev), CHAN_VOICE, "common/null.wav", 1.0f, ATTN_NORM, 0, PITCH_NORM);
+		m_iClassifyBias = 0;
+		// Retail @0x100d8800 fires TriggerTarget on this one-shot interruption.
+		// FUN_100531f0 resolves targetname matches, skips FL_KILLME entities,
+		// and calls Use with this as activator and caller.
+		FireTargets(STRING(m_iszTriggerTarget), this, this, USE_TOGGLE, 0);
+	}
+
 	switch (m_MonsterState)
 	{
 	case MONSTERSTATE_ALERT:
@@ -1157,7 +1327,8 @@ class CDeadScientist : public CBaseMonster
 {
 public:
 	void Spawn() override;
-	int Classify() override { return CLASS_HUMAN_PASSIVE; }
+	// Retail monster_scientist_dead Classify @0x100d89d0 returns 4 (stock HL: HUMAN_PASSIVE).
+	int Classify() override { return CLASS_HUMAN_MILITARY; }
 
 	// passed into Precache which is non-const
 	char* GetScientistModel() const;
@@ -1196,7 +1367,7 @@ LINK_ENTITY_TO_CLASS(monster_scientist_dead, CDeadScientist);
 //
 void CDeadScientist::Spawn()
 {
-	PRECACHE_MODEL(GetScientistModel());
+	PrecacheModel(GetScientistModel());
 	SET_MODEL(ENT(pev), GetScientistModel());
 
 	pev->effects = 0;
@@ -1208,13 +1379,9 @@ void CDeadScientist::Spawn()
 
 	if (pev->body == -1)
 	{														 // -1 chooses a random head
-		pev->body = RANDOM_LONG(0, NUM_SCIENTIST_HEADS - 1); // pick a head, any head
+		// Retail CDeadScientist::Spawn randomizes only body variants 0..2.
+		pev->body = RANDOM_LONG(0, 2);
 	}
-	// Luther is black, make his hands black
-	if (pev->body == HEAD_LUTHER)
-		pev->skin = 1;
-	else
-		pev->skin = 0;
 
 	pev->sequence = LookupSequence(m_szPoses[m_iPose]);
 	if (pev->sequence == -1)
@@ -1234,6 +1401,7 @@ void CDeadScientist::Spawn()
 class CSittingScientist : public CScientist // kdb: changed from public CBaseMonster so he can speak
 {
 public:
+	int MonsterProfile() override { return 20; } // retail slot 59
 	void Spawn() override;
 	void Precache() override;
 
@@ -1278,7 +1446,7 @@ typedef enum
 //
 void CSittingScientist::Spawn()
 {
-	PRECACHE_MODEL(GetScientistModel());
+	PrecacheModel(GetScientistModel());
 	SET_MODEL(ENT(pev), GetScientistModel());
 	Precache();
 	InitBoneControllers();
@@ -1299,12 +1467,9 @@ void CSittingScientist::Spawn()
 
 	if (pev->body == -1)
 	{														 // -1 chooses a random head
-		pev->body = RANDOM_LONG(0, NUM_SCIENTIST_HEADS - 1); // pick a head, any head
+		// Retail CSittingScientist::Spawn randomizes only body variants 0..2.
+		pev->body = RANDOM_LONG(0, 2);
 	}
-	// Luther is black, make his hands black
-	if (pev->body == HEAD_LUTHER)
-		pev->skin = 1;
-
 	m_baseSequence = LookupSequence("sitlookleft");
 	pev->sequence = m_baseSequence + RANDOM_LONG(0, 4);
 	ResetSequenceInfo();
@@ -1326,7 +1491,8 @@ void CSittingScientist::Precache()
 //=========================================================
 int CSittingScientist::Classify()
 {
-	return CLASS_HUMAN_PASSIVE;
+	// Retail monster_sitting_scientist Classify @0x100d8df0 returns 4 (stock HL: HUMAN_PASSIVE).
+	return CLASS_HUMAN_MILITARY;
 }
 
 

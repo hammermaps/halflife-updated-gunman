@@ -114,7 +114,7 @@ void CPlayerMonster :: Spawn()
 //=========================================================
 void CPlayerMonster :: Precache()
 {
-	PRECACHE_MODEL("models/player.mdl");
+	PrecacheModel("models/player.mdl");
 }	
 
 //=========================================================

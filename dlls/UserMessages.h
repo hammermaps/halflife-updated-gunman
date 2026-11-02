@@ -30,6 +30,7 @@ inline int gmsgTrain = 0;
 inline int gmsgLogo = 0;
 inline int gmsgWeaponList = 0;
 inline int gmsgAmmoX = 0;
+inline int gmsgTempX = 0;
 inline int gmsgHudText = 0;
 inline int gmsgDeathMsg = 0;
 inline int gmsgScoreInfo = 0;
@@ -40,6 +41,8 @@ inline int gmsgMOTD = 0;
 inline int gmsgServerName = 0;
 inline int gmsgAmmoPickup = 0;
 inline int gmsgWeapPickup = 0;
+inline int gmsgZoom = 0; // Retail "Zoom": 1 Byte (0 aus, 1 an, 3 Schuss), Gauss-Pistole Sniper
+inline int gmsgSliderX = 0; // Retail "SliderX": (Regler-Nr., Wert), Chemgun-Mischung
 inline int gmsgItemPickup = 0;
 inline int gmsgHideWeapon = 0;
 inline int gmsgSetCurWeap = 0;
@@ -54,5 +57,8 @@ inline int gmsgStatusText = 0;
 inline int gmsgStatusValue = 0;
 
 inline int gmsgWeapons = 0;
+inline int gmsgTank = 0;
+inline int gmsgTankBody = 0;
+inline int gmsgTurretPos = 0;
 
 void LinkUserMessages();

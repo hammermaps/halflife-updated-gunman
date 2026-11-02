@@ -342,13 +342,22 @@ void CCineMonster::PossessEntity()
 			break;
 
 		case 1:
+		case 6: // Gunman: walk and face player (facing policy is controller-owned)
 			pTarget->m_scriptState = SCRIPT_WALK_TO_MARK;
 			DelayStart(true);
 			break;
 
 		case 2:
+		case 7: // Gunman: run and face player (facing policy is controller-owned)
 			pTarget->m_scriptState = SCRIPT_RUN_TO_MARK;
 			DelayStart(true);
+			break;
+
+		case 8: // Gunman: turn and face player
+			// Keep a valid scripted state while the unreconstructed cinematic
+			// controller owns selection of the player to face. Do not use the
+			// local client here: Co-op needs a deterministic server policy.
+			pTarget->m_scriptState = SCRIPT_WAIT;
 			break;
 
 		case 4:
@@ -625,6 +634,18 @@ bool CBaseMonster::ExitScriptedSequence()
 
 	if (m_pCine)
 	{
+		// TEMP DIAGNOSTIC (2026-09-05, live bug report: scripted "wait"
+		// animations keep getting cancelled/restarted). GetIdealState()'s
+		// MONSTERSTATE_SCRIPT case (monsterstate.cpp, stock/unmodified)
+		// only reaches ExitScriptedSequence() via
+		// bits_COND_TASK_FAILED|LIGHT_DAMAGE|HEAVY_DAMAGE - log which one
+		// so the next test tells us definitively instead of guessing.
+		// Remove once root-caused.
+		ALERT(at_console, "[DEBUG-SCRIPT] %s (%s) exiting script \"%s\": TASK_FAILED=%d LIGHT_DMG=%d HEAVY_DMG=%d\n",
+			STRING(pev->targetname), STRING(pev->classname), STRING(m_pCine->m_iszPlay),
+			HasConditions(bits_COND_TASK_FAILED) ? 1 : 0,
+			HasConditions(bits_COND_LIGHT_DAMAGE) ? 1 : 0,
+			HasConditions(bits_COND_HEAVY_DAMAGE) ? 1 : 0);
 		m_pCine->CancelScript();
 	}
 
@@ -801,6 +822,11 @@ bool CBaseMonster::CineCleanup()
 		pev->movetype = MOVETYPE_STEP; // this is evil
 		pev->solid = SOLID_SLIDEBOX;
 	}
+	// Nachtrag 2026-09-06: siehe m_flCineGraceEnd-Kommentar in
+	// basemonster.h - ueberbrueckt die von CCineMonster::Use() immer
+	// eingefuegte 0.05s-Neustart-Verzoegerung bei sich selbst
+	// retriggernden/verketteten scripted_sequences.
+	m_flCineGraceEnd = gpGlobals->time + 0.2f;
 	m_pCine = NULL;
 	m_hTargetEnt = NULL;
 	m_pGoalEnt = NULL;
@@ -1210,13 +1236,33 @@ bool CScriptedSentence::StartSentence(CBaseToggle* pTarget)
 //=========================================================
 // Furniture - this is the cool comment I cut-and-pasted
 //=========================================================
+//
+// GUNMAN-SPEZIFISCH (Session 102): monster_furniture ist in gunman.dll NICHT
+// die unveraenderte SDK-Klasse. Frisch decompiliert (LINK @0x1004e690, Vtable
+// @0x100f2f54, Spawn @0x1004e710, ObjectCaps-Slot @0x1004e6e0, Classify-Slot
+// @0x1004e7e0) ergeben sich drei belegte Abweichungen vom Stock-SDK:
+//   1. pev->solid = SOLID_NOT statt SOLID_BBOX
+//   2. zusaetzliches UTIL_SetSize(pev, g_vecZero, g_vecZero) (Null-Huelle)
+//   3. pev->takedamage = DAMAGE_YES, gesetzt NACH MonsterInit() (das SDK setzt
+//      DAMAGE_AIM davor - MonsterInit ueberschreibt den Wert selbst mit
+//      DAMAGE_AIM, das Original korrigiert ihn also bewusst danach)
+// Ausserdem liefert ObjectCaps() im Original konstant 0.
+//
+// Der vorige Fix dieser Session (eigener AnimateThink statt der KI-Think-Kette
+// plus SF_MONSTER_FALL_TO_GROUND) war eine auf dem Stock-SDK basierende
+// Eigenkonstruktion und hat die Animation zerstoert: monster_furniture wird in
+// CITY1A ueber scripted_sequence-Ketten bespielt, und die laufen ueber die
+// regulaere CBaseMonster-Think-/Script-State-Maschine. Beides ist hier wieder
+// entfernt; stattdessen steht jetzt die decompilierte Originalfassung.
+//
 class CFurniture : public CBaseMonster
 {
 public:
 	void Spawn() override;
 	void Die();
 	int Classify() override;
-	int ObjectCaps() override { return (CBaseMonster::ObjectCaps() & ~FCAP_ACROSS_TRANSITION); }
+	int ObjectCaps() override { return 0; }
+	void SetActivity(Activity NewActivity) override;
 };
 
 
@@ -1232,30 +1278,73 @@ void CFurniture::Die()
 	pev->nextthink = gpGlobals->time;
 }
 
+// Gunman cinematic furniture models commonly expose only named scripted
+// sequences (for example dock#idle), not ACT_IDLE. The generic monster AI
+// otherwise falls back to sequence 0 whenever it asks for ACT_IDLE, resetting
+// a just-started scripted sequence once per think/script cycle. Keep the
+// activity bookkeeping, but leave model sequence selection to
+// CCineMonster::StartSequence.
+//
+// Nachtrag 2026-09-06 (Live-Report "springt wieder"): der urspruengliche
+// Fix hat das ACT_IDLE/ACT_RESET-Stomping nur waehrend m_pCine != nullptr
+// abgefangen. Bei verketteten scripted_sequences (z. B. ueber
+// trigger_relay/multi_manager mit Verzoegerung zwischen zwei Kettengliedern,
+// siehe CCineMonster::SequenceDone() - CineCleanup() setzt m_pCine sofort
+// auf nullptr, der naechste Kettenlink wird aber oft erst verzoegert
+// ausgeloest) gibt es eine echte Luecke, in der m_pCine kurzzeitig null ist,
+// waehrend die Default-KI trotzdem ACT_IDLE anfordert - das faellt durch den
+// alten Guard und schnappt auf Sequenz 0. Anders als bei echten,
+// frei laufenden KI-Monstern (siehe die m_pCine-Einschraenkung bei
+// COurano/CAIGirl/etc., noetig weil deren Standard-ACT_IDLE-Verhalten
+// ausserhalb einer Cine korrekt sein muss) ist CFurniture laut Klassen-
+// Header rein dekorativ (MOVETYPE_NONE/SOLID_NOT, "purely for scripted
+// sequence work", keine eigenstaendige Lauf-/Idle-KI) - hier ist ein
+// unbedingtes Abfangen sicher: die Requisite haelt einfach ihre aktuelle
+// Pose zwischen Kettengliedern statt auf Sequenz 0 zu springen.
+void CFurniture::SetActivity(Activity NewActivity)
+{
+	if (NewActivity == ACT_IDLE || NewActivity == ACT_RESET)
+	{
+		m_Activity = NewActivity;
+		m_IdealActivity = NewActivity;
+		return;
+	}
+
+	CBaseMonster::SetActivity(NewActivity);
+}
+
 //=========================================================
 // This used to have something to do with bees flying, but
 // now it only initializes moving furniture in scripted sequences
 //=========================================================
 void CFurniture::Spawn()
 {
-	PRECACHE_MODEL((char*)STRING(pev->model));
+	PrecacheModel((char*)STRING(pev->model));
 	SET_MODEL(ENT(pev), STRING(pev->model));
 
+	// Gunman-eigene Null-Huelle: das Original ruft SetSize mit zwei
+	// Nullvektoren auf (im Decompile FUN_1005f5d0(pev, &g_vecZero,
+	// &g_vecZero)). Zusammen mit SOLID_NOT ist die Requisite damit
+	// vollstaendig kollisionsfrei und kann von nichts verschoben werden.
+	UTIL_SetSize(pev, g_vecZero, g_vecZero);
+
 	pev->movetype = MOVETYPE_NONE;
-	pev->solid = SOLID_BBOX;
+	pev->solid = SOLID_NOT; // Gunman-Abweichung: SDK nutzt hier SOLID_BBOX
 	pev->health = 80000;
-	pev->takedamage = DAMAGE_AIM;
 	pev->effects = 0;
 	pev->yaw_speed = 0;
 	pev->sequence = 0;
 	pev->frame = 0;
 
-	//	pev->nextthink += 1.0;
-	//	SetThink (WalkMonsterDelay);
-
 	ResetSequenceInfo();
 	pev->frame = 0;
+
 	MonsterInit();
+
+	// Gunman-Abweichung: DAMAGE_YES, und zwar bewusst NACH MonsterInit()
+	// (MonsterInit setzt selbst DAMAGE_AIM, das Original korrigiert das
+	// hier wieder).
+	pev->takedamage = DAMAGE_YES;
 }
 
 //=========================================================

@@ -94,12 +94,14 @@ public:
 #define BUCKSHOT_MAX_CARRY 125
 #define BOLT_MAX_CARRY 50
 #define ROCKET_MAX_CARRY 5
+#define DML_MAX_CARRY 6
 #define HANDGRENADE_MAX_CARRY 10
 #define SATCHEL_MAX_CARRY 5
 #define TRIPMINE_MAX_CARRY 5
 #define SNARK_MAX_CARRY 15
 #define HORNET_MAX_CARRY 8
 #define M203_GRENADE_MAX_CARRY 10
+#define BATTERY_MAX_CARRY 40 // weapon_beamgun's own "battery" ammo pool, see beamgun.cpp
 
 // the maximum amount of ammo each weapon's clip can hold
 #define WEAPON_NOCLIP -1
@@ -131,6 +133,7 @@ public:
 #define CROSSBOW_DEFAULT_GIVE 5
 #define RPG_DEFAULT_GIVE 1
 #define GAUSS_DEFAULT_GIVE 20
+#define GAUSSPISTOL_DEFAULT_GIVE 20
 #define EGON_DEFAULT_GIVE 20
 #define HANDGRENADE_DEFAULT_GIVE 5
 #define SATCHEL_DEFAULT_GIVE 1
@@ -260,6 +263,15 @@ public:
 
 	virtual void DecrementTimers() {}
 
+	// "+custom" (MOUSE2, "Customize weapon") active-slot value, forwarded by
+	// CBasePlayer::PlayerCustomization() when m_iCustomizeType == 3 (see player.cpp).
+	// Default is a no-op; weapons with an active-toggle customization override it.
+	virtual void ApplyCustomizationValue(int value) {}
+
+	// Client command "cust_<Option><Wert>" (Retail FUN_100405b0 -> Waffen-Vtable-Slot 68): Einstellung der Chemgun
+	// ('1' Druck, '2' Saeure, '3' Base, '4' Neutralisierer). Standard: keine Wirkung.
+	virtual void ApplyCustomSetting(char option, int value) {}
+
 	static inline ItemInfo ItemInfoArray[MAX_WEAPONS];
 	static inline AmmoInfo AmmoInfoArray[MAX_AMMO_SLOTS];
 
@@ -374,6 +386,7 @@ class CBasePlayerAmmo : public CBaseEntity
 {
 public:
 	void Spawn() override;
+	void EXPORT GlowThink();
 	void EXPORT DefaultTouch(CBaseEntity* pOther); // default weapon touch
 	virtual bool AddAmmo(CBaseEntity* pOther) { return true; }
 
@@ -710,6 +723,9 @@ enum shotgun_e
 class CShotgun : public CBasePlayerWeapon
 {
 public:
+#ifndef CLIENT_DLL
+	void AddToPlayer(CBasePlayer* pPlayer) override;
+#endif
 #ifndef CLIENT_DLL
 	bool Save(CSave& save) override;
 	bool Restore(CRestore& restore) override;

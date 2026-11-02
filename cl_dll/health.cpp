@@ -24,6 +24,7 @@
 #include "hud.h"
 #include "cl_util.h"
 #include "parsemsg.h"
+#include "vgui_int.h"
 #include <string.h>
 
 
@@ -61,6 +62,11 @@ bool CHudHealth::Init()
 	m_fAttackFront = m_fAttackRear = m_fAttackRight = m_fAttackLeft = 0;
 	giDmgHeight = 0;
 	giDmgWidth = 0;
+	m_flPulseTime = 0;
+	m_iPulseOffset = 0;
+	m_hMetalHud = 0;
+	m_hMetalHudSmall = 0;
+	m_pCvarSmallHud = gEngfuncs.pfnGetCvarPointer("hud_smallhud");
 
 	memset(m_dmg, 0, sizeof(DAMAGE_IMAGE) * NUM_DMG_TYPES);
 
@@ -89,6 +95,9 @@ bool CHudHealth::VidInit()
 
 	m_HUD_dmg_bio = gHUD.GetSpriteIndex("dmg_bio") + 1;
 	m_HUD_cross = gHUD.GetSpriteIndex("cross");
+	m_HUD_health_pulse = gHUD.GetSpriteIndex("health_pulse");
+	m_hMetalHud = SPR_Load("sprites/metalhud.spr");
+	m_hMetalHudSmall = SPR_Load("sprites/metalhud_small.spr");
 
 	giDmgHeight = gHUD.GetSpriteRect(m_HUD_dmg_bio).right - gHUD.GetSpriteRect(m_HUD_dmg_bio).left;
 	giDmgWidth = gHUD.GetSpriteRect(m_HUD_dmg_bio).bottom - gHUD.GetSpriteRect(m_HUD_dmg_bio).top;
@@ -165,74 +174,133 @@ void CHudHealth::GetPainColor(int& r, int& g, int& b)
 #endif
 }
 
+// Gunman's health digit/cross color (RE-confirmed): cyan above 25 HP, red at
+// or below 25 - deliberately separate from GetPainColor()'s yellow/red ramp,
+// which still drives the unrelated screen-edge pain-direction flash.
+void CHudHealth::GetHealthColor(int& r, int& g, int& b)
+{
+	if (m_iHealth <= 25)
+	{
+		r = 250;
+		g = 0;
+		b = 0;
+	}
+	else
+	{
+		r = 0;
+		g = 255;
+		b = 255;
+	}
+}
+
+// Retail client.dll 0x100295d1-0x10029757: the five sprite frames represent
+// health ranges.  Motion comes from splitting the 80-pixel source rectangle
+// at a time-driven offset, not from cycling the frames.
+void CHudHealth::DrawPulseGraph()
+{
+	if (m_HUD_health_pulse < 0)
+		return;
+
+	int frame;
+	if (m_iHealth <= 0)
+		frame = 4;
+	else if (m_iHealth <= 25)
+		frame = 3;
+	else if (m_iHealth <= 50)
+		frame = 2;
+	else if (m_iHealth <= 80)
+		frame = 1;
+	else
+		frame = 0;
+
+	Rect leading = gHUD.GetSpriteRect(m_HUD_health_pulse);
+	Rect trailing = leading;
+	const int width = leading.right - leading.left;
+	const int split = leading.right - m_iPulseOffset;
+	leading.right = split != leading.left ? split : leading.left + 1;
+	trailing.left = split != trailing.right ? split : trailing.right - 1;
+
+	SPR_Set(gHUD.GetSprite(m_HUD_health_pulse), 255, 255, 255);
+	const int y = ScreenHeight - 74;
+	// Korrektur 2026-10-30 (Retail frisch dekompiliert, client.dll
+	// 0x10029400, Aufrufe @0x100296xx): das RECHTE Teilstueck [split,right)
+	// kommt an x=36, das LINKE Teilstueck [left,split) an x=36+Versatz. Das
+	// Bild wird dadurch zyklisch immer nach rechts geschoben und beginnt bei
+	// Versatz 80 von vorn. Mit vertauschten Positionen (zuvor) ueberlappten
+	// sich beide Teile und die Grafik "schwamm" hin und her.
+	SPR_DrawAdditive(frame, 36, y, &trailing);
+	SPR_DrawAdditive(frame, 36 + m_iPulseOffset, y, &leading);
+
+	const double now = gEngfuncs.GetClientTime();
+	if (m_flPulseTime == 0 || now < m_flPulseTime)
+	{
+		m_flPulseTime = now;
+		return;
+	}
+
+	int steps = static_cast<int>((now - m_flPulseTime) * 50.0);
+	while (steps-- > 0)
+	{
+		m_flPulseTime = now;
+		if (++m_iPulseOffset >= width)
+			m_iPulseOffset = 0;
+	}
+}
+
+void CHudHealth::DrawMetalHudFallback(bool largeHud)
+{
+	HSPRITE sprite = largeHud ? m_hMetalHud : m_hMetalHudSmall;
+	if (sprite == 0)
+		return;
+
+	SPR_Set(sprite, 255, 255, 255);
+	SPR_DrawHoles(0, largeHud ? 0 : 1, ScreenHeight - 128, nullptr);
+}
+
 bool CHudHealth::Draw(float flTime)
 {
 	int r, g, b;
-	int a = 0, x, y;
-	int HealthWidth;
-
 	if ((gHUD.m_iHideHUDDisplay & HIDEHUD_HEALTH) != 0 || 0 != gEngfuncs.IsSpectateOnly())
+	{
+		VGui_UpdateGunmanHud(false, false);
 		return true;
+	}
 
 	if (0 == m_hSprite)
 		m_hSprite = LoadSprite(PAIN_NAME);
 
-	// Has health changed? Flash the health #
-	if (0 != m_fFade)
+	// Retail draws transient damage indicators before the life-support panel.
+	DrawDamage(flTime);
+	DrawPain(flTime);
+
+	GetHealthColor(r, g, b);
+
+	bool bLargeHud = ScreenWidth >= 641 && (m_pCvarSmallHud == nullptr || m_pCvarSmallHud->value == 0);
+	const bool hasVGuiHud = VGui_UpdateGunmanHud(true, bLargeHud);
+	const int x = bLargeHud ? 164 : 35;
+	const int y = ScreenHeight - 99;
+	if (m_iHealth > 99)
 	{
-		m_fFade -= (gHUD.m_flTimeDelta * 20);
-		if (m_fFade <= 0)
+		const int index = gHUD.GetSpriteIndex("number_10");
+		if (index >= 0)
 		{
-			a = MIN_ALPHA;
-			m_fFade = 0;
+			SPR_Set(gHUD.GetSprite(index), r, g, b);
+			SPR_DrawAdditive(0, x - 3, y, &gHUD.GetSpriteRect(index));
 		}
-
-		// Fade the health number back to dim
-
-		a = MIN_ALPHA + (m_fFade / FADE_TIME) * 128;
 	}
 	else
-		a = MIN_ALPHA;
+		gHUD.DrawHudNumber(x, y, DHN_3DIGITS, m_iHealth, r, g, b);
 
-	// If health is getting low, make it bright red
-	if (m_iHealth <= 15)
-		a = 255;
+	if (bLargeHud)
+		DrawPulseGraph();
 
-	GetPainColor(r, g, b);
-	ScaleColors(r, g, b, a);
+	// Retail's VGUI casing is painted over the HUD primitives and masks the
+	// deliberately wrapped pulse segments.  Preserve that ordering when the
+	// Xash3D sprite fallback is used.
+	if (!hasVGuiHud)
+		DrawMetalHudFallback(bLargeHud);
 
-	// Only draw health if we have the suit.
-	if (gHUD.HasSuit())
-	{
-		HealthWidth = gHUD.GetSpriteRect(gHUD.m_HUD_number_0).right - gHUD.GetSpriteRect(gHUD.m_HUD_number_0).left;
-		int CrossWidth = gHUD.GetSpriteRect(m_HUD_cross).right - gHUD.GetSpriteRect(m_HUD_cross).left;
-
-		y = ScreenHeight - gHUD.m_iFontHeight - gHUD.m_iFontHeight / 2;
-		x = CrossWidth / 2;
-
-		SPR_Set(gHUD.GetSprite(m_HUD_cross), r, g, b);
-		SPR_DrawAdditive(0, x, y, &gHUD.GetSpriteRect(m_HUD_cross));
-
-		x = CrossWidth + HealthWidth / 2;
-		y += (int)(gHUD.m_iFontHeight * 0.2f);
-
-		//Reserve space for 3 digits by default, but allow it to expand
-		x += gHUD.GetHudNumberWidth(m_iHealth, 3, DHN_DRAWZERO);
-
-		gHUD.DrawHudNumberReverse(x, y, m_iHealth, DHN_DRAWZERO, r, g, b);
-
-		//x = gHUD.DrawHudNumber(x, y, DHN_3DIGITS | DHN_DRAWZERO, m_iHealth, r, g, b);
-
-		x += HealthWidth / 2;
-
-		int iHeight = gHUD.m_iFontHeight;
-		int iWidth = HealthWidth / 10;
-		UnpackRGB(r, g, b, RGB_YELLOWISH);
-		FillRGBA(x, y, iWidth, iHeight, r, g, b, a);
-	}
-
-	DrawDamage(flTime);
-	return DrawPain(flTime);
+	return true;
 }
 
 void CHudHealth::CalcDamageDirection(Vector vecFrom)

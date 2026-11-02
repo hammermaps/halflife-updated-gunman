@@ -24,6 +24,7 @@
 #include "cl_util.h"
 #include "netadr.h"
 #include "interface.h"
+#include "gunman_engine_target.h"
 //#include "vgui_schememanager.h"
 
 #include "pm_shared.h"
@@ -117,14 +118,6 @@ static bool CL_InitClient()
 
 	if (!FileSystem_LoadFileSystem())
 	{
-		return false;
-	}
-
-	if (UTIL_IsValveGameDirectory())
-	{
-		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Fatal Error",
-			"This mod has detected that it is being run from a Valve game directory which is not supported\n"
-			"Run this mod from its intended location\n\nThe game will now shut down", nullptr);
 		return false;
 	}
 
