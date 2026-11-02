@@ -245,16 +245,10 @@ void CXenome::ShootAtEnemy(int iSide)
 	const Vector vecStart = pev->origin + gpGlobals->v_up * 20.0f +
 		gpGlobals->v_right * (iSide != 0 ? 25.0f : -25.0f);
 	Vector vecDirection;
-	if (!pEnemy->IsAlive())
+	if (pEnemy->IsAlive() && pEnemy->m_hTargetEnt)
 	{
-		// Retail falls back to the current forward vector if the resolved enemy
-		// handle points to a dead monster.
-		vecDirection = gpGlobals->v_forward;
-	}
-	else if (pEnemy->m_hTargetEnt)
-	{
-		// Retail aims at the enemy's BodyTarget with its observed target-handle
-		// branch's random point perturbation, then normalizes the result.
+		// Retail uses this perturbed BodyTarget branch only for a live enemy
+		// with a target entity handle.
 		vecDirection = pEnemy->BodyTarget(vecStart) - vecStart;
 		vecDirection.x += RANDOM_LONG(-32, 32);
 		vecDirection.y += RANDOM_LONG(-32, 32);
@@ -263,8 +257,8 @@ void CXenome::ShootAtEnemy(int iSide)
 	}
 	else
 	{
-		// Without that handle, Retail combines the enemy's BodyTarget offset
-		// with the Xenome's last-known enemy point before normalizing.
+		// Retail uses BodyTarget offset plus the Xenome's last-known enemy
+		// point when the enemy is dead or has no target entity handle.
 		const Vector vecBodyOffset = pEnemy->BodyTarget(vecStart) - pEnemy->pev->origin;
 		vecDirection = (m_vecEnemyLKP + vecBodyOffset - vecStart).Normalize();
 	}
