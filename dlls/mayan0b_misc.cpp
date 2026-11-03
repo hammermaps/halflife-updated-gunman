@@ -166,7 +166,6 @@ public:
 	bool TakeDamage(entvars_t* pevInflictor, entvars_t* pevAttacker, float flDamage, int bitsDamageType) override;
 	void Killed(entvars_t* pevAttacker, int iGib) override;
 	void Touch(CBaseEntity* pOther) override;
-	void SetYawSpeed() override { pev->yaw_speed = (m_Activity == ACT_RUN) ? 90 : 70; }
 
 	bool Save(CSave& save) override;
 	bool Restore(CRestore& restore) override;

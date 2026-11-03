@@ -73,9 +73,9 @@ bool CShotgun::GetItemInfo(ItemInfo* p)
 	p->iMaxAmmo1 = BUCKSHOT_MAX_CARRY;
 	p->pszAmmo2 = NULL;
 	p->iMaxAmmo2 = -1;
-	p->iMaxClip = SHOTGUN_MAX_CLIP;
+	p->iMaxClip = WEAPON_NOCLIP; // Retail GetItemInfo sets ItemInfo +0x1c to -1.
 	p->iSlot = 2;
-	p->iPosition = 1;
+	p->iPosition = 0; // Retail GetItemInfo sets ItemInfo +0x4 to 0.
 	p->iFlags = 0;
 	p->iId = m_iId = WEAPON_SHOTGUN_GUNMAN;
 	p->iWeight = SHOTGUN_WEIGHT;

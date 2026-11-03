@@ -89,9 +89,10 @@ public:
 
 // weapon clip/carry ammo capacities
 #define URANIUM_MAX_CARRY 100
+#define GAUSSPISTOL_AMMO_MAX_CARRY 150 // Retail ammo_gaussclip and weapon_gausspistol
 #define _9MM_MAX_CARRY 250
 #define _357_MAX_CARRY 36
-#define BUCKSHOT_MAX_CARRY 125
+#define BUCKSHOT_MAX_CARRY 90 // Retail shotgunammo pickup and shotgun GetItemInfo
 #define BOLT_MAX_CARRY 50
 #define ROCKET_MAX_CARRY 5
 #define DML_MAX_CARRY 6
@@ -101,7 +102,7 @@ public:
 #define SNARK_MAX_CARRY 15
 #define HORNET_MAX_CARRY 8
 #define M203_GRENADE_MAX_CARRY 10
-#define BATTERY_MAX_CARRY 40 // weapon_beamgun's own "battery" ammo pool, see beamgun.cpp
+#define BATTERY_MAX_CARRY 100 // Retail CBeamGun::GetItemInfo and CBeamGunAmmo::AddAmmo
 
 // the maximum amount of ammo each weapon's clip can hold
 #define WEAPON_NOCLIP -1
@@ -143,12 +144,13 @@ public:
 
 // The amount of ammo given to a player by an ammo item.
 #define AMMO_URANIUMBOX_GIVE 20
+#define AMMO_GAUSSCLIP_GIVE 25
 #define AMMO_GLOCKCLIP_GIVE GLOCK_MAX_CLIP
 #define AMMO_357BOX_GIVE PYTHON_MAX_CLIP
 #define AMMO_MP5CLIP_GIVE MP5_MAX_CLIP
 #define AMMO_CHAINBOX_GIVE 200
 #define AMMO_M203BOX_GIVE 2
-#define AMMO_BUCKSHOTBOX_GIVE 12
+#define AMMO_BUCKSHOTBOX_GIVE 16
 #define AMMO_CROSSBOWCLIP_GIVE CROSSBOW_MAX_CLIP
 #define AMMO_RPGCLIP_GIVE RPG_MAX_CLIP
 #define AMMO_URANIUMBOX_GIVE 20

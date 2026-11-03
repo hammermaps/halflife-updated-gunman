@@ -89,14 +89,16 @@ void CPlayerGiveItems::Use(CBaseEntity* pActivator, CBaseEntity* pCaller, USE_TY
 }
 
 //=========================================================
-// decore_eagle - CEagle. Ambient killable flying prop, same
-// CBaseBird-family CircleThink simplification as CPteradon.
+// decore_eagle - CEagle. Ambient killable flyer with the Retail CBaseBird
+// glide/flap movement and its own cry/flap sound callbacks.
 //=========================================================
 class CEagle : public CBaseBird
 {
 public:
 	void Spawn() override { SpawnBird("models/eagle.mdl"); }
 	void Precache() override;
+	void IdleSound() override;
+	void FlapSound() override;
 };
 LINK_ENTITY_TO_CLASS(decore_eagle, CEagle);
 
@@ -109,4 +111,16 @@ void CEagle::Precache()
 	PrecacheSound("eagle/eagle_flap1.wav");
 	PrecacheSound("eagle/eagle_flap2.wav");
 	PrecacheSound("eagle/eagle_flap3.wav");
+}
+
+void CEagle::IdleSound()
+{
+	static const char* pSounds[] = {"eagle/eagle_cry1.wav", "eagle/eagle_cry2.wav", "eagle/eagle_cry3.wav"};
+	EMIT_SOUND_DYN(ENT(pev), CHAN_VOICE, RANDOM_SOUND_ARRAY(pSounds), 1.0f, 0.3f, 0, PITCH_NORM);
+}
+
+void CEagle::FlapSound()
+{
+	static const char* pSounds[] = {"eagle/eagle_flap1.wav", "eagle/eagle_flap2.wav", "eagle/eagle_flap3.wav"};
+	EMIT_SOUND_DYN(ENT(pev), CHAN_VOICE, RANDOM_SOUND_ARRAY(pSounds), 1.0f, 0.3f, 0, PITCH_NORM);
 }

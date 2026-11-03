@@ -9,7 +9,8 @@
 // "weapon_polarisblade"), vtable @0x100fa100, Spawn @0x1007c040,
 // Precache @0x1007c0c0, GetItemInfo @0x1007c3a0, Deploy @0x1007c1b0.
 // Confirmed: weapon ID 0xe(14), world model "models/w_beam.mdl", ammo
-// type "battery" (same resource as item_battery), iMaxClip=4,
+// type "battery" (same resource as item_battery), iMaxAmmo1=100,
+// iMaxClip=WEAPON_NOCLIP, slot 4 / position 0.
 // iWeight=10, no secondary ammo type. Precache confirms
 // "models/p_egon.mdl" and several "egon_*"-named sounds are reused
 // UNCHANGED from stock Half-Life's Gluon Gun - this is a
@@ -271,9 +272,9 @@ bool CBeamGun::GetItemInfo(ItemInfo* p)
 	p->iMaxAmmo1 = BATTERY_MAX_CARRY;
 	p->pszAmmo2 = nullptr;
 	p->iMaxAmmo2 = -1;
-	p->iMaxClip = 4;
-	p->iSlot = 3;
-	p->iPosition = 2;
+	p->iMaxClip = WEAPON_NOCLIP;
+	p->iSlot = 4;
+	p->iPosition = 0;
 	p->iId = m_iId = WEAPON_BEAMGUN;
 	p->iFlags = 0;
 	p->iWeight = 10;

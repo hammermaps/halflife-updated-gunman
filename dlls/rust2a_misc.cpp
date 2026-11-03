@@ -10,7 +10,8 @@
 //     ammo_dmlsingle in rust1_misc.cpp - genuinely CBasePlayerAmmo,
 //     not plain CItem despite findings/entity_review_list.csv's
 //     "CItem-Ableitung" summary). Model "models/beamgunammo.mdl",
-//     pickup sound "items/9mmclip1.wav".
+//     pickup sound "items/9mmclip1.wav", AddAmmo gives 20 battery
+//     (maximum 100; weapon clip remains 4).
 //   monster_critter: LINK @0x100c2450, vtable @0x1010338c, Spawn
 //     @0x100c3120, Precache @0x100c3200, Classify @0x100c24a0
 //     (constant 0xd = 13 = CLASS_ALIEN_BIOWEAPON). Confirmed bbox
@@ -52,7 +53,7 @@ class CBeamGunAmmo : public CBasePlayerAmmo
 	}
 	bool AddAmmo(CBaseEntity* pOther) override
 	{
-		if (pOther->GiveAmmo(4, "battery", 40) != -1) // clip size 4 confirmed via GetItemInfo, see weapon_beamgun findings
+		if (pOther->GiveAmmo(20, "battery", 100) != -1)
 		{
 			EMIT_SOUND(ENT(pev), CHAN_ITEM, "items/9mmclip1.wav", 1, ATTN_NORM);
 			return true;

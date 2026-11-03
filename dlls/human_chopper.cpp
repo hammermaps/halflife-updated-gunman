@@ -36,6 +36,7 @@
 #include "saverestore.h"
 #include "soundent.h"
 #include "flightsteer.h"
+#include <cmath>
 
 // Shared with mayan6_misc.cpp's dml_cluster/CClusterGrenade.
 extern CBaseEntity* Dml_ShootClusterGrenade(entvars_t* pevOwner, Vector vecStart, Vector vecVelocity, float flDamage);
@@ -274,10 +275,9 @@ void CChopper::SteerFlight()
 	FlightSteer(pev, st);
 	m_flThrust = st.thrust;
 
-	// Rotor sound. Retail starts the looping sound once (state 0x80) and
-	// afterwards sends SND_CHANGE_VOL|SND_CHANGE_PITCH with a pitch derived
-	// from the player-relative velocity; that pitch expression is not typed
-	// in the decompile (x87 stack), so a constant 110 is used.
+	// Retail starts the looping sound once (state 0x80) at pitch 110. Later
+	// updates use round(dot(chopperVelocity - playerVelocity,
+	// directionToPlayer) * 0.02 + 100), clamped to [50, 250].
 	if (m_iRotorState == 0)
 	{
 		EMIT_SOUND_DYN(ENT(pev), CHAN_STATIC, "apache/ap_rotor2.wav", 1.0, 0.3, 0, 110);
@@ -285,7 +285,24 @@ void CChopper::SteerFlight()
 	}
 	else
 	{
-		EMIT_SOUND_DYN(ENT(pev), CHAN_STATIC, "apache/ap_rotor2.wav", 1.0, 0.3, SND_CHANGE_PITCH | SND_CHANGE_VOL, 110);
+		CBaseEntity* pPlayer = UTIL_FindEntityByClassname(nullptr, "player");
+		if (pPlayer)
+		{
+			Vector vecToPlayer = pPlayer->pev->origin - pev->origin;
+			if (vecToPlayer.Length() != 0.0f)
+				vecToPlayer = vecToPlayer.Normalize();
+			else
+				vecToPlayer = Vector(0, 0, 1); // Retail zero-length fallback.
+
+			const Vector vecRelativeVelocity = pev->velocity - pPlayer->pev->velocity;
+			const float flPitch = DotProduct(vecRelativeVelocity, vecToPlayer) * 0.02f + 100.0f;
+			int iPitch = static_cast<int>(std::nearbyint(flPitch));
+			if (iPitch < 50)
+				iPitch = 50;
+			else if (iPitch > 250)
+				iPitch = 250;
+			EMIT_SOUND_DYN(ENT(pev), CHAN_STATIC, "apache/ap_rotor2.wav", 1.0, 0.3, SND_CHANGE_PITCH | SND_CHANGE_VOL, iPitch);
+		}
 	}
 }
 

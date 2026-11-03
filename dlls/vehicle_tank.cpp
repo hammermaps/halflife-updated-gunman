@@ -183,6 +183,9 @@ public:
 	static TYPEDESCRIPTION m_SaveData[];
 
 	int m_iVehicleID = 1;
+	// Retail constructor initializes C++ object offset +0x2ec to state 2.
+	// trigger_tankoutofgas sets it to 0; gascan refueling advances 0 -> 3 -> 2.
+	int m_iFuelState = 2;
 	float m_flVolume = 1.0;
 
 	CBaseEntity* m_pBarrel = nullptr;
@@ -221,6 +224,7 @@ LINK_ENTITY_TO_CLASS(vehicle_tank, CVehicleTank);
 TYPEDESCRIPTION CVehicleTank::m_SaveData[] =
 {
 	DEFINE_FIELD(CVehicleTank, m_iVehicleID, FIELD_INTEGER),
+	DEFINE_FIELD(CVehicleTank, m_iFuelState, FIELD_INTEGER),
 	DEFINE_FIELD(CVehicleTank, m_flVolume, FIELD_FLOAT),
 	DEFINE_FIELD(CVehicleTank, m_pBarrel, FIELD_CLASSPTR),
 	DEFINE_FIELD(CVehicleTank, m_pTurret, FIELD_CLASSPTR),
@@ -390,9 +394,21 @@ void CVehicleTank::Use(CBaseEntity* pActivator, CBaseEntity* pCaller, USE_TYPE u
 	SetThink(&CVehicleTank::WithPlayerThink);
 	pev->nextthink = gpGlobals->time;
 
-	EMIT_SOUND_DYN(m_pBody->edict(), CHAN_STATIC, "tank/startup.wav", m_flVolume, ATTN_NORM, 0, 100);
-	EMIT_SOUND_DYN(m_pBody->edict(), CHAN_VOICE, "tank/engineidle.wav", 0, ATTN_NORM, 0, 100);
-	SendTankState(1);
+	SendTankState(m_iFuelState == 0 ? 2 : 1);
+	if (m_iFuelState == 0 && pPlayer->m_fHasTankGas)
+	{
+		EMIT_SOUND_DYN(pPlayer->edict(), CHAN_STATIC, "tank/glug.wav", 0.8f, ATTN_NORM, 0, 100);
+		pPlayer->m_fHasTankGas = false;
+		pPlayer->m_fTankGasFlag279 = false;
+		m_iFuelState = 3;
+		pev->nextthink = gpGlobals->time + 5.0f;
+	}
+	else if (m_iFuelState == 2)
+	{
+		EMIT_SOUND_DYN(pPlayer->edict(), CHAN_STATIC, "tank/startup.wav", m_flVolume * 0.4f, ATTN_NORM, 0, 100);
+	}
+	EMIT_SOUND_DYN(pPlayer->edict(), CHAN_VOICE, "tank/engineidle.wav", 0, ATTN_NORM, 0, 100);
+	EMIT_SOUND_DYN(pPlayer->edict(), CHAN_BODY, "tank/turn.wav", 0, ATTN_NORM, 0, 100);
 	UpdateDriverCamera();
 }
 
@@ -422,8 +438,12 @@ void CVehicleTank::Dismount()
 	Vector vecExit = pev->origin - gpGlobals->v_forward * 96 + Vector(0, 0, 36);
 	UTIL_SetOrigin(pPlayer->pev, vecExit);
 
-	EMIT_SOUND_DYN(m_pBody->edict(), CHAN_STATIC, "tank/powerdown.wav", m_flVolume, ATTN_NORM, 0, 100);
-	EMIT_SOUND_DYN(m_pBody->edict(), CHAN_VOICE, "common/null.wav", 0, ATTN_NORM, 0, 100);
+	if (m_iFuelState == 2)
+		EMIT_SOUND_DYN(pPlayer->edict(), CHAN_STATIC, "tank/powerdown.wav", m_flVolume, ATTN_NORM, 0, 100);
+	pPlayer->m_fTankGasFlag279 = false;
+	EMIT_SOUND_DYN(pPlayer->edict(), CHAN_VOICE, "common/null.wav", 0, ATTN_NORM, 0, 100);
+	EMIT_SOUND_DYN(pPlayer->edict(), CHAN_BODY, "common/null.wav", 0, ATTN_NORM, 0, 100);
+	EMIT_SOUND_DYN(pPlayer->edict(), CHAN_ITEM, "common/null.wav", 0, ATTN_NORM, 0, 100);
 	SendTankState(0);
 
 	m_pDriver = nullptr;
@@ -459,19 +479,29 @@ void CVehicleTank::WithPlayerThink()
 	}
 
 	auto pPlayer = static_cast<CBasePlayer*>(m_pDriver);
+	if (m_iFuelState == 3)
+	{
+		EMIT_SOUND_DYN(pPlayer->edict(), CHAN_STATIC, "tank/startup.wav", m_flVolume, ATTN_NORM, 0, 100);
+		m_iFuelState = 2;
+	}
 	int buttons = pPlayer->pev->button;
 
 	// Retail accelerates/decelerates rather than switching velocity instantly.
-	if (FBitSet(buttons, IN_FORWARD))
+	if (m_iFuelState != 2)
+	{
+		m_flChassisSpeed = 0;
+		m_flChassisTurnRate = 0;
+	}
+	else if (FBitSet(buttons, IN_FORWARD))
 		m_flChassisSpeed = V_min(240.0f, m_flChassisSpeed + 8.0f);
 	else if (FBitSet(buttons, IN_BACK))
 		m_flChassisSpeed = V_max(-160.0f, m_flChassisSpeed - 8.0f);
 	else
 		m_flChassisSpeed *= 0.88f;
 
-	if (FBitSet(buttons, IN_MOVELEFT))
+	if (m_iFuelState == 2 && FBitSet(buttons, IN_MOVELEFT))
 		m_flChassisTurnRate = V_max(-55.0f, m_flChassisTurnRate - 4.0f);
-	else if (FBitSet(buttons, IN_MOVERIGHT))
+	else if (m_iFuelState == 2 && FBitSet(buttons, IN_MOVERIGHT))
 		m_flChassisTurnRate = V_min(55.0f, m_flChassisTurnRate + 4.0f);
 	else
 		m_flChassisTurnRate *= 0.82f;
@@ -547,10 +577,10 @@ void CVehicleTank::WithPlayerThink()
 	pev->sequence = 1;
 	StudioFrameAdvance();
 
-	if (FBitSet(buttons, IN_ATTACK) && !FBitSet(pev->spawnflags, SF_TANK_NO_MACHINEGUNS))
+	if (m_iFuelState == 2 && FBitSet(buttons, IN_ATTACK) && !FBitSet(pev->spawnflags, SF_TANK_NO_MACHINEGUNS))
 		FireChassisWeapon();
 
-	if (FBitSet(buttons, IN_ATTACK2) && !FBitSet(pev->spawnflags, SF_TANK_NO_TURRET_WEAPONS))
+	if (m_iFuelState == 2 && FBitSet(buttons, IN_ATTACK2) && !FBitSet(pev->spawnflags, SF_TANK_NO_TURRET_WEAPONS))
 		FireRocket();
 
 	// RE-bestaetigt (2026-09-06, FUN_1009f1f0 gefunden beim Verfolgen des
@@ -559,7 +589,7 @@ void CVehicleTank::WithPlayerThink()
 	// IN_DUCK (nicht IN_ATTACK/IN_ATTACK2!) statt eines eigenen Tasten-
 	// Inputs, solange der Panzer nicht im Wasser ist (FL_SWIM-Check im
 	// Original). Vorher komplett nicht reproduziert.
-	if (FBitSet(buttons, IN_DUCK) && (pev->flags & FL_SWIM) == 0)
+	if (m_iFuelState == 2 && FBitSet(buttons, IN_DUCK) && (pev->flags & FL_SWIM) == 0)
 		FireAutoCannon();
 
 	// Jump = emergency dismount, same routine as the driver-facing Use.
@@ -1050,8 +1080,9 @@ void CVehicleTriggerTankGas::TouchTank(CBaseEntity* pOther)
 	if (!pTank->m_pDriver)
 		return;
 
+	pTank->m_iFuelState = 0;
+	pTank->SendTankState(2);
 	EMIT_SOUND_DYN(pOther->edict(), CHAN_STATIC, "tank/outofgas.wav", 1.0, ATTN_NORM, 0, 100);
-	pTank->Dismount();
 
 	SUB_UseTargets(this, USE_TOGGLE, 0);
 	UTIL_Remove(this);

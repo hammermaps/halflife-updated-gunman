@@ -35,12 +35,11 @@
 //     established random_speaker/player_speaker sentence-group
 //     idiom).
 //
-// Current limits (2026-11-02): CXenome now has its confirmed animation
-// event and LeapTouch paths, but the target-direction branch, complete
-// leap vector and some Touch follow-up remain incomplete. Its broader AI
-// schedule is also not fully ported. CAiWallPlug still uses a simplified
-// toggle-and-fire-targets Use() pending its exact sentence-group and state
-// transition mapping.
+// Current limits (2026-11-02): CXenome's target-direction branch and leap
+// vector are now matched to Retail, but some Touch follow-up remains open.
+// Its broader AI schedule is also not fully ported. CAiWallPlug still uses a
+// simplified toggle-and-fire-targets Use() pending its exact sentence-group
+// and state transition mapping.
 //=========================================================
 
 #include "extdll.h"
@@ -231,7 +230,14 @@ void CXenome::Precache()
 	PrecacheSound("xenome/xenome_shoot.wav");
 	PrecacheSound("xenome/xenome_clawattack_1.wav");
 	PrecacheSound("xenome/xenome_clawattack_2.wav");
+	PrecacheSound("lg_scorp/lg_scorp_attackb.wav");
 	UTIL_PrecacheOther("xenomeshot");
+}
+
+static void XenomeHitSound(CBaseEntity* pOther)
+{
+	if (pOther)
+		EMIT_SOUND_DYN(ENT(pOther->pev), CHAN_VOICE, "lg_scorp/lg_scorp_attackb.wav", 1.0f, 2.0f, 0, 140);
 }
 
 void CXenome::ShootAtEnemy(int iSide)
@@ -289,7 +295,9 @@ void CXenome::LeapAttack()
 		const Vector vecAttackDir = (vecTarget - vecSource).Normalize();
 		pVictim->TraceBleed(gSkillData.xenomeMeleeDamage, vecAttackDir, &tr, DMG_SLASH);
 	}
-	// Retail's Xenome vtable slot +0x224 points to a no-op callback.
+	// Retail calls the hit callback only while the damaged target remains alive.
+	if (pHurt->IsAlive())
+		XenomeHitSound(pHurt);
 
 	// Retail launches after resolving the melee hit and arms the contact callback.
 	UTIL_MakeVectors(pev->angles);
@@ -302,7 +310,8 @@ void CXenome::LeapAttack()
 
 void CXenome::LeapTouch(CBaseEntity* pOther)
 {
-	if (!pOther || pOther->pev->velocity.z == 0.0f ||
+	// Retail tests entvars +0x16c (takedamage), not the target's vertical velocity.
+	if (!pOther || pOther->pev->takedamage == DAMAGE_NO ||
 		pOther->Classify() == Classify() || FBitSet(pev->flags, FL_ONGROUND))
 		return;
 
@@ -313,8 +322,14 @@ void CXenome::LeapTouch(CBaseEntity* pOther)
 		const Vector vecTarget = pOther->BodyTarget(g_vecZero);
 		const Vector vecAttackDir = (vecTarget - vecSource).Normalize();
 		TraceResult tr;
-		UTIL_TraceLine(vecSource, vecTarget, dont_ignore_monsters, edict(), &tr);
+		// Retail TraceLine uses pev->pContainingEntity (+0x208) as the
+		// skipped edict, in addition to tracing through other monsters.
+		UTIL_TraceLine(vecSource, vecTarget, dont_ignore_monsters, pev->pContainingEntity, &tr);
 		pVictim->TraceBleed(gSkillData.xenomeMeleeDamage, vecAttackDir, &tr, DMG_SLASH);
+		// Retail calls slot +0x224 only for monster victims and only when
+		// their entvars flags pass TEST 0x28.
+		if ((pOther->pev->flags & 0x28) != 0)
+			XenomeHitSound(pOther);
 	}
 	// Retail clears m_pfnTouch after a successful leap contact.
 	SetTouch(nullptr);

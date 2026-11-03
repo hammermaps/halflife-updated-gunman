@@ -212,6 +212,9 @@ void CDmlGrenade::Spawn()
 	Precache();
 	m_iId = WEAPON_DMLGRENADE;
 	SET_MODEL(ENT(pev), "models/w_grenade.mdl");
+	// Retail Spawn writes DAT_10136fa8 to pev->dmg; its skill initializer
+	// sets that constant to 75.0 (it is not a skill.cfg lookup).
+	pev->dmg = 75.0f;
 
 	FallInit();
 }

@@ -39,8 +39,8 @@ void CBaseBird::SetGoal(CBaseEntity* pGoal)
 	m_vecGoalDir = gpGlobals->v_forward;
 }
 
-// Port of retail CBaseBird::HuntThink @ 0x10068e60. Open points (idle/flap
-// sounds = virtuals +0x22c/+0x230) are omitted; see the findings document.
+// Port of retail CBaseBird::HuntThink @ 0x10068e60. Eagle overrides the
+// idle and flap sounds; Pteradon inherits the Retail no-op flap hook.
 void CBaseBird::HuntThink()
 {
 	StudioFrameAdvance();
@@ -50,7 +50,10 @@ void CBaseBird::HuntThink()
 		m_flSpeedAccum += 10;
 
 	if (m_flIdleTime < gpGlobals->time)
+	{
 		m_flIdleTime = gpGlobals->time + RANDOM_LONG(20, 30);
+		IdleSound();
+	}
 
 	if (m_fSequenceFinished)
 	{
@@ -62,6 +65,7 @@ void CBaseBird::HuntThink()
 		{
 			m_flFlapTime = gpGlobals->time + RANDOM_LONG(3, 4);
 			SetSequenceByName("glideflap");
+			FlapSound();
 		}
 	}
 
@@ -137,6 +141,7 @@ void CBaseBird::SteerFlight()
 	{
 		m_flFlapTime = gpGlobals->time + RANDOM_LONG(3, 4);
 		SetSequenceByName("glideflap");
+		FlapSound();
 	}
 
 	if (pev->velocity.x * gpGlobals->v_forward.x + pev->velocity.y * gpGlobals->v_forward.y < 0)

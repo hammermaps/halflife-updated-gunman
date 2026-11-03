@@ -25,6 +25,8 @@
 #include "weapons.h"
 #include "explode.h"
 #include "soundent.h"
+#include "talkmonster.h"
+#include <cmath>
 
 class CTargSpeaker : public CBaseEntity
 {
@@ -123,6 +125,7 @@ void CTargSpeaker::Use(CBaseEntity* pActivator, CBaseEntity* pCaller, USE_TYPE u
 // Private tasks 0x64 (arm/power up) and 0x63 (plasma shot) are handled below.
 #define TASK_RUSTBOT_PLASMA 0x63
 #define TASK_RUSTBOT_POWERUP 0x64
+#define TASK_RUSTBOT_SENTENCE 0x65
 
 static Task_t tlRustbotRangeAttack[] =
 {
@@ -135,6 +138,26 @@ static Task_t tlRustbotRangeAttack[] =
 static Schedule_t slRustbotRangeAttack =
 {
 	tlRustbotRangeAttack, ARRAYSIZE(tlRustbotRangeAttack), 0, 0, "Rustbot Range Attack",
+};
+
+// Retail TakeCover record @0x1012c598. Task 0x65's sentence helper sets
+// CTalkMonster's shared talk deadline before checking it, so its own gate
+// rejects playback; preserve that observed side effect and complete the task.
+static Task_t tlRustbotTakeCover[] =
+{
+	{TASK_STOP_MOVING, 0},
+	{TASK_SET_FAIL_SCHEDULE, 50},
+	{TASK_WAIT, 0.2f},
+	{TASK_FIND_COVER_FROM_ENEMY, 0},
+	{TASK_RUSTBOT_SENTENCE, 0},
+	{TASK_RUN_PATH, 0},
+	{TASK_WAIT_FOR_MOVEMENT, 0},
+	{TASK_REMEMBER, 0},
+	{TASK_SET_SCHEDULE, 49},
+};
+static Schedule_t slRustbotTakeCover =
+{
+	tlRustbotTakeCover, ARRAYSIZE(tlRustbotTakeCover), 0, 0, "TakeCover",
 };
 
 // Other Rustbot schedule records whose task streams use only SDK tasks.
@@ -167,6 +190,36 @@ static Schedule_t slRustbotWaitInCover =
 	tlRustbotWaitInCover, ARRAYSIZE(tlRustbotWaitInCover), 0x30c00, 0x20, "Rustbot Wait In Cover",
 };
 
+// Retail records @0x1012c488/@0x1012c4c8. Both seek an enemy line of fire;
+// their distinct failure schedules are 0x33 and SCHED_COMBAT_FACE.
+static Task_t tlRustbotEstablishLineOfFire[] =
+{
+	{TASK_SET_FAIL_SCHEDULE, 0x33},
+	{TASK_GET_PATH_TO_ENEMY, 0},
+	{TASK_RUSTBOT_SENTENCE, 0},
+	{TASK_RUN_PATH, 0},
+	{TASK_WAIT_FOR_MOVEMENT, 0},
+};
+static Schedule_t slRustbotEstablishLineOfFire =
+{
+	tlRustbotEstablishLineOfFire, ARRAYSIZE(tlRustbotEstablishLineOfFire), 0x130c00, 0x20,
+	"Rustbot Establish Line Of Fire",
+};
+
+static Task_t tlRustbotEstablishLineOfFireRetry[] =
+{
+	{TASK_SET_FAIL_SCHEDULE, SCHED_COMBAT_FACE},
+	{TASK_GET_PATH_TO_ENEMY, 0},
+	{TASK_RUSTBOT_SENTENCE, 0},
+	{TASK_RUN_PATH, 0},
+	{TASK_WAIT_FOR_MOVEMENT, 0},
+};
+static Schedule_t slRustbotEstablishLineOfFireRetry =
+{
+	tlRustbotEstablishLineOfFireRetry, ARRAYSIZE(tlRustbotEstablishLineOfFireRetry), 0x130c00, 0x20,
+	"Rustbot Establish Line Of Fire",
+};
+
 static Task_t tlRustbotBorg[] =
 {
 	{TASK_WAIT_FOR_MOVEMENT, 0}, {TASK_SET_ACTIVITY, ACT_IDLE}, {TASK_SET_SCHEDULE, 52},
@@ -194,6 +247,25 @@ static Schedule_t slRustbotFail =
 	tlRustbotFail, ARRAYSIZE(tlRustbotFail), 0xc00, 0, "Rustbot Fail",
 };
 
+static void CreateRustbotSparkShowers(entvars_t* pev, int count)
+{
+	for (int i = 0; i < count; ++i)
+	{
+		Vector vecOrigin = pev->origin + Vector(
+			RANDOM_LONG(0, 89) - 45,
+			RANDOM_LONG(0, 89) - 45,
+			RANDOM_LONG(0, 29) + 24);
+		CBaseEntity::Create("spark_shower", vecOrigin, pev->angles, nullptr);
+	}
+}
+
+static void AdvanceRustbotSentenceCooldown()
+{
+	// Retail's sentence helper advances its shared deadline before checking the
+	// gate, so these Rustbot schedule calls never emit the selected sentence.
+	CTalkMonster::g_talkWaitTime = gpGlobals->time + RANDOM_FLOAT(1.5f, 2.0f);
+}
+
 class CRustbot : public CBaseMonster
 {
 public:
@@ -202,8 +274,20 @@ public:
 	void Precache() override;
 	void StartTask(Task_t* pTask) override;
 	void RunTask(Task_t* pTask) override;
+	void PrescheduleThink() override;
 	Schedule_t* GetSchedule() override;
 	Schedule_t* GetScheduleOfType(int Type) override;
+	int IRelationship(CBaseEntity* pTarget) override
+	{
+		// User-requested gameplay exception: Retail ignores class-13 Xenomes
+		// while they spawn invisible, so Rustbots never acquire them. Keep the
+		// exception scoped to Xenomes; all other relationships use Retail data.
+		if (pTarget && FClassnameIs(pTarget->pev, "monster_xenome"))
+		{
+			return R_DL;
+		}
+		return CBaseMonster::IRelationship(pTarget);
+	}
 	int Classify() override { return CLASS_ALIEN_MONSTER; }
 	// CORRECTION (2026-09-05): missing SetYawSpeed() override, same
 	// root cause/fix as CFriendlyGunman (human_gunman.cpp) - see
@@ -238,14 +322,21 @@ private:
 	void EXPORT BeamThink();
 
 	CBeam* m_pBeam = nullptr;
+	CBeam* m_pBeamGlow = nullptr;
+	CSprite* m_pBeamEnd = nullptr;
 	bool m_bBorg = true; // Retail +0x2e8; initial Borg schedule until first damage.
+	float m_flLastEnemyVisible = 0;
+	float m_flBeamCharge = 0; // Retail +0x2d0; transient beam-effect charge.
 };
 LINK_ENTITY_TO_CLASS(monster_rustbot, CRustbot);
 
 TYPEDESCRIPTION CRustbot::m_SaveData[] =
 	{
 		DEFINE_FIELD(CRustbot, m_pBeam, FIELD_CLASSPTR),
+	DEFINE_FIELD(CRustbot, m_pBeamGlow, FIELD_CLASSPTR),
+	DEFINE_FIELD(CRustbot, m_pBeamEnd, FIELD_CLASSPTR),
 		DEFINE_FIELD(CRustbot, m_bBorg, FIELD_BOOLEAN),
+		DEFINE_FIELD(CRustbot, m_flLastEnemyVisible, FIELD_TIME),
 };
 
 IMPLEMENT_SAVERESTORE(CRustbot, CBaseMonster);
@@ -262,8 +353,8 @@ Schedule_t* CRustbot::GetScheduleOfType(int Type)
 		return &slRustbotWaitInCover;
 	case 0x34:
 		return &slRustbotBorg;
-	case 0x12: // Retail TakeCover has unresolved custom tasks 0x65/0x59.
-		return CBaseMonster::GetScheduleOfType(Type);
+	case 0x12: // Retail TakeCover; all tasks are now mapped, including 0x65.
+		return &slRustbotTakeCover;
 	case 0x18:
 		return &slRustbotRangeAttack;
 	case 0x29:
@@ -274,14 +365,13 @@ Schedule_t* CRustbot::GetScheduleOfType(int Type)
 		// Retail retries the range attack when that condition is available,
 		// otherwise it requests its failed-schedule case (0x29).
 		return GetScheduleOfType(HasConditions(bits_COND_CAN_RANGE_ATTACK1) ? 0x18 : 0x29);
-	case 0x2e: // Retail Establish Line Of Fire has unresolved custom tasks.
+	case 0x2e:
+		return &slRustbotEstablishLineOfFire;
 	case 0x2f:
-		return CBaseMonster::GetScheduleOfType(Type);
+		return &slRustbotEstablishLineOfFireRetry;
 	case 0x33:
-		// Retail compares gpGlobals->time against +0x29c to choose 0x29/0x18.
-		// That field has not been mapped or save-verified; keep this path on
-		// the SDK fallback until its semantics are established.
-		return CBaseMonster::GetScheduleOfType(Type);
+		// Retail uses +0x29c as the last time an enemy was visible.
+		return GetScheduleOfType(gpGlobals->time - m_flLastEnemyVisible > 10.0f ? 0x29 : 0x18);
 	}
 
 	// Retail delegates unhandled schedule types to CBaseMonster. Only 0x29
@@ -301,7 +391,87 @@ Schedule_t* CRustbot::GetSchedule()
 		m_bBorg = false;
 	}
 
+	if (HasConditions(bits_COND_HEAR_SOUND))
+	{
+		CSound* pSound = PBestSound();
+		if (pSound)
+		{
+			if (!HasConditions(bits_COND_SEE_ENEMY) &&
+				(pSound->m_iType & (bits_SOUND_COMBAT | bits_SOUND_PLAYER)))
+				MakeIdealYaw(pSound->m_vecOrigin);
+
+			if (pSound->m_iType & bits_SOUND_DANGER)
+			{
+				AdvanceRustbotSentenceCooldown(); // RB_DANGER, group 11.
+				return GetScheduleOfType(SCHED_TAKE_COVER_FROM_BEST_SOUND);
+			}
+		}
+	}
+
+	if (m_MonsterState == MONSTERSTATE_COMBAT && !HasConditions(bits_COND_ENEMY_DEAD))
+	{
+		if (HasConditions(bits_COND_NEW_ENEMY))
+		{
+			if (HasConditions(bits_COND_CAN_MELEE_ATTACK1))
+				return GetScheduleOfType(SCHED_MELEE_ATTACK1);
+
+			if (RANDOM_LONG(0, 1) != 0 && m_hEnemy)
+			{
+				int iEnemyClass = m_hEnemy->Classify();
+				if (iEnemyClass != CLASS_MACHINE && iEnemyClass != CLASS_HUMAN_PASSIVE &&
+					iEnemyClass != CLASS_HUMAN_MILITARY)
+					AdvanceRustbotSentenceCooldown(); // RB_DANGER, group 11.
+			}
+
+			if (HasConditions(bits_COND_CAN_MELEE_ATTACK1))
+				return GetScheduleOfType(SCHED_MELEE_ATTACK1);
+			return GetScheduleOfType(0x2e);
+		}
+
+		if (HasConditions(bits_COND_CAN_MELEE_ATTACK1))
+			return GetScheduleOfType(SCHED_MELEE_ATTACK1);
+		if (HasConditions(bits_COND_LIGHT_DAMAGE))
+		{
+			AdvanceRustbotSentenceCooldown(); // RB_COVER, group 2.
+			return GetScheduleOfType(0x12);
+		}
+		if (HasConditions(bits_COND_CAN_RANGE_ATTACK1))
+			return GetScheduleOfType(0x18);
+		if (HasConditions(bits_COND_ENEMY_OCCLUDED))
+		{
+			if (RANDOM_LONG(0, 1) != 0)
+				AdvanceRustbotSentenceCooldown(); // RB_THROW, group 4.
+			return GetScheduleOfType(0x2f);
+		}
+		if (HasConditions(bits_COND_SEE_ENEMY))
+			return GetScheduleOfType(0x2e);
+	}
+
 	return CBaseMonster::GetSchedule();
+}
+
+void CRustbot::PrescheduleThink()
+{
+	// Retail slot 117 updates +0x29c while an enemy is visible and advances the
+	// transient +0x2d0 beam-charge effect while it is active.
+	if (m_hEnemy && HasConditions(bits_COND_SEE_ENEMY))
+		m_flLastEnemyVisible = gpGlobals->time;
+	if (m_flBeamCharge < 0)
+		m_flBeamCharge = 0;
+	else if (m_flBeamCharge >= 10)
+		m_flBeamCharge = 10;
+
+	if (m_flBeamCharge >= 5)
+	{
+		float flRateAdjust = m_flBeamCharge * 0.1f;
+		if (flRateAdjust > 0.7f)
+			flRateAdjust = 0.7f;
+		pev->framerate = 1.2f + flRateAdjust;
+		if (RANDOM_LONG(0, 39) < 2)
+			CreateRustbotSparkShowers(pev, 1);
+	}
+
+	CBaseMonster::PrescheduleThink();
 }
 
 void CRustbot::Spawn()
@@ -348,6 +518,14 @@ void CRustbot::StartTask(Task_t* pTask)
 		TaskBegin();
 		m_IdealActivity = ACT_RANGE_ATTACK1;
 		EMIT_SOUND_DYN(ENT(pev), CHAN_WEAPON, "rustbot/Plasma1.wav", 0.6f, 0.8f, 0, PITCH_NORM);
+		break;
+	case TASK_RUSTBOT_SENTENCE:
+		TaskBegin();
+		// FUN_100b9370 calls the sentence helper, which advances the shared
+		// deadline before its gate and therefore emits no phrase in Retail.
+		AdvanceRustbotSentenceCooldown();
+		if (!HasConditions(bits_COND_TASK_FAILED))
+			TaskComplete();
 		break;
 	default:
 		CBaseMonster::StartTask(pTask);
@@ -412,6 +590,8 @@ void CRustbot::Melee()
 void CRustbot::BeamOn()
 {
 	BeamOff();
+	m_flBeamCharge += 2;
+	CreateRustbotSparkShowers(pev, 5);
 
 	MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, pev->origin);
 	WRITE_BYTE(TE_SPARKS);
@@ -420,26 +600,52 @@ void CRustbot::BeamOn()
 	WRITE_COORD(pev->origin.z + 40);
 	MESSAGE_END();
 
-	m_pBeam = CBeam::BeamCreate("sprites/xbeam1.spr", 30);
-	if (m_pBeam)
+	m_pBeam = CBeam::BeamCreate("sprites/xbeam1.spr", 5);
+	m_pBeamGlow = CBeam::BeamCreate("sprites/xbeam1.spr", 5);
+	m_pBeamEnd = CSprite::SpriteCreate("sprites/rustbeam_end.spr", pev->origin, true);
+	if (!m_pBeam || !m_pBeamGlow || !m_pBeamEnd)
 	{
-		m_pBeam->PointsInit(pev->origin, pev->origin);
-		m_pBeam->SetColor(80, 160, 255);
-		m_pBeam->SetBrightness(200);
-		m_pBeam->SetNoise(0);
-		m_pBeam->pev->owner = edict();
-
-		SetThink(&CRustbot::BeamThink);
-		pev->nextthink = gpGlobals->time;
+		BeamOff();
+		return;
 	}
+
+	// Retail builds two point beams and a glowing impact sprite. The second
+	// beam overlays the first; only the first carries the spark-start flag.
+	m_pBeam->PointsInit(pev->origin, pev->origin);
+	m_pBeam->SetColor(80, 120, 255);
+	m_pBeam->SetBrightness(255);
+	m_pBeam->SetFrame(10);
+	m_pBeam->pev->owner = edict();
+	m_pBeamGlow->PointsInit(pev->origin, pev->origin);
+	m_pBeamGlow->SetColor(80, 120, 255);
+	m_pBeamGlow->SetBrightness(255);
+	m_pBeamGlow->SetFrame(10);
+	m_pBeamGlow->pev->owner = edict();
+	m_pBeam->SetFlags(SF_BEAM_SPARKSTART);
+	m_pBeamEnd->SetScale(0.75f);
+	m_pBeamEnd->SetTransparency(kRenderGlow, 255, 255, 255, 200, kRenderFxNoDissipation);
+	m_pBeamEnd->pev->owner = edict();
+
+	SetThink(&CRustbot::BeamThink);
+	pev->nextthink = gpGlobals->time;
 }
 
 void CRustbot::BeamOff()
 {
+	if (m_pBeamEnd)
+	{
+		m_pBeamEnd->Expand(10.0f, 500.0f);
+		m_pBeamEnd = nullptr;
+	}
 	if (m_pBeam)
 	{
 		UTIL_Remove(m_pBeam);
 		m_pBeam = nullptr;
+	}
+	if (m_pBeamGlow)
+	{
+		UTIL_Remove(m_pBeamGlow);
+		m_pBeamGlow = nullptr;
 	}
 
 	// BeamOn temporarily replaces the regular monster think callback.  Always
@@ -453,7 +659,7 @@ void CRustbot::BeamThink()
 {
 	pev->nextthink = gpGlobals->time + 0.1;
 
-	if (!m_pBeam || !m_hEnemy)
+	if (!m_pBeam || !m_pBeamGlow || !m_pBeamEnd || !m_hEnemy)
 	{
 		BeamOff();
 		return;
@@ -475,15 +681,23 @@ void CRustbot::BeamThink()
 
 	m_pBeam->SetStartPos(vecSrc);
 	m_pBeam->SetEndPos(tr.vecEndPos);
+	m_pBeamGlow->SetStartPos(vecSrc);
+	m_pBeamGlow->SetEndPos(tr.vecEndPos);
+	UTIL_SetOrigin(m_pBeamEnd->pev, tr.vecEndPos);
 	// PointsInit relinks once at creation. The endpoints move every tick,
 	// so update the beam bounds/PVS link as the stock beam paths do.
 	m_pBeam->RelinkBeam();
+	m_pBeamGlow->RelinkBeam();
 
 	if (tr.flFraction < 1.0 && tr.pHit)
 	{
 		CBaseEntity* pHit = CBaseEntity::Instance(tr.pHit);
 		if (pHit && pHit->pev->takedamage != DAMAGE_NO)
+		{
+			if (pHit->IsAlive())
+				m_flBeamCharge -= 0.1f;
 			pHit->TakeDamage(pev, pev, gSkillData.rustbotLongDamage, DMG_ENERGYBEAM);
+		}
 
 		EMIT_SOUND_DYN(ENT(pev), CHAN_WEAPON, "buttons/spark6.wav", 0.5, ATTN_NORM, 0, 100);
 	}
@@ -821,17 +1035,9 @@ void CBallLightning::MoveThink()
 // entity), not a real gameplay mechanic - reproduced faithfully
 // anyway since it's cheap to.
 //
-// Simplified relative to the original (documented per-case):
-// HuntThink's real target-acquisition/line-of-sight math
-// (FUN_100b4d70) and CrashingThink's exact spark-particle timing are
-// not reproduced - replaced with a straightforward "if enemy visible,
-// fire ball_lightning periodically" Think and a simplified crash
-// sequence (fly toward the deathpath path_corner over timetillcrash
-// seconds, switch to the crashed model, fire triggerondeath, explode
-// and remove) that preserves every FGD-documented behavior (deathpath
-// navigation, timetillcrash timing, deathangle final orientation,
-// triggerondeath firing) without the original's exact per-tick spark
-// choreography.
+// HuntThink steering, target acquisition, attack gates and crash travel
+// follow the Retail implementation; CrashingThink's exact spark-particle
+// timing remains simplified (see the entity findings).
 //=========================================================
 
 #define SF_RUSTFLIER_START_SHIELD_OFF 1 // not FGD-documented as a spawnflag; shield state comes from startshieldstate
@@ -1294,8 +1500,6 @@ void CRustFlier::HuntThink()
 }
 
 // Retail steering @ 0x100b4100 = flightsteer.cpp plus the flier sounds.
-// The pitch expression of the Doppler-style sound updates is not typed in the
-// decompile (x87 stack); a constant 110 is used.
 void CRustFlier::HuntSteer()
 {
 	flightsteer_t st;
@@ -1316,13 +1520,27 @@ void CRustFlier::HuntSteer()
 	CBaseEntity* pPlayer = UTIL_FindEntityByClassname(nullptr, "player");
 	if (pPlayer && (pev->spawnflags & 2) == 0)
 	{
+		Vector vecToPlayer = pPlayer->pev->origin - pev->origin;
+		if (vecToPlayer.Length() != 0.0f)
+			vecToPlayer = vecToPlayer.Normalize();
+		else
+			vecToPlayer = Vector(0, 0, 1); // Retail zero-length fallback.
+
+		const Vector vecRelativeVelocity = pev->velocity - pPlayer->pev->velocity;
+		const float flPitch = DotProduct(vecRelativeVelocity, vecToPlayer) * 0.02f + 100.0f;
+		int iPitch = static_cast<int>(std::nearbyint(flPitch));
+		if (iPitch < 50)
+			iPitch = 50;
+		else if (iPitch > 250)
+			iPitch = 250;
+
 		float flVol = m_flThrust * 0.01f + 0.1f;
 		if (flVol > 1.0f)
 			flVol = 1.0f;
-		EMIT_SOUND_DYN(ENT(pev), CHAN_STATIC, "flier/ap_rotor2.wav", 1.0, 0.3, SND_CHANGE_PITCH | SND_CHANGE_VOL, 110);
-		EMIT_SOUND_DYN(ENT(pev), CHAN_STATIC, "flier/ap_whine1.wav", flVol, 0.2, SND_CHANGE_PITCH | SND_CHANGE_VOL, 110);
+		EMIT_SOUND_DYN(ENT(pev), CHAN_STATIC, "flier/ap_rotor2.wav", 1.0, 0.3, SND_CHANGE_PITCH | SND_CHANGE_VOL, iPitch);
+		EMIT_SOUND_DYN(ENT(pev), CHAN_STATIC, "flier/ap_whine1.wav", flVol, 0.2, SND_CHANGE_PITCH | SND_CHANGE_VOL, iPitch);
 		if (pev->health < 0)
-			EMIT_SOUND_DYN(ENT(pev), CHAN_STATIC, "flier/flyer_sick.wav", flVol, 0.2, SND_CHANGE_PITCH | SND_CHANGE_VOL, 110);
+			EMIT_SOUND_DYN(ENT(pev), CHAN_STATIC, "flier/flyer_sick.wav", flVol, 0.2, SND_CHANGE_PITCH | SND_CHANGE_VOL, iPitch);
 	}
 }
 

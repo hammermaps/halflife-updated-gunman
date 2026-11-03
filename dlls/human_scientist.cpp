@@ -108,7 +108,7 @@ public:
 	void HandleAnimEvent(MonsterEvent_t* pEvent) override;
 	bool TakeDamage(entvars_t* pevInflictor, entvars_t* pevAttacker, float flDamage, int bitsDamageType) override;
 	void Killed(entvars_t* pevAttacker, int iGib) override;
-	// Retail-Slots 80/82 (@0x100b2080 / @0x100b2050), 141 (@0x100b1de0: unbegrenzte Munition).
+	// Retail-Slots 80/82 (@0x100b2080 / @0x100b2050), 145 (@0x100b1de0: unbegrenzte Munition).
 	bool CheckRangeAttack1(float flDot, float flDist) override;
 	bool CheckMeleeAttack1(float flDot, float flDist) override;
 	bool InfiniteAmmo() override { return true; }
@@ -122,9 +122,6 @@ private:
 	void PainSound();
 	bool m_fHasGun = true;		 // Retail +0x2f4: Chemgun noch am Koerper (wird beim Tod abgeworfen)
 	float m_flNextPainTime = 0; // Retail +0x2f8
-	float m_flNextTossCheck = 0; // Retail +0x300
-	bool m_fCanToss = false;	 // Retail +0x304
-	Vector m_vecToss;			 // Retail +0x308
 	int m_iThrowType = 0;		 // Retail +0x314 (Wurfart 0..3 der Chemie-Granate)
 };
 LINK_ENTITY_TO_CLASS(monster_human_scientist, CHumanScientist);
@@ -145,9 +142,6 @@ TYPEDESCRIPTION CHumanScientist::m_SaveData[] =
 {
 	DEFINE_FIELD(CHumanScientist, m_fHasGun, FIELD_BOOLEAN),
 	DEFINE_FIELD(CHumanScientist, m_flNextPainTime, FIELD_TIME),
-	DEFINE_FIELD(CHumanScientist, m_flNextTossCheck, FIELD_TIME),
-	DEFINE_FIELD(CHumanScientist, m_fCanToss, FIELD_BOOLEAN),
-	DEFINE_FIELD(CHumanScientist, m_vecToss, FIELD_VECTOR),
 };
 IMPLEMENT_SAVERESTORE(CHumanScientist, CHumanBase);
 
@@ -162,8 +156,7 @@ void CHumanScientist::Spawn()
 	pev->health = gSkillData.scientistHealth;
 	pev->weapons = 0x10;
 	m_flNextGrenadeCheck = gpGlobals->time;
-	m_flNextTossCheck = gpGlobals->time;
-	m_fCanToss = false;
+	m_fThrowGrenade = false;
 	m_iThrowType = RANDOM_LONG(0, 3);
 	m_fHasGun = true;
 	m_flNextPainTime = gpGlobals->time;
@@ -184,15 +177,15 @@ void CHumanScientist::Spawn()
 // in diesem Zustand korrigiert Retail den Granatenwurf um den Gegner-Vorhalt.
 bool CHumanScientist::CheckRangeAttack1(float flDot, float flDist)
 {
-	if (m_flNextTossCheck > gpGlobals->time)
-		return m_fCanToss;
+	if (m_flNextGrenadeCheck > gpGlobals->time)
+		return m_fThrowGrenade;
 
 	if (m_hEnemy == nullptr)
 		return false;
 
 	if ((m_hEnemy->pev->flags & FL_ONGROUND) == 0 && m_hEnemy->pev->waterlevel == 0)
 	{
-		m_fCanToss = false;
+		m_fThrowGrenade = false;
 		return false;
 	}
 
@@ -208,16 +201,16 @@ bool CHumanScientist::CheckRangeAttack1(float flDot, float flDist)
 
 	if (vecToss == g_vecZero)
 	{
-		m_fCanToss = false;
-		m_flNextTossCheck = gpGlobals->time + 0.2f;
+		m_fThrowGrenade = false;
+		m_flNextGrenadeCheck = gpGlobals->time + 0.2f;
 	}
 	else
 	{
-		m_fCanToss = true;
-		m_vecToss = vecToss;
-		m_flNextTossCheck = gpGlobals->time + 0.3f;
+		m_fThrowGrenade = true;
+		m_vecTossVelocity = vecToss;
+		m_flNextGrenadeCheck = gpGlobals->time + 0.3f;
 	}
-	return m_fCanToss;
+	return m_fThrowGrenade;
 }
 
 // Retail @0x100b2050 (Slot 82): Feind vorhanden und naeher als 48.
@@ -295,9 +288,9 @@ void CHumanScientist::ThrowChemGrenade()
 
 	CChemGrenade* pGrenade;
 	if (bContact)
-		pGrenade = CChemGrenade::ShootContact(pev, GetGunPosition(), m_vecToss, params);
+		pGrenade = CChemGrenade::ShootContact(pev, GetGunPosition(), m_vecTossVelocity, params);
 	else
-		pGrenade = CChemGrenade::ShootBouncing(pev, GetGunPosition(), m_vecToss, params); // Zuendzeit (int)(flBounce * 0.1) s im Erzeuger
+		pGrenade = CChemGrenade::ShootBouncing(pev, GetGunPosition(), m_vecTossVelocity, params); // Zuendzeit (int)(flBounce * 0.1) s im Erzeuger
 	if (pGrenade)
 		pGrenade->pev->gravity = 1.5f;
 }
@@ -309,8 +302,8 @@ void CHumanScientist::HandleAnimEvent(MonsterEvent_t* pEvent)
 	{
 	case 1:
 		ThrowChemGrenade();
-		m_fCanToss = false;
-		m_flNextTossCheck = gpGlobals->time + RANDOM_FLOAT(2.0f, 5.0f);
+		m_fThrowGrenade = false;
+		m_flNextGrenadeCheck = gpGlobals->time + RANDOM_FLOAT(2.0f, 5.0f);
 		break;
 	case 4:
 	case 5:

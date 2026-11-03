@@ -402,6 +402,15 @@ class CRustbit : public CBaseMonster
 {
 public:
 	int MonsterProfile() override { return 12; } // retail slot 59
+	int IRelationship(CBaseEntity* pTarget) override
+	{
+		// User-requested gameplay exception: Retail ignores class-13 Xenomes
+		// while they spawn invisible, so Rustbits never acquire them. Keep the
+		// exception scoped to Xenomes; all other relationships use Retail data.
+		if (pTarget && FClassnameIs(pTarget->pev, "monster_xenome"))
+			return R_DL;
+		return CBaseMonster::IRelationship(pTarget);
+	}
 	bool Save(CSave& save) override;
 	bool Restore(CRestore& restore) override;
 	static TYPEDESCRIPTION m_SaveData[];
@@ -639,6 +648,18 @@ void CRustbit::Precache()
 
 void CRustbit::StartTask(Task_t* pTask)
 {
+	// The Retail Range1/Range2 schedules put FACE_ROUTE immediately before
+	// firing. On an isolated Rustbit with a visible enemy but no existing
+	// movement route, Retail's base task fails here and the attack never starts.
+	// Preserve route-facing when a path exists; otherwise face the known enemy
+	// and let RunTask complete the turn. This is an intentional gameplay fix.
+	if (pTask->iTask == TASK_FACE_ROUTE && FRouteClear() && m_hEnemy)
+	{
+		MakeIdealYaw(m_vecEnemyLKP);
+		SetTurnActivity();
+		return;
+	}
+
 	CBaseMonster::StartTask(pTask);
 
 	// Retail's task ID 0x23 maps to the SDK's TASK_RANGE_ATTACK2 and selects
@@ -786,6 +807,9 @@ public:
 	int MonsterProfile() override { return 15; } // retail slot 59
 	void Spawn() override;
 	void Precache() override;
+	bool Save(CSave& save) override;
+	bool Restore(CRestore& restore) override;
+	static TYPEDESCRIPTION m_SaveData[];
 	int Classify() override { return CLASS_PLAYER_ALLY; }
 	// CORRECTION (2026-09-05): missing SetYawSpeed() override, same
 	// root cause/fix as CFriendlyGunman (human_gunman.cpp) - see
@@ -832,6 +856,15 @@ public:
 	}
 };
 LINK_ENTITY_TO_CLASS(monster_beak, CBeak);
+
+// Retail's three confirmed Beak save descriptors map to the existing timers
+// and voice-pitch state. The other three Retail descriptors remain unmapped.
+TYPEDESCRIPTION CBeak::m_SaveData[] = {
+	DEFINE_FIELD(CBeak, m_flLeapReady, FIELD_TIME),
+	DEFINE_FIELD(CBeak, m_flVoiceTime, FIELD_TIME),
+	DEFINE_FIELD(CBeak, m_iVoicePitch, FIELD_INTEGER),
+};
+IMPLEMENT_SAVERESTORE(CBeak, CBaseMonster);
 
 void CBeak::Spawn()
 {

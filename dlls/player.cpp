@@ -110,6 +110,8 @@ TYPEDESCRIPTION CBasePlayer::m_playerSaveData[] =
 		DEFINE_FIELD(CBasePlayer, m_tbdPrev, FIELD_TIME),
 
 		DEFINE_FIELD(CBasePlayer, m_pTank, FIELD_EHANDLE),
+		DEFINE_FIELD(CBasePlayer, m_fHasTankGas, FIELD_BOOLEAN),
+		DEFINE_FIELD(CBasePlayer, m_fTankGasFlag279, FIELD_BOOLEAN),
 		DEFINE_FIELD(CBasePlayer, m_hViewEntity, FIELD_EHANDLE),
 		DEFINE_FIELD(CBasePlayer, m_iHideHUD, FIELD_INTEGER),
 		DEFINE_FIELD(CBasePlayer, m_iFOV, FIELD_INTEGER),
@@ -1494,8 +1496,8 @@ void CBasePlayer::PlayerUse()
 	{
 		if (m_pTank != NULL)
 		{
-			// Stop controlling the tank
-			// TODO: Send HUD Update
+			// Stop controlling the tank; CVehicleTank::Dismount sends
+			// Tank(0) before clearing its driver state.
 			m_pTank->Use(this, this, USE_OFF, 0);
 			m_pTank = NULL;
 			return;
@@ -2965,6 +2967,8 @@ void CBasePlayer::Spawn()
 	m_bitsDamageType = 0;
 	m_afPhysicsFlags = 0;
 	m_fLongJump = false; // no longjump module.
+	m_fHasTankGas = false;
+	m_fTankGasFlag279 = false;
 
 	g_engfuncs.pfnSetPhysicsKeyValue(edict(), "slj", "0");
 	g_engfuncs.pfnSetPhysicsKeyValue(edict(), "hl", "1");

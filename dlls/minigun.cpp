@@ -39,15 +39,15 @@
 //   - Normal mode fires 1 pellet per call at a confirmed 0.02618 rad
 //     spread (matches this project's VECTOR_CONE_3DEGREES exactly),
 //     0.2s between shots, heat +1 per shot.
-//   - A "Barrel Spin" mode (a distinct per-weapon-instance
-//     configuration, not a runtime toggle - no SecondaryAttack
-//     override exists for this weapon per the findings doc's Nachtrag
-//     3 Slot-87 table) fires 2 pellets per call at 0.08716 rad spread
+//   - Retail has a runtime customization toggle in vtable slot 68
+//     (ApplyCustomSetting), separate from SecondaryAttack. Its transition
+//     state machine is documented in findings/weapons/weapon_minigun.md;
+//     it is not implemented here yet. The resulting Barrel Spin mode fires
+//     2 pellets per call at 0.08716 rad spread
 //     (0.05234 in multiplayer), 0.1s between shots, same 1-ammo cost
-//     per call despite the double pellet count. NOT reproduced here -
-//     no confirmed mapper-facing selector for it was found, same
-//     "customization item, not implemented" scope decision already
-//     made for weapon_gausspistol's Charge/Rapid modes.
+//     per call despite the double pellet count. The `cust_1MinigunSpin`
+//     inventory item enables the customization UI; its exact client-side
+//     selection command and the server transition path are still open.
 //   - Heat counter caps at 100 and forces an overheat lockout (state
 //     field transitions match a "must cool down" branch) until it
 //     drops back below threshold - reproduced with the same shape,

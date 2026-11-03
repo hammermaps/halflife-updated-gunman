@@ -21,6 +21,7 @@
 #include "shake.h"
 #include "items.h"
 #include "soundent.h"
+#include "UserMessages.h"
 #include "customentity.h" // BEAM_F* Render-Flags (nicht die SF_BEAM_*-Spawnflags aus effects.h)
 #include "gunman_sphere_explosion.h"
 
@@ -4018,10 +4019,10 @@ void CDecoreCam::Use(CBaseEntity* pActivator, CBaseEntity* pCaller, USE_TYPE use
 // The pickup callbacks were subsequently recovered as
 // item_armor::MyTouch @0x10024600 and item_gascan::MyTouch @0x100247d0:
 // armor sets armorvalue to max(current, 100) and deliberately succeeds
-// even when it changes nothing. Gascan's only confirmed extra behavior is
-// an opaque per-player flag gate/set at retail offsets 0x278/0x279; its
-// consumer is still unresolved, so no invented vehicle-refill behavior is
-// attached here. See findings/entities/item_lifecycle_retail_batch_2026-09-09.md.
+// even when it changes nothing. Gascan sets player flags +0x278/+0x279,
+// sends Tank(3) and ItemPickup(classname), and the dry tank consumes the
+// flags on mount. The second flag's meaning beyond its lifecycle remains
+// unknown. See tank_vehicle_system.md and the item lifecycle finding.
 //
 // Retail CItem and CBasePlayerAmmo share a Gunman-specific green glow
 // lifecycle and the CItem key nopickupsound.  These belong to the base
@@ -4096,8 +4097,20 @@ void CGunmanItemGasCan::Spawn()
 
 bool CGunmanItemGasCan::MyTouch(CBasePlayer* pPlayer)
 {
+	if (pPlayer->m_fHasTankGas)
+		return false;
+
+	pPlayer->m_fHasTankGas = true;
+	pPlayer->m_fTankGasFlag279 = true;
+	MESSAGE_BEGIN(MSG_ONE, gmsgTank, NULL, pPlayer->pev);
+	WRITE_SHORT(3);
+	MESSAGE_END();
 	if (ShouldPlayPickupSound())
 		EMIT_SOUND(ENT(pPlayer->pev), CHAN_ITEM, "Tank/gaspickup.wav", 1, ATTN_NORM);
+
+	MESSAGE_BEGIN(MSG_ONE, gmsgItemPickup, NULL, pPlayer->pev);
+	WRITE_STRING(STRING(pev->classname));
+	MESSAGE_END();
 
 	return true;
 }

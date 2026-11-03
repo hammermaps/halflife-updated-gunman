@@ -719,7 +719,8 @@ void CScientist::HandleAnimEvent(MonsterEvent_t* pEvent)
 	case 4:
 	case 5:
 	{
-		CBaseEntity* pHurt = CheckTraceHullAttack(64, 15, DMG_SLASH);
+		TraceResult trMelee;
+		CBaseEntity* pHurt = CheckTraceHullAttack(64, 15, DMG_SLASH, &trMelee);
 		if (pHurt)
 		{
 			// Retail supplies a random punch on the victim and bleeds monster
@@ -728,9 +729,10 @@ void CScientist::HandleAnimEvent(MonsterEvent_t* pEvent)
 			pHurt->pev->punchangle.z = (float)(RANDOM_LONG(0, 7) - 4);
 			if (CBaseMonster* pMonster = pHurt->MyMonsterPointer())
 			{
-				TraceResult trBleed;
-				UTIL_TraceLine(GetGunPosition(), pMonster->BodyTarget(GetGunPosition()), dont_ignore_monsters, edict(), &trBleed);
-				pMonster->TraceBleed(gSkillData.xenomeMeleeDamage, g_vecZero, &trBleed, DMG_SLASH);
+				// Retail reuses the successful hull trace for blood decals and
+				// passes attacker-origin minus victim-origin as the bleed vector.
+				Vector vecBleedDir = pev->origin - pMonster->pev->origin;
+				pMonster->TraceBleed(gSkillData.xenomeMeleeDamage, vecBleedDir, &trMelee, DMG_SLASH);
 			}
 		}
 		break;
@@ -1209,13 +1211,13 @@ Schedule_t* CScientist::GetSchedule()
 
 MONSTERSTATE CScientist::GetIdealState()
 {
-	// Match Retail's inactive-AI fallback before Scientist fear/follow logic.
-	if (!m_iAIActive)
+	// Match Retail's inactive-AI fallback before its interruption gate.
+	if (m_iAIActive != 1)
 		return CBaseMonster::GetIdealState();
 
 	// Retail clears the one-shot Scientist voice channel on the first damage
 	// or interesting-sound interruption. IsScared disables this gate.
-	if (m_iClassifyBias && HasConditions(bits_COND_LIGHT_DAMAGE | bits_COND_HEAVY_DAMAGE | bits_COND_HEAR_SOUND))
+	if (m_iClassifyBias == 1 && HasConditions(bits_COND_LIGHT_DAMAGE | bits_COND_HEAVY_DAMAGE | bits_COND_HEAR_SOUND))
 	{
 		if (m_iShouldClearVoiceChannel)
 			EMIT_SOUND_DYN(ENT(pev), CHAN_VOICE, "common/null.wav", 1.0f, ATTN_NORM, 0, PITCH_NORM);
@@ -1224,68 +1226,21 @@ MONSTERSTATE CScientist::GetIdealState()
 		// FUN_100531f0 resolves targetname matches, skips FL_KILLME entities,
 		// and calls Use with this as activator and caller.
 		FireTargets(STRING(m_iszTriggerTarget), this, this, USE_TOGGLE, 0);
-	}
 
-	switch (m_MonsterState)
-	{
-	case MONSTERSTATE_ALERT:
-	case MONSTERSTATE_IDLE:
-		if (HasConditions(bits_COND_NEW_ENEMY))
+		// Retail's Scientist override also exits a scripted sequence for the
+		// sound-only interrupt case. The SDK base state handler only exits for
+		// task failure or damage, so preserve Retail's broader trigger here.
+		if (m_MonsterState == MONSTERSTATE_SCRIPT)
 		{
-			if (IsFollowing())
-			{
-				int relationship = IRelationship(m_hEnemy);
-				if (relationship != R_FR || relationship != R_HT && !HasConditions(bits_COND_LIGHT_DAMAGE | bits_COND_HEAVY_DAMAGE))
-				{
-					// Don't go to combat if you're following the player
-					m_IdealMonsterState = MONSTERSTATE_ALERT;
-					return m_IdealMonsterState;
-				}
-				StopFollowing(true);
-			}
-		}
-		else if (HasConditions(bits_COND_LIGHT_DAMAGE | bits_COND_HEAVY_DAMAGE))
-		{
-			// Stop following if you take damage
-			if (IsFollowing())
-				StopFollowing(true);
-		}
-		break;
-
-	case MONSTERSTATE_COMBAT:
-	{
-		CBaseEntity* pEnemy = m_hEnemy;
-		if (pEnemy != NULL)
-		{
-			if (DisregardEnemy(pEnemy)) // After 15 seconds of being hidden, return to alert
-			{
-				// Strip enemy when going to alert
-				m_IdealMonsterState = MONSTERSTATE_ALERT;
-				m_hEnemy = NULL;
-
-				// Marphy Fact Files Fix - Fix scientists not disregarding enemy after hiding
-				m_fearTime = gpGlobals->time;
-				return m_IdealMonsterState;
-			}
-			// Follow if only scared a little
-			if (m_hTargetEnt != NULL)
-			{
-				m_IdealMonsterState = MONSTERSTATE_ALERT;
-				return m_IdealMonsterState;
-			}
-
-			if (HasConditions(bits_COND_SEE_ENEMY))
-			{
-				m_fearTime = gpGlobals->time;
-				m_IdealMonsterState = MONSTERSTATE_COMBAT;
-				return m_IdealMonsterState;
-			}
+			ExitScriptedSequence();
+			m_IdealMonsterState = MONSTERSTATE_COMBAT;
 		}
 	}
-	break;
-	}
 
-	return CTalkMonster::GetIdealState();
+	// Retail CScientist::GetIdealState has no extra fear/follow state switch:
+	// after its one-shot interruption it delegates to CBaseMonster. Enemy
+	// memory and follow handling are owned by the schedule/base paths.
+	return CBaseMonster::GetIdealState();
 }
 
 

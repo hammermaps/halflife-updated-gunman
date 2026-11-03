@@ -25,13 +25,14 @@
 //     screenshot, distinct from monster_raptor/monster_rheptor's
 //     larger models/rheptor.mdl.
 //
-// Combat status: CMicroRaptor's melee checks, primary melee schedule,
-// attack events, and jump touch have been reconstructed. Its Retail
-// GetSchedule (slot 88) is now decompiled and documented, but not yet
-// ported: the helper methods and custom schedule type 0x2a still need
-// identification. Do not treat the inherited GetSchedule as Retail
-// parity. CGator's remaining combat/schedule behavior is still outside
-// this finding and must be checked separately.
+// Combat status: CMicroRaptor's melee checks, primary and jump-fly-land
+// schedules, attack events, and jump touch have been reconstructed and
+// ported. Retail GetSchedule (slot 88) dispatches to schedule 0x2a for
+// CAN_MELEE_ATTACK2; the remaining Eating/Urgent schedules contain task
+// IDs 97/101 that Retail CBaseMonster::StartTask does not handle. The
+// actual leap attack still needs a focused runtime check. CGator's
+// remaining combat/schedule behavior is outside this finding and must be
+// checked separately.
 //
 // env_clusterExplosion (CClusterExplosion) - reviewed this session via
 // the already-fully-decompiled ghidra/logs/cexp_ctor.txt (ctor helper
