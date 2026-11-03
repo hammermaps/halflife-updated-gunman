@@ -41,6 +41,8 @@
 // Shared with mayan6_misc.cpp's dml_cluster/CClusterGrenade.
 extern CBaseEntity* Dml_ShootClusterGrenade(entvars_t* pevOwner, Vector vecStart, Vector vecVelocity, float flDamage);
 
+class CMantaShip;
+
 class CChopper : public CBaseMonster
 {
 public:
@@ -66,6 +68,8 @@ public:
 	const char* CustomGibModel() override { return "models/choppergibs.mdl"; }
 
 private:
+	friend class CMantaShip;
+
 	void SteerFlight();
 	void SmokeThink();
 	bool AimAndFire();
@@ -524,14 +528,14 @@ public:
 	static TYPEDESCRIPTION m_SaveData[];
 
 private:
-	int m_iBombsRemaining = 0;
+	int m_iBombsDropped = 0;
 	float m_flNextBomb = 0.0f;
 };
 LINK_ENTITY_TO_CLASS(monster_manta, CMantaShip);
 
 TYPEDESCRIPTION CMantaShip::m_SaveData[] =
 {
-	DEFINE_FIELD(CMantaShip, m_iBombsRemaining, FIELD_INTEGER),
+	DEFINE_FIELD(CMantaShip, m_iBombsDropped, FIELD_INTEGER),
 	DEFINE_FIELD(CMantaShip, m_flNextBomb, FIELD_TIME),
 };
 IMPLEMENT_SAVERESTORE(CMantaShip, CChopper);
@@ -549,7 +553,7 @@ void CMantaShip::Spawn()
 	pev->takedamage = DAMAGE_NO;
 	UTIL_SetSize(pev, Vector(-96, -96, 0), Vector(96, 96, 96));
 	UTIL_SetOrigin(pev, pev->origin);
-	m_iBombsRemaining = 0;
+	m_iBombsDropped = 0;
 	m_flNextBomb = 0.0f;
 	m_pGoalEnt = UTIL_FindEntityByTargetname(nullptr, STRING(pev->target));
 	if (m_pGoalEnt)
@@ -571,19 +575,15 @@ void CMantaShip::Precache()
 
 void CMantaShip::DropBomb(CBaseEntity* pActivator, CBaseEntity* pCaller, USE_TYPE useType, float value)
 {
-	m_iBombsRemaining = 3;
+	m_iBombsDropped = 0;
 	m_flNextBomb = gpGlobals->time;
 }
 
 void CMantaShip::MantaThink()
 {
-	// Retain the proven CChopper flight lifecycle; the retail Manta has a
-	// separate waypoint/banking solver, but shares the base class and its
-	// damage/death behavior. The use-triggered carpet-bomb state is separate.
-	CChopper::HuntThink();
-	EMIT_SOUND_DYN(ENT(pev), CHAN_STATIC, "manta/manta_idle2.wav", 1.0f, 0.3f, 0, 100);
-
-	if (m_iBombsRemaining > 0 && gpGlobals->time >= m_flNextBomb)
+	// Retail DropBomb resets the dropped count and starts a time gate. MantaThink
+	// emits one bomb after the deadline, then repeats twice at 0.5-second steps.
+	if (m_flNextBomb != 0.0f && gpGlobals->time > m_flNextBomb)
 	{
 		CBaseEntity* pBomb = CBaseEntity::Create("grenade_mantabomb", pev->origin, pev->angles, edict());
 		if (pBomb)
@@ -591,7 +591,103 @@ void CMantaShip::MantaThink()
 			pBomb->pev->owner = edict();
 			pBomb->pev->velocity = pev->velocity;
 		}
-		--m_iBombsRemaining;
-		m_flNextBomb = gpGlobals->time + 0.25f;
+		++m_iBombsDropped;
+		m_flNextBomb = m_iBombsDropped < 3 ? gpGlobals->time + 0.5f : 0.0f;
 	}
+	EMIT_SOUND_DYN(ENT(pev), CHAN_STATIC, "manta/manta_idle2.wav", 1.0f, 0.3f,
+		SND_CHANGE_PITCH | SND_CHANGE_VOL, 100);
+	pev->nextthink = gpGlobals->time + 0.1f;
+
+	// Retail MantaThink resolves and follows its own target chain. It does not
+	// call CChopper::HuntThink (which scans for enemies and fires the chopper gun).
+	if (!m_pGoalEnt && !FStringNull(pev->target))
+	{
+		SetGoal(UTIL_FindEntityByTargetname(nullptr, STRING(pev->target)));
+		if (m_pGoalEnt)
+		{
+			Vector toGoal = m_pGoalEnt->pev->origin - pev->origin;
+			if (toGoal.Length() == 0.0f)
+				toGoal = Vector(0, 0, 1);
+			else
+				toGoal = toGoal.Normalize();
+			pev->velocity = toGoal * 300.0f;
+			pev->angles.y = UTIL_VecToAngles(pev->origin - m_pGoalEnt->pev->origin).y + 180.0f;
+		}
+	}
+
+	if (m_flSpeedAccum < 600.0f)
+		m_flSpeedAccum += 10.0f;
+
+	float flDistance = (pev->origin - m_vecGoal).Length();
+	if (!m_pGoalEnt)
+	{
+		m_vecGoal = pev->origin;
+	}
+	else if (flDistance < 128.0f)
+	{
+		SetGoal(UTIL_FindEntityByTargetname(nullptr, STRING(m_pGoalEnt->pev->target)));
+		if (m_pGoalEnt)
+		{
+			flDistance = (pev->origin - m_vecGoal).Length();
+			Vector toGoal = m_pGoalEnt->pev->origin - pev->origin;
+			if (toGoal.Length() == 0.0f)
+				toGoal = Vector(0, 0, 1);
+			else
+				toGoal = toGoal.Normalize();
+			pev->velocity = toGoal * 300.0f;
+		}
+	}
+
+	if (flDistance <= 250.0f)
+	{
+		m_vecDesiredDir = m_vecGoalDir;
+	}
+	else
+	{
+		bool bUseLastPosition = false;
+		if (gpGlobals->time < m_flLastSeen + 90.0f)
+		{
+			Vector toGoal = m_vecGoal - pev->origin;
+			Vector toLastPosition = m_vecLastEnemyPos - pev->origin;
+			if (toGoal.Length() != 0.0f)
+				toGoal = toGoal.Normalize();
+			if (toLastPosition.Length() != 0.0f)
+				toLastPosition = toLastPosition.Normalize();
+			if (DotProduct(toLastPosition, toGoal) > 0.25f)
+			{
+				m_vecDesiredDir = toLastPosition;
+				bUseLastPosition = true;
+			}
+		}
+		if (!bUseLastPosition)
+		{
+			Vector toGoal = m_vecGoal - pev->origin;
+			if (toGoal.Length() != 0.0f)
+				toGoal = toGoal.Normalize();
+			m_vecDesiredDir = toGoal;
+		}
+	}
+
+	if (!m_pGoalEnt)
+		return;
+
+	float flTargetYaw = UTIL_VecToAngles(pev->origin - m_pGoalEnt->pev->origin).y + 180.0f;
+	if (pev->angles.y < 0.0f)
+		pev->angles.y *= -1.0f;
+	const float flYawDelta = std::fabs(pev->angles.y - flTargetYaw);
+	if (flYawDelta > 165.0f)
+	{
+		pev->angles.y = flTargetYaw;
+		return;
+	}
+	if (flYawDelta > 100.0f)
+		pev->avelocity.y = pev->angles.y < flTargetYaw ? 120.0f : -100.0f;
+	else if (flYawDelta > 40.0f)
+		pev->avelocity.y = pev->angles.y < flTargetYaw ? 37.0f : -37.0f;
+	else if (flYawDelta > 15.0f)
+		pev->avelocity.y = pev->angles.y < flTargetYaw ? 12.0f : -12.0f;
+	else if (flYawDelta > 5.0f)
+		pev->avelocity.y = pev->angles.y < flTargetYaw ? 1.0f : -1.0f;
+	else
+		pev->avelocity = g_vecZero;
 }

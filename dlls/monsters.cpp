@@ -552,11 +552,11 @@ void CBaseMonster::MonsterThink()
 			CBaseEntity* pEnemy = m_hEnemy;
 			const char* pszSchedule = m_pSchedule && m_pSchedule->pName ? m_pSchedule->pName : "<none>";
 			ALERT(at_console,
-				"dbg_monsters #%d %s class=%d alpha=%.0f enemy=%s#%d cine=%d state=%d schedule=%s task=%d health=%.0f origin=(%.0f %.0f %.0f) route=%d waypoint=(%.0f %.0f %.0f)\n",
+				"dbg_monsters #%d %s class=%d alpha=%.0f enemy=%s#%d cine=%d state=%d activity=%d framerate=%.2f schedule=%s task=%d health=%.0f origin=(%.0f %.0f %.0f) route=%d waypoint=(%.0f %.0f %.0f)\n",
 				entityIndex, STRING(pev->classname), Classify(), pev->renderamt,
 				pEnemy ? STRING(pEnemy->pev->classname) : "<none>",
 				pEnemy ? ENTINDEX(pEnemy->edict()) : 0, m_pCine != nullptr,
-				m_MonsterState, pszSchedule, m_iScheduleIndex, pev->health,
+				m_MonsterState, m_Activity, pev->framerate, pszSchedule, m_iScheduleIndex, pev->health,
 				pev->origin.x, pev->origin.y, pev->origin.z, m_iRouteIndex,
 				m_iRouteIndex >= 0 && m_iRouteIndex < ROUTE_SIZE ? m_Route[m_iRouteIndex].vecLocation.x : 0.0f,
 				m_iRouteIndex >= 0 && m_iRouteIndex < ROUTE_SIZE ? m_Route[m_iRouteIndex].vecLocation.y : 0.0f,
@@ -1864,10 +1864,20 @@ bool CBaseMonster::FTriangulate(const Vector& vecStart, const Vector& vecEnd, fl
 				{
 					const float lateralOffset = hullWidth * (2.5f + width * 1.5f);
 					const Vector candidate = vecStart + routeForward * forwardOffset + routeLateral * (sideSign * lateralOffset);
-					if (CheckLocalMove(vecStart, candidate, pTargetEnt, NULL) != LOCALMOVE_VALID)
+					const int firstMove = CheckLocalMove(vecStart, candidate, pTargetEnt, NULL);
+					if (firstMove != LOCALMOVE_VALID)
+					{
+						if (g_bDbgRouteProbe)
+							DBG_LOG("ROUTE_PROBE expanded reject-start depth=%d side=%d width=%d move=%d candidate=(%.1f %.1f %.1f)", depth, side, width, firstMove, candidate.x, candidate.y, candidate.z);
 						continue;
-					if (CheckLocalMove(candidate, vecFarSide, pTargetEnt, NULL) != LOCALMOVE_VALID)
+					}
+					const int secondMove = CheckLocalMove(candidate, vecFarSide, pTargetEnt, NULL);
+					if (secondMove != LOCALMOVE_VALID)
+					{
+						if (g_bDbgRouteProbe)
+							DBG_LOG("ROUTE_PROBE expanded reject-end depth=%d side=%d width=%d move=%d candidate=(%.1f %.1f %.1f) far=(%.1f %.1f %.1f)", depth, side, width, secondMove, candidate.x, candidate.y, candidate.z, vecFarSide.x, vecFarSide.y, vecFarSide.z);
 						continue;
+					}
 
 					if (pApex)
 						*pApex = candidate;

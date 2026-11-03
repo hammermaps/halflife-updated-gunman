@@ -117,8 +117,8 @@ LINK_ENTITY_TO_CLASS(ammo_dmlsingle, CDMLSingleAmmo);
 // @0x10101530, Spawn @0x100b5760, Precache @0x100b5730, ShotTouch
 // @0x100b5af0 (already named in the binary's own symbol table).
 // Confirmed: sprite "sprites/bitboltsmall.spr", bbox
-// (-1,-1,-1)/(1,1,1), MOVETYPE_FLY, SOLID_BBOX, kRenderGlow-style
-// rendermode, takedamage=DAMAGE_NO. ShotTouch confirmed: ignores
+// (-1,-1,-1)/(1,1,1), MOVETYPE_FLY, SOLID_BBOX, kRenderTransAdd,
+// renderamt=255, scale=0.5, takedamage=DAMAGE_NO. ShotTouch confirmed: ignores
 // same-team/self hits, plays a world-impact sound
 // ("RustBit_Projectile2.wav") plus a bullet-hole decal on a static
 // hit, or deals skill-scaled damage via TakeDamage on a living target
@@ -155,8 +155,15 @@ void CRustbitShot::Spawn()
 
 	pev->movetype = MOVETYPE_FLY;
 	pev->solid = SOLID_BBOX;
-	pev->rendermode = kRenderGlow;
+	// Keep the additive blend so the sprite's indexed black background stays
+	// transparent. The brighter source palette and larger scale make the shot
+	// readable against dark floor and wall textures.
+	pev->rendermode = kRenderTransAdd;
 	pev->renderamt = 255;
+	// Additive rendering has no extra opacity above renderamt=255. The sprite
+	// palette is brightened as well, and this larger scale keeps the fast shot
+	// visible against both dark and bright map surfaces.
+	pev->scale = 3.0f;
 	pev->takedamage = DAMAGE_NO;
 
 	SetTouch(&CRustbitShot::ShotTouch);
@@ -394,9 +401,9 @@ public:
 	int MonsterProfile() override { return 12; } // retail slot 59
 	int IRelationship(CBaseEntity* pTarget) override
 	{
-		// User-requested gameplay exception: Retail ignores class-13 Xenomes
-		// while they spawn invisible, so Rustbits never acquire them. Keep the
-		// exception scoped to Xenomes; all other relationships use Retail data.
+		// User-requested gameplay exception: hostile Rustbits treat Xenomes as
+		// enemies while they are invisible (class 13). Keep this scoped to
+		// Xenomes; all other relationships use Retail data.
 		if (pTarget && FClassnameIs(pTarget->pev, "monster_xenome"))
 			return R_DL;
 		return CBaseMonster::IRelationship(pTarget);
@@ -870,6 +877,9 @@ public:
 	// Retail @0x100c0c20 / @0x100c0c80.
 	bool CheckMeleeAttack1(float flDot, float flDist) override;
 	bool CheckMeleeAttack2(float flDot, float flDist) override;
+	// Retail vtable slot 62 (@0x100c0cd0): base RunAI followed by
+	// opponent-distance scaling while the current activity is ACT_RUN.
+	void RunAI() override;
 	// Retail @0x100c0ba0 (events 4..7, 9 -> @0x100c09c0) and CBeak::LeapTouch @0x100c0860.
 	void HandleAnimEvent(MonsterEvent_t* pEvent) override;
 	void EXPORT LeapTouch(CBaseEntity* pOther);
@@ -883,7 +893,8 @@ private:
 	float m_flLeapReady = 0; // Retail +0x2b4; set to "now" in Spawn, time + 3 after a leap
 	float m_flVoiceTime = 0; // Retail +0x2b0, roar/eat sound cooldown
 	bool m_bHungry = true;	 // Retail +0x2ac
-	int m_iVoicePitch = 60;	 // Retail +0x2a8 = 60 - (int)bite damage
+	int m_iVoicePitch = 60;	 // Retail +0x2a8; derived from the Spawn random sample.
+	float m_flStrength = 0;	 // Retail +0x2b8; run-animation range seed
 	EHANDLE m_hFood;		 // Retail +0x270 (no writer found; stays empty)
 	void PlayVoice(int iSound);
 	void Melee(float flReach, float flDamage);
@@ -906,12 +917,13 @@ public:
 };
 LINK_ENTITY_TO_CLASS(monster_beak, CBeak);
 
-// Retail's three confirmed Beak save descriptors map to the existing timers
-// and voice-pitch state. The other three Retail descriptors remain unmapped.
+// Four Retail Beak descriptors map to the timers, voice pitch, and Spawn seed.
+// m_iRelaxed and the type-inconsistent m_fStam descriptor remain unmapped.
 TYPEDESCRIPTION CBeak::m_SaveData[] = {
 	DEFINE_FIELD(CBeak, m_flLeapReady, FIELD_TIME),
 	DEFINE_FIELD(CBeak, m_flVoiceTime, FIELD_TIME),
 	DEFINE_FIELD(CBeak, m_iVoicePitch, FIELD_INTEGER),
+	DEFINE_FIELD(CBeak, m_flStrength, FIELD_FLOAT),
 };
 IMPLEMENT_SAVERESTORE(CBeak, CBaseMonster);
 
@@ -927,7 +939,11 @@ void CBeak::Spawn()
 	m_flLeapReady = gpGlobals->time;
 	m_flVoiceTime = gpGlobals->time;
 	m_bHungry = true;
-	m_iVoicePitch = 60 - (int)gSkillData.beakBiteDamage;
+	// Retail samples +0x2b8 with RANDOM_FLOAT(0, 1); Slot 62 uses its
+	// complement at +0x2bc to scale the run animation's distance range.
+	// Retail also derives voice pitch from this same sample: 60 - int(seed * -15).
+	m_flStrength = RANDOM_FLOAT(0.0f, 1.0f);
+	m_iVoicePitch = 60 - static_cast<int>(m_flStrength * -15.0f);
 	pev->view_ofs = Vector(0, 0, 40);
 
 	m_afCapability |= bits_CAP_MELEE_ATTACK1;
@@ -935,6 +951,23 @@ void CBeak::Spawn()
 	MonsterInit();
 	// Retail CBeak::Spawn @ 0x100c1af0 restores this after MonsterInit().
 	pev->view_ofs = Vector(0, 0, 40);
+}
+
+void CBeak::RunAI()
+{
+	CBaseMonster::RunAI();
+
+	if (m_Activity != ACT_RUN || m_hEnemy == nullptr)
+		return;
+
+	// Retail Slot 62 gets the target point through enemy vtable slot 51,
+	// measures horizontal distance from the Beak origin, and only changes
+	// framerate while inside the randomized 400..800 unit range.
+	const Vector vecTarget = m_hEnemy->BodyTarget(pev->origin);
+	const float flDistance = (vecTarget - pev->origin).Length2D();
+	const int iRange = static_cast<int>((1.0f - m_flStrength) * 400.0f + 400.0f);
+	if (flDistance < iRange && iRange > 0)
+		pev->framerate = (iRange - flDistance) / iRange + 1.0f;
 }
 
 void CBeak::SetYawSpeed()

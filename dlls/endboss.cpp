@@ -413,12 +413,11 @@ void CEndBoss::Spawn()
 	// its authored 300-unit eye height after the model-derived init step.
 	pev->view_ofs = Vector(0, 0, 300);
 	// Retail Spawn @0x100d64d0 setzt nach MonsterInit das Sichtfeld auf -1.0
-	// (Rundumsicht, 0xbf800000). Offen: Retail schreibt ausserdem +0x244 = 4096.0
-	// (Sichtweite/Fern-Distanz, SDK-Feld nicht eindeutig zuordenbar) und
-	// mehrere Zeitfelder auf gpGlobals->time.
+	// (Rundumsicht, 0xbf800000). Das Retail-Basisfeld +0x244 entspricht
+	// m_flDistTooFar (Gunner-Abgleich, findings/entities/gunner_friendly_2026-10-31.md).
 	m_flFieldOfView = -1.0f;
 	m_flNextKata = m_flNextRocket = m_flNextSpecial = gpGlobals->time;
-	m_flDistTooFar = 4096.0f; // Retail +0x244 (m_flDistTooFar, Abgleich 2026-10-31)
+	m_flDistTooFar = 4096.0f; // Retail Spawn setzt das gemeinsame Basisfeld +0x244.
 }
 
 // Retail custom schedule type 0x2e, table @0x1012f9b0 "Special Machinegun Attack".

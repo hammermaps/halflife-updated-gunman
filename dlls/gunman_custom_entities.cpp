@@ -3631,7 +3631,7 @@ void CDecoreSittingTubeMortar::PlayerTouch(CBaseEntity* pOther)
 void CDecoreSittingTubeMortar::Spawn()
 {
 	Precache();
-	SET_MODEL(ENT(pev), STRING(pev->model));
+	SET_MODEL(ENT(pev), "models/tubemortar.mdl");
 	InitDecore();
 	UTIL_SetSize(pev, Vector(-16, -16, -16), Vector(16, 16, 48));
 	pev->sequence = LookupSequence("standing");

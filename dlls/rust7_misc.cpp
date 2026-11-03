@@ -35,11 +35,11 @@
 //     established random_speaker/player_speaker sentence-group
 //     idiom).
 //
-// Current limits (2026-11-02): CXenome's target-direction branch and leap
-// vector are now matched to Retail, but some Touch follow-up remains open.
-// Its broader AI schedule is also not fully ported. CAiWallPlug still uses a
-// simplified toggle-and-fire-targets Use() pending its exact sentence-group
-// and state transition mapping.
+// Current limits (2026-11-03): CXenome's combat dispatch and secondary jump-
+// melee schedule are ported from Retail, but natural activation and some Touch
+// follow-up remain open. Its target-bound roar/squad branch is unresolved.
+// CAiWallPlug still uses a simplified toggle-and-fire-targets Use() pending
+// its exact sentence-group and state transition mapping.
 //=========================================================
 
 #include "extdll.h"
@@ -133,6 +133,23 @@ void CXenomeShot::TouchShot(CBaseEntity* pOther)
 //=========================================================
 // monster_xenome - CXenome ("Emperor Xenome").
 //=========================================================
+static Task_t tlXenomeSecondaryJumpMelee[] =
+{
+	{TASK_SET_FAIL_SCHEDULE, SCHED_CHASE_ENEMY_FAILED},
+	{TASK_FACE_ENEMY, 0},
+	{TASK_STOP_MOVING, 0},
+	{TASK_SET_SCHEDULE, SCHED_FAIL},
+	{TASK_SET_SCHEDULE, SCHED_MELEE_ATTACK1},
+};
+static Schedule_t slXenomeSecondaryJumpMelee =
+{
+	tlXenomeSecondaryJumpMelee,
+	ARRAYSIZE(tlXenomeSecondaryJumpMelee),
+	0,
+	0,
+	"Beak Secondary Jump-Melee",
+};
+
 class CXenome : public CBaseMonster
 {
 public:
@@ -143,6 +160,8 @@ public:
 	void Spawn() override;
 	void Precache() override;
 	void HandleAnimEvent(MonsterEvent_t* pEvent) override;
+	Schedule_t* GetSchedule() override;
+	Schedule_t* GetScheduleOfType(int Type) override;
 	void EXPORT LeapTouch(CBaseEntity* pOther);
 	int Classify() override
 	{
@@ -161,10 +180,16 @@ public:
 	// while the Xenome sees its enemy and that enemy faces it.
 	bool CheckMeleeAttack2(float flDot, float flDist) override
 	{
-		(void)flDot;
-		(void)flDist;
-		return gpGlobals->time >= m_flNextJump &&
+		const bool bReady = gpGlobals->time >= m_flNextJump &&
 			HasAllConditions(bits_COND_SEE_ENEMY | bits_COND_ENEMY_FACING_ME);
+		if (m_hEnemy && m_MonsterState == MONSTERSTATE_COMBAT)
+		{
+			DBG_LOG("XENOME %d CheckMeleeAttack2 ready=%d see=%d enemy-facing=%d cooldown=%d dist=%.1f dot=%.2f",
+				ENTINDEX(edict()), bReady, HasConditions(bits_COND_SEE_ENEMY),
+				HasConditions(bits_COND_ENEMY_FACING_ME), gpGlobals->time >= m_flNextJump,
+				flDist, flDot);
+		}
+		return bReady;
 	}
 	// CORRECTION (2026-09-05): missing SetYawSpeed() override, same
 	// root cause/fix as CFriendlyGunman (human_gunman.cpp) - see
@@ -192,6 +217,48 @@ private:
 	int m_iVoicePitch = PITCH_NORM;
 };
 LINK_ENTITY_TO_CLASS(monster_xenome, CXenome);
+
+Schedule_t* CXenome::GetSchedule()
+{
+	if (m_MonsterState == MONSTERSTATE_COMBAT && !HasConditions(bits_COND_ENEMY_DEAD))
+	{
+		if (HasConditions(bits_COND_LIGHT_DAMAGE | bits_COND_HEAVY_DAMAGE) &&
+			RANDOM_LONG(0, 99) < 10)
+		{
+			// Retail routes both 0x11 and 0x2c to the same Small Flinch record.
+			const int iFlinchType = RANDOM_LONG(0, 99) < 30 ? 0x11 : 0x2c;
+			return GetScheduleOfType(iFlinchType);
+		}
+
+		if (HasConditions(bits_COND_LIGHT_DAMAGE | bits_COND_HEAVY_DAMAGE) &&
+			HasConditions(bits_COND_CAN_MELEE_ATTACK2))
+			return GetScheduleOfType(SCHED_MELEE_ATTACK2);
+
+		if (HasConditions(bits_COND_CAN_MELEE_ATTACK1))
+			return GetScheduleOfType(SCHED_MELEE_ATTACK1);
+
+		if (HasConditions(bits_COND_CAN_MELEE_ATTACK2))
+		{
+			DBG_LOG("XENOME %d selects secondary jump-melee, see=%d facing=%d cooldown-ready=%d",
+				ENTINDEX(edict()), HasConditions(bits_COND_SEE_ENEMY),
+				HasConditions(bits_COND_ENEMY_FACING_ME), gpGlobals->time >= m_flNextJump);
+			return GetScheduleOfType(SCHED_MELEE_ATTACK2);
+		}
+	}
+
+	return CBaseMonster::GetSchedule();
+}
+
+Schedule_t* CXenome::GetScheduleOfType(int Type)
+{
+	if (Type == SCHED_MELEE_ATTACK2)
+	{
+		DBG_LOG("XENOME %d enters secondary jump-melee schedule", ENTINDEX(edict()));
+		return &slXenomeSecondaryJumpMelee;
+	}
+
+	return CBaseMonster::GetScheduleOfType(Type);
+}
 
 TYPEDESCRIPTION CXenome::m_SaveData[] =
 {

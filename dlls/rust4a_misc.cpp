@@ -84,6 +84,7 @@
 class CAnimeRocket : public CGrenade
 {
 public:
+	static CAnimeRocket* CreateForGunner(CBaseEntity* pOwner, CBaseEntity* pEnemy, const Vector& vecSpawnOrigin);
 	void Spawn() override;
 	void Precache() override;
 	bool Save(CSave& save) override;
@@ -124,9 +125,39 @@ void CAnimeRocket::Spawn()
 	pev->solid = SOLID_BBOX;
 	pev->movetype = MOVETYPE_FLY;
 	pev->dmg = gSkillData.rustgunnerRocketDamage;
+	if (m_hEnemy)
+	{
+		// Retail CAnimeRocket::Spawn builds a point in front of the enemy,
+		// with independent lateral/up offsets, then aims the 500 u/s launch
+		// vector at that point. The caller sets the final rocket origin after
+		// Spawn, matching the retail constructor order.
+		UTIL_MakeVectors(m_hEnemy->pev->angles);
+		const float flUpOffset = RANDOM_FLOAT(0.0f, 40.0f) - 20.0f;
+		const float flRightOffset = RANDOM_FLOAT(0.0f, 30.0f) - 15.0f;
+		const Vector vecAimPoint = m_hEnemy->pev->origin + gpGlobals->v_forward * 64.0f +
+			gpGlobals->v_right * flRightOffset + gpGlobals->v_up * flUpOffset;
+		pev->velocity = (vecAimPoint - pev->origin).Normalize() * 500.0f;
+		pev->angles = UTIL_VecToAngles(pev->velocity);
+	}
 	SetTouch(&CAnimeRocket::RocketTouch);
 	SetThink(&CAnimeRocket::IgniteThink);
 	pev->nextthink = gpGlobals->time + 0.1f;
+}
+
+CAnimeRocket* CAnimeRocket::CreateForGunner(CBaseEntity* pOwner, CBaseEntity* pEnemy, const Vector& vecSpawnOrigin)
+{
+	if (!pOwner || !pEnemy)
+		return nullptr;
+
+	// Retail sets owner/target before virtual Spawn(), then applies the
+	// randomized attachment origin after Spawn() has calculated velocity.
+	CAnimeRocket* pRocket = GetClassPtr(static_cast<CAnimeRocket*>(nullptr));
+	pRocket->pev->classname = MAKE_STRING("anime_rocket");
+	pRocket->pev->owner = pOwner->edict();
+	pRocket->m_hEnemy = pEnemy;
+	DispatchSpawn(pRocket->edict());
+	UTIL_SetOrigin(pRocket->pev, vecSpawnOrigin);
+	return pRocket;
 }
 
 
@@ -987,6 +1018,25 @@ void CGunner::FireRocket(int iAttachment, bool bRunAISalvo)
 	Vector vecSrc, vecAngles;
 	GetAttachment(iAttachment, vecSrc, vecAngles);
 
+	// Retail randomizes the launch point in the gunner's local right/up axes:
+	// four choices at +/-10 units and one unchanged point.
+	UTIL_MakeVectors(pev->angles);
+	switch (RANDOM_LONG(0, 4) % 5)
+	{
+	case 0:
+		vecSrc = vecSrc + gpGlobals->v_right * 10.0f;
+		break;
+	case 1:
+		vecSrc = vecSrc - gpGlobals->v_right * 10.0f;
+		break;
+	case 2:
+		vecSrc = vecSrc + gpGlobals->v_up * 10.0f;
+		break;
+	case 3:
+		vecSrc = vecSrc - gpGlobals->v_up * 10.0f;
+		break;
+	}
+
 	// RunAI's retail slot-140 path emits this launch cue before the muzzle
 	// effect. The animation-event helper omits this sound.
 	if (bRunAISalvo)
@@ -1004,17 +1054,7 @@ void CGunner::FireRocket(int iAttachment, bool bRunAISalvo)
 	WRITE_BYTE(16);
 	MESSAGE_END();
 
-	Vector vecDir = (m_hEnemy->pev->origin - vecSrc).Normalize();
-
-	CBaseEntity* pRocket = CBaseEntity::Create("anime_rocket", vecSrc, UTIL_VecToAngles(vecDir), edict());
-	if (pRocket)
-	{
-		// Retail constructs CAnimeRocket with the current enemy handle and a
-		// 500 u/s launch vector; IgniteThink starts the steering phase later.
-		auto* pAnimeRocket = static_cast<CAnimeRocket*>(pRocket);
-		pAnimeRocket->m_hEnemy = m_hEnemy;
-		pRocket->pev->velocity = vecDir * 500.0f;
-	}
+	CAnimeRocket::CreateForGunner(this, m_hEnemy, vecSrc);
 }
 
 //=========================================================

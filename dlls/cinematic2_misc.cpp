@@ -280,9 +280,9 @@ public:
 	Schedule_t* GetScheduleOfType(int Type) override;
 	int IRelationship(CBaseEntity* pTarget) override
 	{
-		// User-requested gameplay exception: Retail ignores class-13 Xenomes
-		// while they spawn invisible, so Rustbots never acquire them. Keep the
-		// exception scoped to Xenomes; all other relationships use Retail data.
+		// User-requested gameplay exception: hostile Rustbots treat Xenomes as
+		// enemies while they are invisible (class 13). Keep this scoped to
+		// Xenomes; all other relationships use Retail data.
 		if (pTarget && FClassnameIs(pTarget->pev, "monster_xenome"))
 		{
 			return R_DL;
@@ -327,7 +327,9 @@ private:
 	CSprite* m_pBeamEnd = nullptr;
 	bool m_bBorg = true; // Retail +0x2e8; initial Borg schedule until first damage.
 	float m_flLastEnemyVisible = 0;
-	float m_flBeamCharge = 0; // Retail +0x2d0; transient beam-effect charge.
+	float m_flFrustration = 0; // Retail m_fFrustration; drives beam-charge effects.
+	float m_flChangeFrustration = 0; // Retail m_tChangeFrustration; initialized to gpGlobals->time.
+	int m_iHeadTurn = 0; // Retail descriptor +0x2cc; Spawn initializes to zero.
 };
 LINK_ENTITY_TO_CLASS(monster_rustbot, CRustbot);
 
@@ -338,6 +340,9 @@ TYPEDESCRIPTION CRustbot::m_SaveData[] =
 	DEFINE_FIELD(CRustbot, m_pBeamEnd, FIELD_CLASSPTR),
 		DEFINE_FIELD(CRustbot, m_bBorg, FIELD_BOOLEAN),
 		DEFINE_FIELD(CRustbot, m_flLastEnemyVisible, FIELD_TIME),
+		DEFINE_FIELD(CRustbot, m_flFrustration, FIELD_FLOAT),
+		DEFINE_FIELD(CRustbot, m_flChangeFrustration, FIELD_TIME),
+		DEFINE_FIELD(CRustbot, m_iHeadTurn, FIELD_INTEGER),
 };
 
 IMPLEMENT_SAVERESTORE(CRustbot, CBaseMonster);
@@ -488,17 +493,17 @@ Schedule_t* CRustbot::GetSchedule()
 void CRustbot::PrescheduleThink()
 {
 	// Retail slot 117 updates +0x29c while an enemy is visible and advances the
-	// transient +0x2d0 beam-charge effect while it is active.
+	// +0x2d0 m_fFrustration beam-charge effect while it is active.
 	if (m_hEnemy && HasConditions(bits_COND_SEE_ENEMY))
 		m_flLastEnemyVisible = gpGlobals->time;
-	if (m_flBeamCharge < 0)
-		m_flBeamCharge = 0;
-	else if (m_flBeamCharge >= 10)
-		m_flBeamCharge = 10;
+	if (m_flFrustration < 0)
+		m_flFrustration = 0;
+	else if (m_flFrustration >= 10)
+		m_flFrustration = 10;
 
-	if (m_flBeamCharge >= 5)
+	if (m_flFrustration >= 5)
 	{
-		float flRateAdjust = m_flBeamCharge * 0.1f;
+		float flRateAdjust = m_flFrustration * 0.1f;
 		if (flRateAdjust > 0.7f)
 			flRateAdjust = 0.7f;
 		pev->framerate = 1.2f + flRateAdjust;
@@ -522,6 +527,8 @@ void CRustbot::Spawn()
 		RANDOM_FLOAT(0, gSkillData.rustbotHealth) * (gSkillData.percentRandomHealth * 0.01f);
 	pev->view_ofs = Vector(0, 0, 40);
 	m_bBorg = true;
+	m_flChangeFrustration = gpGlobals->time;
+	m_iHeadTurn = 0;
 
 	MonsterInit();
 
@@ -628,7 +635,7 @@ void CRustbot::Melee()
 void CRustbot::BeamOn()
 {
 	BeamOff();
-	m_flBeamCharge += 2;
+	m_flFrustration += 2;
 	CreateRustbotSparkShowers(pev, 5);
 
 	MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, pev->origin);
@@ -761,7 +768,7 @@ void CRustbot::BeamThink()
 		if (pHit && pHit->pev->takedamage != DAMAGE_NO)
 		{
 			if (pHit->IsAlive())
-				m_flBeamCharge -= 0.1f;
+				m_flFrustration -= 0.1f;
 			pHit->TakeDamage(pev, pev, gSkillData.rustbotLongDamage, DMG_ENERGYBEAM);
 		}
 

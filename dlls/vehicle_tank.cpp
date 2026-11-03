@@ -213,6 +213,7 @@ public:
 	CBaseEntity* m_pDriver = nullptr;
 	float m_flChassisSpeed = 0;
 	float m_flChassisTurnRate = 0;
+	float m_flNextDriveUpdate = 0;
 	float m_flNextChassisFire = 0;
 	float m_flNextRocketFire = 0;
 	float m_flNextJumpCheck = 0;
@@ -235,6 +236,7 @@ TYPEDESCRIPTION CVehicleTank::m_SaveData[] =
 	DEFINE_FIELD(CVehicleTank, m_pDriver, FIELD_CLASSPTR),
 	DEFINE_FIELD(CVehicleTank, m_flChassisSpeed, FIELD_FLOAT),
 	DEFINE_FIELD(CVehicleTank, m_flChassisTurnRate, FIELD_FLOAT),
+	DEFINE_FIELD(CVehicleTank, m_flNextDriveUpdate, FIELD_TIME),
 	DEFINE_FIELD(CVehicleTank, m_flNextChassisFire, FIELD_TIME),
 	DEFINE_FIELD(CVehicleTank, m_flNextRocketFire, FIELD_TIME),
 	DEFINE_FIELD(CVehicleTank, m_flNextJumpCheck, FIELD_TIME),
@@ -389,6 +391,7 @@ void CVehicleTank::Use(CBaseEntity* pActivator, CBaseEntity* pCaller, USE_TYPE u
 
 	m_flChassisSpeed = 0;
 	m_flChassisTurnRate = 0;
+	m_flNextDriveUpdate = gpGlobals->time;
 	m_flNextJumpCheck = gpGlobals->time + 0.5f;
 
 	SetThink(&CVehicleTank::WithPlayerThink);
@@ -498,25 +501,53 @@ void CVehicleTank::WithPlayerThink()
 		s_flNextTankDebug = gpGlobals->time + 1.0f;
 	}
 
-	// Retail accelerates/decelerates rather than switching velocity instantly.
-	if (m_iFuelState != 2)
+	// Retail FUN_100997d0 updates drive inputs every 0.1 s: throttle changes
+	// speed by 40, coasts it toward zero by 25, and clamps at +/-250; steering
+	// changes turn rate by 15, coasts by 25, and clamps at +/-100. Keep the
+	// 0.02 s vehicle movement tick separate from that input cadence.
+	if (m_flNextDriveUpdate <= gpGlobals->time)
 	{
-		m_flChassisSpeed = 0;
-		m_flChassisTurnRate = 0;
-	}
-	else if (FBitSet(buttons, IN_FORWARD))
-		m_flChassisSpeed = V_min(240.0f, m_flChassisSpeed + 8.0f);
-	else if (FBitSet(buttons, IN_BACK))
-		m_flChassisSpeed = V_max(-160.0f, m_flChassisSpeed - 8.0f);
-	else
-		m_flChassisSpeed *= 0.88f;
+		m_flNextDriveUpdate = gpGlobals->time + 0.1f;
+		if (m_iFuelState == 2)
+		{
+			if (FBitSet(buttons, IN_FORWARD))
+				m_flChassisSpeed += 40.0f;
+			if (FBitSet(buttons, IN_BACK))
+				m_flChassisSpeed -= 40.0f;
 
-	if (m_iFuelState == 2 && FBitSet(buttons, IN_MOVELEFT))
-		m_flChassisTurnRate = V_max(-55.0f, m_flChassisTurnRate - 4.0f);
-	else if (m_iFuelState == 2 && FBitSet(buttons, IN_MOVERIGHT))
-		m_flChassisTurnRate = V_min(55.0f, m_flChassisTurnRate + 4.0f);
-	else
-		m_flChassisTurnRate *= 0.82f;
+			if (FBitSet(buttons, IN_MOVELEFT))
+				m_flChassisTurnRate += 15.0f;
+			if (FBitSet(buttons, IN_MOVERIGHT))
+				m_flChassisTurnRate -= 15.0f;
+		}
+		if (!FBitSet(buttons, IN_FORWARD | IN_BACK) || m_iFuelState < 2)
+		{
+			if (m_flChassisSpeed <= 25.0f)
+			{
+				if (-25.0f <= m_flChassisSpeed)
+					m_flChassisSpeed = 0;
+				else
+					m_flChassisSpeed += 25.0f;
+			}
+			else
+				m_flChassisSpeed -= 25.0f;
+		}
+		m_flChassisSpeed = V_max(-250.0f, V_min(250.0f, m_flChassisSpeed));
+
+		if (!FBitSet(buttons, IN_MOVELEFT | IN_MOVERIGHT) || m_iFuelState < 2)
+		{
+			if (m_flChassisTurnRate <= 25.0f)
+			{
+				if (-25.0f <= m_flChassisTurnRate)
+					m_flChassisTurnRate = 0;
+				else
+					m_flChassisTurnRate += 25.0f;
+			}
+			else
+				m_flChassisTurnRate -= 25.0f;
+		}
+		m_flChassisTurnRate = V_max(-100.0f, V_min(100.0f, m_flChassisTurnRate));
+	}
 
 	pev->angles.y = UTIL_AngleMod(pev->angles.y + m_flChassisTurnRate * 0.02f);
 	UTIL_MakeVectors(pev->angles);

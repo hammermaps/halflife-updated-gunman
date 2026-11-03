@@ -712,12 +712,21 @@ void ClientCommand(edict_t* pEntity)
 		float distanceToBlock = 0.0f;
 		const int localMove = pMonster->CheckLocalMove(pMonster->pev->origin, goal, nullptr, &distanceToBlock);
 		Vector apex = g_vecZero;
+		const int routeIndex = pMonster->m_iRouteIndex;
+		if (routeIndex < 0 || routeIndex >= ROUTE_SIZE)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "dbg_route: monster route index is invalid\n");
+			return;
+		}
+		const Vector oldFarSide = pMonster->m_Route[routeIndex].vecLocation;
+		pMonster->m_Route[routeIndex].vecLocation = goal;
 		g_bDbgRouteProbe = true;
 		g_bDbgRouteExpandedOnly = FStrEq(pcmd, "dbg_route_expanded");
 		const bool triangulated = localMove != LOCALMOVE_VALID && localMove != LOCALMOVE_INVALID_DONT_TRIANGULATE &&
 			pMonster->FTriangulate(pMonster->pev->origin, goal, distanceToBlock, nullptr, &apex);
 		g_bDbgRouteExpandedOnly = false;
 		g_bDbgRouteProbe = false;
+		pMonster->m_Route[routeIndex].vecLocation = oldFarSide;
 		ClientPrint(pev, HUD_PRINTCONSOLE,
 			UTIL_VarArgs("%s local=%d dist=%.0f triangulated=%d apex=(%.0f %.0f %.0f)\n",
 				pcmd, localMove, distanceToBlock, triangulated, apex.x, apex.y, apex.z));
@@ -748,12 +757,12 @@ void ClientCommand(edict_t* pEntity)
 				? pMonster->m_pSchedule->pName
 				: "<none>";
 			ClientPrint(pev, HUD_PRINTCONSOLE,
-				UTIL_VarArgs("dbg_monsters #%d %s class=%d alpha=%.0f enemy=%s#%d cine=%d state=%d schedule=%s task=%d health=%.0f origin=(%.0f %.0f %.0f) route=%d waypoint=(%.0f %.0f %.0f)\n",
+				UTIL_VarArgs("dbg_monsters #%d %s class=%d alpha=%.0f enemy=%s#%d cine=%d state=%d activity=%d framerate=%.2f schedule=%s task=%d health=%.0f origin=(%.0f %.0f %.0f) route=%d waypoint=(%.0f %.0f %.0f)\n",
 					ENTINDEX(pMonster->edict()), STRING(pMonster->pev->classname), pMonster->Classify(),
 					pMonster->pev->renderamt,
 					pEnemy ? STRING(pEnemy->pev->classname) : "<none>",
 					pEnemy ? ENTINDEX(pEnemy->edict()) : 0,
-					pMonster->m_pCine != nullptr, pMonster->m_MonsterState, pszSchedule,
+					pMonster->m_pCine != nullptr, pMonster->m_MonsterState, pMonster->m_Activity, pMonster->pev->framerate, pszSchedule,
 					pMonster->m_iScheduleIndex, pMonster->pev->health,
 					pMonster->pev->origin.x, pMonster->pev->origin.y, pMonster->pev->origin.z,
 					pMonster->m_iRouteIndex,
