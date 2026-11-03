@@ -165,9 +165,9 @@ public:
 	int m_iTrain;	// Train control position
 	bool m_fWeapon; // Set this to false to force a reset of the current weapon HUD info
 
-	EHANDLE m_pTank;		 // the tank which the player is currently controlling,  NULL if no tank
-	bool m_fHasTankGas = false; // Retail CBasePlayer+0x278; consumed by a dry vehicle_tank
-	bool m_fTankGasFlag279 = false; // Retail +0x279; cleared on tank exit, exact role unresolved
+	EHANDLE m_pTank;		 // currently controlled tank; Retail player save descriptor: FIELD_EHANDLE at +0x450
+	bool m_fHasTankGas = false; // Retail m_bGasTank, FIELD_BOOLEAN at player +0x278
+	bool m_fTankGasFlag279 = false; // transient Tank(3) HUD send cache at player +0x279; absent from Retail save descriptor
 	EHANDLE m_hViewEntity;	 // The view entity being used, or null if the player is using itself as the view entity
 	bool m_bResetViewEntity; //True if the player's view needs to be set back to the view entity
 	float m_fDeadTime;		 // the time at which the player died  (used in PlayerDeathThink())

@@ -33,11 +33,13 @@
 #include "ev_hldm.h"
 
 #include "r_efx.h"
+#include "triangleapi.h"
 #include "event_api.h"
 #include "event_args.h"
 #include "in_defs.h"
 
 #include <string.h>
+#include <math.h>
 
 #include "r_studioint.h"
 #include "com_model.h"
@@ -46,10 +48,142 @@ extern engine_studio_api_t IEngineStudio;
 
 static int tracerCount[MAX_PLAYERS];
 
+struct cluster_explosion_effect_t
+{
+	Vector origin;
+	float startTime;
+};
+
+static cluster_explosion_effect_t clusterExplosionEffects[32];
+static int clusterExplosionEffectCount;
+
 #include "pm_shared.h"
 
 void V_PunchAxis(int axis, float punch);
 void VectorAngles(const float* forward, float* angles);
+
+static void EV_ClusterExplosionBuildMesh(float vertices[202][3], int triangles[1200])
+{
+	const float pi = 3.14159265358979323846f;
+	vertices[0][0] = 0.0f; vertices[0][1] = 1.0f; vertices[0][2] = 0.0f;
+	vertices[1][0] = 0.0f; vertices[1][1] = -1.0f; vertices[1][2] = 0.0f;
+
+	for (int ring = 0; ring < 10; ++ring)
+	{
+		const float theta = (ring + 1) * (pi / 11.0f);
+		const float sinTheta = sinf(theta);
+		const float cosTheta = cosf(theta);
+		for (int segment = 0; segment < 20; ++segment)
+		{
+			const float phi = segment * (pi / 10.0f);
+			const int vertex = 2 + ring * 20 + segment;
+			vertices[vertex][0] = sinf(phi) * sinTheta;
+			vertices[vertex][1] = cosTheta;
+			vertices[vertex][2] = cosf(phi) * sinTheta;
+		}
+	}
+
+	int out = 0;
+	for (int segment = 0; segment < 20; ++segment)
+	{
+		triangles[out++] = 0;
+		triangles[out++] = 2 + segment;
+		triangles[out++] = 2 + ((segment + 1) % 20);
+	}
+	for (int ring = 0; ring < 9; ++ring)
+	{
+		for (int segment = 0; segment < 20; ++segment)
+		{
+			const int a = 2 + ring * 20 + segment;
+			const int b = a + 20;
+			const int c = 2 + ring * 20 + ((segment + 1) % 20);
+			const int d = c + 20;
+			triangles[out++] = a; triangles[out++] = b; triangles[out++] = c;
+			triangles[out++] = b; triangles[out++] = c; triangles[out++] = d;
+		}
+	}
+	for (int segment = 0; segment < 20; ++segment)
+	{
+		triangles[out++] = 1;
+		triangles[out++] = 182 + ((segment + 1) % 20);
+		triangles[out++] = 182 + segment;
+	}
+}
+
+void EV_ClusterExplosion(event_args_t* args)
+{
+	const int idx = args->entindex;
+	const int model = gEngfuncs.pEventAPI->EV_FindModelIndex("sprites/kaboom.spr");
+	gEngfuncs.pEfxAPI->R_Explosion(args->origin, model, 3.0f, 15.0f, 12);
+
+	const char* soundGroup = args->iparam2 == 0 ? "weapons/kaboom" : "manta/carpetbomb";
+	char soundName[64];
+	snprintf(soundName, sizeof(soundName), "%s%d.wav", soundGroup, gEngfuncs.pfnRandomLong(1, 3));
+	gEngfuncs.pEventAPI->EV_PlaySound(idx, args->origin, CHAN_AUTO, soundName, 1.0f, 0.8f, 0, PITCH_NORM);
+
+	if (clusterExplosionEffectCount == ARRAYSIZE(clusterExplosionEffects))
+	{
+		memmove(clusterExplosionEffects, clusterExplosionEffects + 1, sizeof(clusterExplosionEffects[0]) * (ARRAYSIZE(clusterExplosionEffects) - 1));
+		--clusterExplosionEffectCount;
+	}
+
+	cluster_explosion_effect_t& effect = clusterExplosionEffects[clusterExplosionEffectCount++];
+	effect.origin = args->origin;
+	effect.startTime = gEngfuncs.GetClientTime();
+}
+
+void EV_UpdateClusterExplosionEffects()
+{
+	static bool meshBuilt = false;
+	static float vertices[202][3];
+	static int triangles[1200];
+	static HSPRITE spriteHandle = 0;
+	if (!meshBuilt)
+	{
+		EV_ClusterExplosionBuildMesh(vertices, triangles);
+		meshBuilt = true;
+	}
+	if (spriteHandle == 0)
+		spriteHandle = gEngfuncs.pfnSPR_Load("sprites/fthrower.spr");
+	struct model_s* sprite = spriteHandle != 0 ? const_cast<struct model_s*>(gEngfuncs.GetSpritePointer(spriteHandle)) : nullptr;
+	if (sprite == nullptr)
+		return;
+
+	const float now = gEngfuncs.GetClientTime();
+	for (int i = 0; i < clusterExplosionEffectCount;)
+	{
+		cluster_explosion_effect_t& effect = clusterExplosionEffects[i];
+		const float age = now - effect.startTime;
+		const float radius = 1.0f + age * 90.0f;
+		const float alpha = (240.0f - age * 300.0f) / 255.0f;
+		if (radius > 90.0f)
+		{
+			clusterExplosionEffects[i] = clusterExplosionEffects[--clusterExplosionEffectCount];
+			continue;
+		}
+
+		gEngfuncs.pTriAPI->RenderMode(kRenderTransAdd);
+		gEngfuncs.pTriAPI->CullFace(TRI_NONE);
+		gEngfuncs.pTriAPI->SpriteTexture(sprite, 0);
+		gEngfuncs.pTriAPI->Begin(TRI_TRIANGLES);
+		gEngfuncs.pTriAPI->Color4f(1.0f, 1.0f, 1.0f, alpha);
+		for (int vertex = 0; vertex < ARRAYSIZE(triangles); ++vertex)
+		{
+			const float* direction = vertices[triangles[vertex]];
+			gEngfuncs.pTriAPI->TexCoord2f(0.0f, 0.0f);
+			gEngfuncs.pTriAPI->Vertex3f(effect.origin.x + direction[0] * radius,
+				effect.origin.y + direction[1] * radius, effect.origin.z + direction[2] * radius);
+		}
+		gEngfuncs.pTriAPI->End();
+		gEngfuncs.pTriAPI->RenderMode(kRenderNormal);
+		++i;
+	}
+}
+
+void EV_ResetClusterExplosionEffects()
+{
+	clusterExplosionEffectCount = 0;
+}
 
 extern cvar_t* cl_lw;
 extern cvar_t* r_decals;

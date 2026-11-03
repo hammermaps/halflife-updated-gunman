@@ -1006,7 +1006,8 @@ void CPushable::Move(CBaseEntity* pOther, bool push)
 		pev->velocity.y += pevToucher->velocity.y * factor;
 
 	float length = sqrt(pev->velocity.x * pev->velocity.x + pev->velocity.y * pev->velocity.y);
-	if (length > MaxSpeed())
+	// Retail only caps the box's speed for direct Touch pushes (Move(..., true)).
+	if (push && length > MaxSpeed())
 	{
 		pev->velocity.x = (pev->velocity.x * MaxSpeed() / length);
 		pev->velocity.y = (pev->velocity.y * MaxSpeed() / length);

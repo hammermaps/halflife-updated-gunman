@@ -275,6 +275,7 @@ public:
 	void StartTask(Task_t* pTask) override;
 	void RunTask(Task_t* pTask) override;
 	void PrescheduleThink() override;
+	void AttackSound();
 	Schedule_t* GetSchedule() override;
 	Schedule_t* GetScheduleOfType(int Type) override;
 	int IRelationship(CBaseEntity* pTarget) override
@@ -381,6 +382,40 @@ Schedule_t* CRustbot::GetScheduleOfType(int Type)
 
 Schedule_t* CRustbot::GetSchedule()
 {
+	// User-requested Xenome exception to Retail's initial Borg behavior: in a
+	// free encounter a Xenome can select a nearby Rustbit while this Rustbot
+	// remains in Borg with no enemy. Let a hostile Rustbot leave Borg when a
+	// Xenome is actually visible, while preserving the Retail damage trigger for
+	// every other target. Friendly Rustbots keep their authored passive behavior.
+	if (m_bBorg && FStrEq(STRING(pev->classname), "monster_rustbot"))
+	{
+		CBaseEntity* pVisibleXenome = nullptr;
+		float flNearestXenome = m_flDistLook;
+		for (CBaseEntity* pTarget = UTIL_FindEntityByClassname(nullptr, "monster_xenome");
+			pTarget; pTarget = UTIL_FindEntityByClassname(pTarget, "monster_xenome"))
+		{
+			if (!pTarget->IsAlive() || IRelationship(pTarget) <= R_NO ||
+				!FInViewCone(pTarget) || !FVisible(pTarget))
+				continue;
+
+			const float flDistance = (pTarget->pev->origin - pev->origin).Length();
+			if (flDistance <= flNearestXenome)
+			{
+				flNearestXenome = flDistance;
+				pVisibleXenome = pTarget;
+			}
+		}
+
+		if (pVisibleXenome)
+		{
+			m_bBorg = false;
+			m_hEnemy = pVisibleXenome;
+			m_vecEnemyLKP = pVisibleXenome->pev->origin;
+			m_MonsterState = MONSTERSTATE_COMBAT;
+			SetConditions(bits_COND_NEW_ENEMY | bits_COND_SEE_ENEMY);
+		}
+	}
+
 	// Retail GetSchedule @0x100b9600 gives the Borg schedule priority until
 	// either light or heavy damage clears the saved m_bBorg flag (+0x2e8).
 	if (m_bBorg)
@@ -502,6 +537,15 @@ void CRustbot::Precache()
 	PrecacheModel("sprites/rustbeam_end.spr");
 	PRECACHE_SOUND("rustbot/P-up.wav");
 	PRECACHE_SOUND("rustbot/Plasma1.wav");
+	PRECACHE_SOUND("rustbot_attack1.wav");
+}
+
+void CRustbot::AttackSound()
+{
+	// Retail FUN_100b8380 (AttackSound, vtable slot 131) inserts this danger
+	// sound before playing the arm-strike cue.
+	CSoundEnt::InsertSound(bits_SOUND_DANGER, pev->origin, 512, 0.2f);
+	EMIT_SOUND_DYN(ENT(pev), CHAN_WEAPON, "rustbot_attack1.wav", 0.6f, 0.8f, 0, PITCH_NORM);
 }
 
 void CRustbot::StartTask(Task_t* pTask)
@@ -511,7 +555,9 @@ void CRustbot::StartTask(Task_t* pTask)
 	case TASK_RUSTBOT_POWERUP:
 		TaskBegin();
 		m_IdealActivity = ACT_ARM;
-		CSoundEnt::InsertSound(bits_SOUND_COMBAT, pev->origin, 1024, 0.3f);
+		// Retail FUN_100b82f0 inserts sound type 0x20 (danger), radius
+		// 0x400 and 0.3 seconds before playing the P-up voice.
+		CSoundEnt::InsertSound(bits_SOUND_DANGER, pev->origin, 1024, 0.3f);
 		EMIT_SOUND_DYN(ENT(pev), CHAN_WEAPON, "rustbot/P-up.wav", 0.6f, 0.8f, 0, PITCH_NORM);
 		break;
 	case TASK_RUSTBOT_PLASMA:
@@ -552,6 +598,8 @@ void CRustbot::HandleAnimEvent(MonsterEvent_t* pEvent)
 	switch (pEvent->event)
 	{
 	case RUSTBOT_AE_MELEE:
+		CreateRustbotSparkShowers(pev, RANDOM_LONG(1, 3));
+		AttackSound();
 		Melee();
 		break;
 	case RUSTBOT_AE_BEAM_OFF:
@@ -573,16 +621,6 @@ void CRustbot::Melee()
 
 	if ((m_hEnemy->pev->origin - pev->origin).Length() <= 128)
 	{
-		UTIL_MakeVectors(pev->angles);
-		Vector vecSrc = pev->origin + gpGlobals->v_forward * 16 + Vector(0, 0, 40);
-
-		MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, vecSrc);
-		WRITE_BYTE(TE_SPARKS);
-		WRITE_COORD(vecSrc.x);
-		WRITE_COORD(vecSrc.y);
-		WRITE_COORD(vecSrc.z);
-		MESSAGE_END();
-
 		m_hEnemy->TakeDamage(pev, pev, gSkillData.rustbotMeleeDamage, DMG_CLUB);
 	}
 }
@@ -673,8 +711,36 @@ void CRustbot::BeamThink()
 	if (!m_pBeam || !m_hEnemy)
 		return;
 
-	Vector vecSrc = pev->origin + Vector(0, 0, 40);
-	Vector vecEnd = m_hEnemy->pev->origin + m_hEnemy->pev->view_ofs;
+	CBaseMonster* pEnemy = m_hEnemy->MyMonsterPointer();
+	if (!pEnemy)
+	{
+		BeamOff();
+		return;
+	}
+
+	Vector vecSrc;
+	Vector vecAttachmentAngles;
+	GetAttachment(0, vecSrc, vecAttachmentAngles);
+
+	Vector vecDirection;
+	if (pEnemy->IsAlive() && pEnemy->m_hTargetEnt)
+	{
+		// Retail FUN_100b8400 uses FUN_1002d200 from attachment 0 and applies
+		// bounded jitter only for a live target that has its own target handle.
+		vecDirection = pEnemy->BodyTarget(vecSrc) - vecSrc;
+		vecDirection.x += RANDOM_LONG(-32, 32);
+		vecDirection.y += RANDOM_LONG(-32, 32);
+		vecDirection.z += RANDOM_LONG(0, 64);
+		vecDirection = vecDirection.Normalize();
+	}
+	else
+	{
+		// Otherwise Retail aims from the enemy's BodyTarget offset and the
+		// Rustbot's last-known enemy position.
+		const Vector vecBodyOffset = pEnemy->BodyTarget(vecSrc) - pEnemy->pev->origin;
+		vecDirection = (m_vecEnemyLKP + vecBodyOffset - vecSrc).Normalize();
+	}
+	Vector vecEnd = vecSrc + vecDirection * 2048.0f;
 
 	TraceResult tr;
 	UTIL_TraceLine(vecSrc, vecEnd, dont_ignore_monsters, ENT(pev), &tr);
@@ -913,6 +979,9 @@ public:
 	void Precache() override;
 	void EXPORT BoltTouch(CBaseEntity* pOther);
 	void EXPORT MoveThink();
+	void EXPORT PopThink();
+
+	unsigned short m_usEvent = 0;
 };
 LINK_ENTITY_TO_CLASS(ball_lightning, CBallLightning);
 
@@ -923,13 +992,15 @@ void CBallLightning::Precache()
 	PrecacheModel("sprites/ballpop.spr");
 	PrecacheModel("sprites/ballight.spr");
 	PrecacheModel("sprites/smoke.spr");
+	PrecacheSound("weapons/ball-fly.wav");
+	PrecacheSound("weapons/ball-die.wav");
 	PrecacheSound("flier/flyball_fly1.wav");
 	PrecacheSound("flier/flyball_fly2.wav");
 	PrecacheSound("flier/flyball_fly3.wav");
 	PrecacheSound("flier/flyball_hit1.wav");
 	PrecacheSound("flier/flyball_hit2.wav");
 	PrecacheSound("flier/flyball_hit3.wav");
-	PrecacheEvent(1, "events/balllightning.sc");
+	m_usEvent = PrecacheEvent(1, "events/balllightning.sc");
 	UTIL_PrecacheOther("lightning_bug");
 }
 
@@ -957,22 +1028,68 @@ void CBallLightning::Spawn()
 	pev->dmgtime = gpGlobals->time + 5.0; // reused as this ball's own expiry deadline
 	SetThink(&CBallLightning::MoveThink);
 	pev->nextthink = gpGlobals->time + 0.1;
+
+	// Retail CBallLightning::Spawn: medium skill uses the weapon sample;
+	// other skill levels choose a Flier sample. Both use a random pitch 80..143.
+	const char* pszFlySound = "weapons/ball-fly.wav";
+	if (g_iSkillLevel != SKILL_MEDIUM)
+	{
+		static const char* const pFlierSounds[] = {
+			"flier/flyball_fly1.wav", "flier/flyball_fly2.wav", "flier/flyball_fly3.wav"};
+		pszFlySound = pFlierSounds[RANDOM_LONG(0, 2)];
+	}
+	EMIT_SOUND_DYN(ENT(pev), CHAN_WEAPON, pszFlySound, 1.0f, 0.8f, 0, RANDOM_LONG(0, 63) + 80);
 }
 
 void CBallLightning::BoltTouch(CBaseEntity* pOther)
 {
-	// Retail CBallLightning::LightningTouch (0x10080040) applies a
-	// 60-damage, 40-unit shock radius blast, rather than a single fixed
-	// 15-damage direct hit. This is shared by Rust Flier and Beamgun.
+	// Retail LightningTouch ignores its owner and other entities owned by the
+	// same edict before playing the impact sound or applying the shock blast.
+	if (pOther->edict() == pev->owner || pOther->pev->owner == pev->owner)
+		return;
+
+	// Retail uses the weapon impact sample at medium skill, otherwise one of
+	// three Rust Flier samples. The sound pitch is independently randomized.
+	const char* pszHitSound = "weapons/ball-die.wav";
+	if (g_iSkillLevel != SKILL_MEDIUM)
+	{
+		static const char* const pFlierSounds[] = {
+			"flier/flyball_hit1.wav", "flier/flyball_hit2.wav", "flier/flyball_hit3.wav"};
+		pszHitSound = pFlierSounds[RANDOM_LONG(0, 2)];
+	}
+	EMIT_SOUND_DYN(ENT(pev), CHAN_WEAPON, pszHitSound, 1.0f, 0.8f, 0, RANDOM_LONG(0, 63) + 80);
+	PLAYBACK_EVENT_FULL(0, edict(), m_usEvent, 0, g_vecZero, g_vecZero,
+		0, 0, 0, 0, 0, 1);
+
+	// Retail immediately removes a newly spawned ball that touches worldspawn;
+	// the bounce path can otherwise retrigger the same collision repeatedly.
+	const float flSpawnTime = pev->dmgtime - 5.0f;
+	if (gpGlobals->time - flSpawnTime < 1.0f && FClassnameIs(pOther->pev, "worldspawn"))
+	{
+		pev->velocity = g_vecZero;
+		pev->avelocity = g_vecZero;
+		pev->origin = g_vecZero;
+		pev->oldorigin = g_vecZero;
+		UTIL_Remove(this);
+		return;
+	}
+
+	// Retail CBallLightning::LightningTouch (0x10080040) freezes the projectile,
+	// applies the radius blast, then hides and removes it after 0.3 seconds.
+	pev->movetype = MOVETYPE_NONE;
+	pev->frame = 0;
+
+	// The Retail radius helper receives the ball as inflictor and its owner as
+	// attacker. This is shared by Rust Flier and Beamgun.
 	RadiusDamage(pev->origin, pev, VARS(pev->owner), 60.0f, 40.0f, CLASS_NONE, DMG_SHOCK);
+	pev->effects |= EF_NODRAW;
+	pev->solid = SOLID_NOT;
+	SetThink(&CBallLightning::PopThink);
+	pev->nextthink = gpGlobals->time + 0.3f;
+}
 
-	MESSAGE_BEGIN(MSG_PAS, SVC_TEMPENTITY, pev->origin);
-	WRITE_BYTE(TE_SPARKS);
-	WRITE_COORD(pev->origin.x);
-	WRITE_COORD(pev->origin.y);
-	WRITE_COORD(pev->origin.z);
-	MESSAGE_END();
-
+void CBallLightning::PopThink()
+{
 	UTIL_Remove(this);
 }
 

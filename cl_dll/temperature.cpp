@@ -6,8 +6,9 @@
 //    g = 255 (bei r > 254 fallend: (0x39c6 - 255*i)/58 + 240), ab Hitze 99: r = 255, g = 0.
 //  - Warntexte: 51..75 "Warning", 76..98 "Danger", ab 99 "MALFUNCTION" (Textdateien text/warning.txt, danger.txt, malfunction.txt).
 //  - Dial-Sprite "temperature" (Sprite-Liste hud.txt, Gruppe dials) auf Panel-Position (0, 25).
-// Vereinfachung/offen: Textfarben und Textpositionen (TextPanel-Argumente x=20/25/0, y=0) sind aus dem Konstruktor abgeleitet,
-// die Farben nicht belegt (weiss). Warnton "weapons/overheat.wav" wird hier nicht abgespielt (Ausloeser nicht belegt).
+// Textfarben folgen den im Retail-Konstruktor benannten Schemes "Temp Text" und "Temp Danger"
+// aus den Aufloesungs-Textschemes. TextPanel-Positionen (x=20/25/0, y=0) stammen aus dem Konstruktor.
+// Warnton "weapons/overheat.wav" wird hier nicht abgespielt (Ausloeser nicht belegt).
 //=========================================================
 #include "hud.h"
 #include "cl_util.h"
@@ -76,11 +77,11 @@ bool CHudTemperature::Draw(float flTime)
 
 	// Warntexte nach Hitzestufe (nur eine Stufe gleichzeitig).
 	if (m_iHeat >= 51 && m_iHeat < 76)
-		gHUD.DrawHudString(px + 20, py, ScreenWidth, "Warning", 255, 255, 255);
+		gHUD.DrawHudString(px + 20, py, ScreenWidth, "Warning", 255, 255, 0);
 	else if (m_iHeat >= 76 && m_iHeat < 99)
-		gHUD.DrawHudString(px + 25, py, ScreenWidth, "Danger", 255, 255, 255);
+		gHUD.DrawHudString(px + 25, py, ScreenWidth, "Danger", 255, 10, 10);
 	else if (m_iHeat >= 99)
-		gHUD.DrawHudString(px, py, ScreenWidth, "MALFUNCTION", 255, 255, 255);
+		gHUD.DrawHudString(px, py, ScreenWidth, "MALFUNCTION", 255, 10, 10);
 
 	// Balken: Anzahl = (int)(Hitze * 1.16).
 	const int iBars = (int)(m_iHeat * 1.16);

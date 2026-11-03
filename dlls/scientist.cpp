@@ -1446,7 +1446,8 @@ void CSittingScientist::Precache()
 //=========================================================
 int CSittingScientist::Classify()
 {
-	// Retail monster_sitting_scientist Classify @0x100d8df0 returns 4 (stock HL: HUMAN_PASSIVE).
+	// Retail monster_sitting_scientist Classify @0x100d8df0 returns 4,
+	// matching this SDK's CLASS_HUMAN_MILITARY value (CLASS_HUMAN_PASSIVE is 3).
 	return CLASS_HUMAN_MILITARY;
 }
 

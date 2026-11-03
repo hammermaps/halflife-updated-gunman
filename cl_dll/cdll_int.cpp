@@ -52,6 +52,8 @@ void CL_UnloadParticleMan();
 
 void InitInput();
 void EV_HookEvents();
+void EV_UpdateClusterExplosionEffects();
+void EV_ResetClusterExplosionEffects();
 void IN_Commands();
 
 /*
@@ -200,6 +202,7 @@ redraw the HUD.
 int DLLEXPORT HUD_Redraw(float time, int intermission)
 {
 	//	RecClHudRedraw(time, intermission);
+	EV_UpdateClusterExplosionEffects();
 
 	gHUD.Redraw(time, 0 != intermission);
 
@@ -240,6 +243,7 @@ Called at start and end of demos to restore to "non"HUD state.
 void DLLEXPORT HUD_Reset()
 {
 	//	RecClHudReset();
+	EV_ResetClusterExplosionEffects();
 
 	gHUD.VidInit();
 }

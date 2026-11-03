@@ -54,7 +54,8 @@ bool CHudTankControl::MsgFunc_TankBody(const char* pszName, int iSize, void* pbu
 {
 	BEGIN_READ(pbuf, iSize);
 	m_iBodyState = READ_SHORT();
-	m_flBodyStateUntil = gHUD.m_flTime + 0.25f;
+	// Retail FUN_10036d70 holds the collision flash for 1.5 seconds.
+	m_flBodyStateUntil = gHUD.m_flTime + 1.5f;
 	return true;
 }
 
@@ -84,7 +85,9 @@ bool CHudTankControl::Draw(float flTime)
 	const int tile = lowRes ? 32 : 64;
 	int x = 100;
 	int y = 100;
-	if (m_pCvarTankHud->value == 2)
+	// Retail FUN_10036e0a uses value 1 for the bottom-left layout; other
+	// values keep the fixed (100,100) position.
+	if (m_pCvarTankHud->value == 1)
 	{
 		x = tile;
 		y = ScreenHeight - tile * 2;
@@ -96,6 +99,6 @@ bool CHudTankControl::Draw(float flTime)
 	DrawTankSprite(hitTop ? m_iBodyHitTR : m_iBodyTR, x + tile, y);
 	DrawTankSprite(hitBottom ? m_iBodyHitBL : m_iBodyBL, x, y + tile);
 	DrawTankSprite(hitBottom ? m_iBodyHitBR : m_iBodyBR, x + tile, y + tile);
-	DrawTankSprite(m_iTurret, x + (lowRes ? 11 : 22), y + (lowRes ? 16 : 33), m_iTurretFrame);
+	DrawTankSprite(m_iTurret, x + tile + (lowRes ? 11 : 22), y + (lowRes ? 16 : 33), m_iTurretFrame);
 	return true;
 }

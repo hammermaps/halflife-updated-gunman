@@ -408,7 +408,7 @@ public:
 	void EXPORT ClusterDetonate();
 	void EXPORT ClusterSmokeThink();
 
-	static CClusterGrenade* Shoot(entvars_t* pevOwner, Vector vecStart, Vector vecVelocity, float flDamage);
+	static CClusterGrenade* Shoot(entvars_t* pevOwner, Vector vecStart, Vector vecVelocity, float flDamage, bool bOverrideDamage = true);
 
 private:
 	int m_iSmokeSprite = 0;
@@ -438,6 +438,9 @@ void CClusterGrenade::Spawn()
 	pev->gravity = 0.5f;
 	pev->friction = 0.6f;
 	pev->classname = MAKE_STRING("dml_cluster");
+	// Retail CClusterGrenade::Spawn sets pev->dmg from sk_dml_rocket_d.
+	// Callers may override it after Spawn; entity_clustergod keeps this value.
+	pev->dmg = gSkillData.dmlRocketDamage * 0.47619048f;
 	SET_MODEL(ENT(pev), "models/dmlcluster.mdl");
 	UTIL_SetSize(pev, g_vecZero, g_vecZero);
 	SetTouch(&CGrenade::BounceTouch);
@@ -462,7 +465,7 @@ void CClusterGrenade::Precache()
 	PrecacheSound("manta/carpetbomb3.wav");
 }
 
-CClusterGrenade* CClusterGrenade::Shoot(entvars_t* pevOwner, Vector vecStart, Vector vecVelocity, float flDamage)
+CClusterGrenade* CClusterGrenade::Shoot(entvars_t* pevOwner, Vector vecStart, Vector vecVelocity, float flDamage, bool bOverrideDamage)
 {
 	CClusterGrenade* pGrenade = GetClassPtr((CClusterGrenade*)nullptr);
 	pGrenade->Spawn();
@@ -471,7 +474,8 @@ CClusterGrenade* CClusterGrenade::Shoot(entvars_t* pevOwner, Vector vecStart, Ve
 	pGrenade->pev->velocity = vecVelocity;
 	pGrenade->pev->angles = UTIL_VecToAngles(pGrenade->pev->velocity);
 	pGrenade->pev->owner = ENT(pevOwner);
-	pGrenade->pev->dmg = flDamage;
+	if (bOverrideDamage)
+		pGrenade->pev->dmg = flDamage;
 
 	pGrenade->pev->sequence = RANDOM_LONG(3, 6);
 	pGrenade->pev->animtime = gpGlobals->time;
@@ -572,6 +576,11 @@ void CClusterGrenade::ClusterSmokeThink()
 CBaseEntity* Dml_ShootClusterGrenade(entvars_t* pevOwner, Vector vecStart, Vector vecVelocity, float flDamage)
 {
 	return CClusterGrenade::Shoot(pevOwner, vecStart, vecVelocity, flDamage);
+}
+
+CBaseEntity* Dml_ShootClusterGrenadeDefaultDamage(entvars_t* pevOwner, Vector vecStart, Vector vecVelocity)
+{
+	return CClusterGrenade::Shoot(pevOwner, vecStart, vecVelocity, 0.0f, false);
 }
 
 //=========================================================

@@ -36,6 +36,7 @@
 #include "explode.h"
 #include "shake.h"
 #include "UserMessages.h"
+#include "dbg_log.h"
 
 #define SF_TANK_NO_TURRET_WEAPONS 1
 #define SF_TANK_NO_MACHINEGUNS 2
@@ -362,7 +363,6 @@ void CVehicleTank::Use(CBaseEntity* pActivator, CBaseEntity* pCaller, USE_TYPE u
 	}
 
 	auto pPlayer = static_cast<CBasePlayer*>(pActivator);
-
 	m_pDriver = pPlayer;
 	pPlayer->m_pTank = this;
 
@@ -393,6 +393,8 @@ void CVehicleTank::Use(CBaseEntity* pActivator, CBaseEntity* pCaller, USE_TYPE u
 
 	SetThink(&CVehicleTank::WithPlayerThink);
 	pev->nextthink = gpGlobals->time;
+	DBG_LOG("TANK %d Mount driver=%d fuel=%d origin=(%.1f %.1f %.1f)", ENTINDEX(edict()),
+		ENTINDEX(pPlayer->edict()), m_iFuelState, pev->origin.x, pev->origin.y, pev->origin.z);
 
 	SendTankState(m_iFuelState == 0 ? 2 : 1);
 	if (m_iFuelState == 0 && pPlayer->m_fHasTankGas)
@@ -418,6 +420,8 @@ void CVehicleTank::Dismount()
 		return;
 
 	auto pPlayer = static_cast<CBasePlayer*>(m_pDriver);
+	DBG_LOG("TANK %d Dismount driver=%d fuel=%d origin=(%.1f %.1f %.1f)", ENTINDEX(edict()),
+		ENTINDEX(pPlayer->edict()), m_iFuelState, pev->origin.x, pev->origin.y, pev->origin.z);
 	pPlayer->m_pTank = nullptr;
 
 	// Symmetrischer Rueckbau des Use()-Zustands, RE-bestaetigt (Dismount-
@@ -485,6 +489,14 @@ void CVehicleTank::WithPlayerThink()
 		m_iFuelState = 2;
 	}
 	int buttons = pPlayer->pev->button;
+	static float s_flNextTankDebug = 0.0f;
+	if (s_flNextTankDebug <= gpGlobals->time)
+	{
+		DBG_LOG("TANK %d Input driver=%d fuel=%d buttons=0x%x origin=(%.1f %.1f %.1f) yaw=%.1f speed=%.1f turn=%.1f",
+			ENTINDEX(edict()), ENTINDEX(pPlayer->edict()), m_iFuelState, buttons,
+			pev->origin.x, pev->origin.y, pev->origin.z, pev->angles.y, m_flChassisSpeed, m_flChassisTurnRate);
+		s_flNextTankDebug = gpGlobals->time + 1.0f;
+	}
 
 	// Retail accelerates/decelerates rather than switching velocity instantly.
 	if (m_iFuelState != 2)
@@ -660,6 +672,7 @@ void CVehicleTank::FireChassisWeapon()
 	if (m_flNextChassisFire > gpGlobals->time)
 		return;
 	m_flNextChassisFire = gpGlobals->time + 0.15;
+	DBG_LOG("TANK %d FireChassisWeapon driver=%d", ENTINDEX(edict()), m_pDriver ? ENTINDEX(m_pDriver->edict()) : 0);
 
 	MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, m_pBarrel->pev->origin);
 	WRITE_BYTE(TE_SPRITE);
@@ -702,6 +715,7 @@ void CVehicleTank::FireRocket()
 	if (m_flNextRocketFire > gpGlobals->time)
 		return;
 	m_flNextRocketFire = gpGlobals->time + 1.5;
+	DBG_LOG("TANK %d FireRocket driver=%d", ENTINDEX(edict()), m_pDriver ? ENTINDEX(m_pDriver->edict()) : 0);
 
 	UTIL_MakeVectors(m_pBarrel->pev->angles);
 	Vector vecSrc = m_pBarrel->pev->origin + gpGlobals->v_forward * 32 + Vector(0, 0, 16);

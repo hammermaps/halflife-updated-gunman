@@ -105,6 +105,7 @@ class CDemomanMine : public CGrenade
 public:
 	void Spawn() override;
 	void Precache() override;
+	int Classify() override { return CLASS_ALIEN_MILITARY; }
 	bool Save(CSave& save) override;
 	bool Restore(CRestore& restore) override;
 	static TYPEDESCRIPTION m_SaveData[];
@@ -157,28 +158,54 @@ void CDemomanMine::WaitToExplode()
 {
 	if (!m_bArmed)
 	{
-		// Retail calls its custom 50-unit proximity search every Think until
-		// a valid target is found. Its exact relationship/visibility predicate
-		// is still unresolved; retaining live, non-owner entities gives the
-		// mine the verified proximity-triggered lifecycle without treating its
-		// owner as a target.
+		// Retail checks the trigger every 0.3 seconds after the initial think.
+		pev->nextthink = gpGlobals->time + 0.3f;
+
+		// Retail CDemomanMine::Classify returns CLASS_ALIEN_MILITARY (5), and
+		// its proximity helper accepts only candidates with IRelationship > 0.
+		// The relationship matrix therefore excludes the Demoman owner as an
+		// ally without a separate owner check.
+		const Vector vecSearchOrigin = pev->origin + Vector(0, 0, 1);
+		const bool bSearchPointInWater = UTIL_PointContents(vecSearchOrigin) == CONTENTS_WATER;
 		for (CBaseEntity* pCandidate = nullptr;
-			(pCandidate = UTIL_FindEntityInSphere(pCandidate, pev->origin + Vector(0, 0, 4), 50.0f)) != nullptr;)
+			(pCandidate = UTIL_FindEntityInSphere(pCandidate, vecSearchOrigin, 50.0f)) != nullptr;)
 		{
-			if (pCandidate != this && pCandidate->edict() != pev->owner && pCandidate->IsAlive())
-			{
-				m_bArmed = true;
-				m_flDetonateTime = gpGlobals->time + 3.0f;
-				m_flNextBlink = gpGlobals->time;
-				CSprite* pLight = CSprite::SpriteCreate("sprites/camled.spr", pev->origin + Vector(0, 0, 4), true);
-				if (pLight)
-				{
-					pLight->SetTransparency(kRenderGlow, 255, 255, 255, 255, kRenderFxNone);
-					pLight->SetScale(0.4f);
-					m_hWarningLight = pLight;
-				}
-				break;
-			}
+			if (pCandidate->pev->takedamage == DAMAGE_NO)
+				continue;
+
+			// Retail rejects dry targets for a water search point and fully
+			// submerged targets for a non-water search point.
+			if (bSearchPointInWater ? pCandidate->pev->waterlevel == 0 : pCandidate->pev->waterlevel == 3)
+				continue;
+
+			const Vector vecBodyTarget = pCandidate->BodyTarget(vecSearchOrigin);
+			TraceResult tr;
+			// Retail enables monster collisions and passes a null skip-entity.
+			UTIL_TraceLine(vecSearchOrigin, vecBodyTarget, dont_ignore_monsters, nullptr, &tr);
+			if (tr.flFraction != 1.0f && tr.pHit != pCandidate->edict())
+				continue;
+
+			if (IRelationship(pCandidate) <= R_NO)
+				continue;
+
+			m_bArmed = true;
+			// Retail's skill branch uses immutable .rdata values: 0 seconds
+			// on easy/medium, 1 second on hard.
+			m_flDetonateTime = gpGlobals->time + (g_iSkillLevel == SKILL_HARD ? 1.0f : 0.0f);
+			m_flNextBlink = gpGlobals->time;
+			return;
+		}
+		return;
+	}
+
+	if (!m_hWarningLight)
+	{
+		CSprite* pLight = CSprite::SpriteCreate("sprites/camled.spr", pev->origin + Vector(0, 0, 4), true);
+		if (pLight)
+		{
+			pLight->SetTransparency(kRenderGlow, 255, 255, 255, 255, kRenderFxNone);
+			pLight->SetScale(0.4f);
+			m_hWarningLight = pLight;
 		}
 	}
 
@@ -187,7 +214,9 @@ void CDemomanMine::WaitToExplode()
 		EMIT_SOUND_DYN(ENT(pev), CHAN_WEAPON, "weapons/dml_lock.wav", 1.0f, 0.8f, 0, 100);
 		if (CBaseEntity* pLight = m_hWarningLight)
 			pLight->pev->effects ^= EF_NODRAW;
-		m_flNextBlink = gpGlobals->time + (m_flDetonateTime - gpGlobals->time) * 0.25f;
+		// Retail CDemomanMine::WaitToExplode schedules the next warning tick
+		// at 5% of the remaining fuse time.
+		m_flNextBlink = gpGlobals->time + (m_flDetonateTime - gpGlobals->time) * 0.05f;
 	}
 
 	pev->nextthink = gpGlobals->time + 0.1f;

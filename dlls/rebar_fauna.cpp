@@ -64,6 +64,7 @@
 
 // Shared DML cluster-submunition factory (defined in mayan6_misc.cpp).
 extern CBaseEntity* Dml_ShootClusterGrenade(entvars_t* pevOwner, Vector vecStart, Vector vecVelocity, float flDamage);
+extern CBaseEntity* Dml_ShootClusterGrenadeDefaultDamage(entvars_t* pevOwner, Vector vecStart, Vector vecVelocity);
 
 //=========================================================
 // decore_sack - private runtime-only visual child of CTubeEmbryo.
@@ -74,21 +75,42 @@ public:
 	void Spawn() override;
 	void Precache() override;
 	int Classify() override { return CLASS_ALIEN_BIOWEAPON; }
+	Schedule_t* GetSchedule() override;
+	Schedule_t* GetScheduleOfType(int Type) override;
 	void PlayShock();
 };
 LINK_ENTITY_TO_CLASS(decore_sack, CDecoreSack);
+
+namespace
+{
+	constexpr int SCHED_DECORE_SACK_LOCKED_IDLE = 0x2b;
+	constexpr int TASK_DECORE_SACK_IDLE_COMPLETE = 0x5f;
+
+	Task_t tlDecoreSackLockedIdle[] =
+	{
+		{TASK_STOP_MOVING, 0},
+		{TASK_DECORE_SACK_IDLE_COMPLETE, 0},
+		{TASK_WAIT, 5.0f},
+	};
+
+	Schedule_t slDecoreSackLockedIdle =
+	{
+		tlDecoreSackLockedIdle,
+		ARRAYSIZE(tlDecoreSackLockedIdle),
+		0x57,
+		0,
+		"Locked - IdleStand",
+	};
+}
 
 // Retail 0x100cdf60: the sack is a monster-family class (vtable with the
 // full CBaseMonster slots, Classify 13 = CLASS_ALIEN_BIOWEAPON). Spawn sets
 // model, classname, solid NOT, movetype NOCLIP (8), effects 0, takedamage 0,
 // spawnflags |= 0x80000000 and then calls MonsterInit (vtable +0x10c), which
 // makes it FL_MONSTER with takedamage DAMAGE_AIM and the monster Think/Use.
-// Vereinfachung (offen): Retail GetScheduleOfType(0x2b) (Slot 88 -> 0x100ce000)
-// liefert immer den Schedule "Locked - IdleStand" (TASK_STOP_MOVING, Task 95,
-// TASK_WAIT 5.0 s, Interrupt-Maske 0x57). Task 95 existiert nicht im SDK
-// (Retail-Enum ist groesser) und setzt nur ACT_IDLE und schliesst ab, sofern
-// das Bit 0x40000000 am Monster nicht gesetzt ist. Hier bleibt der SDK-Standard-
-// Schedule (SCHED_IDLE_STAND). Der Sack bewegt sich in beiden Faellen nicht.
+// Retail uses a fixed "Locked - IdleStand" schedule for the sack. Task 0x5f
+// is dispatched by CBaseMonster::StartTask and maps the retail completion
+// condition to bits_COND_TASK_FAILED.
 void CDecoreSack::Spawn()
 {
 	pev->model = MAKE_STRING("models/sack.mdl");
@@ -105,6 +127,19 @@ void CDecoreSack::Spawn()
 void CDecoreSack::Precache()
 {
 	PrecacheModel("models/sack.mdl");
+}
+
+Schedule_t* CDecoreSack::GetSchedule()
+{
+	return GetScheduleOfType(SCHED_DECORE_SACK_LOCKED_IDLE);
+}
+
+Schedule_t* CDecoreSack::GetScheduleOfType(int Type)
+{
+	if (Type == SCHED_DECORE_SACK_LOCKED_IDLE)
+		return &slDecoreSackLockedIdle;
+
+	return CBaseMonster::GetScheduleOfType(Type);
 }
 
 void CDecoreSack::PlayShock()
@@ -476,14 +511,12 @@ void CClusterGod::Precache()
 // MakeVectors, a trace of 2048 units from the origin (owner ignored, monsters
 // not ignored); on a hit with a non-conveyor entity/world the axes are rebuilt
 // from the hit plane normal (VecToAngles + MakeVectors); then four cluster
-// grenades with the owner of the god, a RANDOM_LONG(-200,200) sideways offset,
-// RANDOM_LONG(50,250) launch speed along the forward axis and a small
-// RANDOM_LONG(-15,15)/(5,20) sideways/up scatter, model artillary.mdl; finally
-// SUB_Remove after 5.0 s.
-// Simplification: the exact composition of the offset/velocity vectors from
-// those random terms was not recoverable from the decompile (stack-garbled);
-// the terms above are combined in the most direct way. Damage is not passed in
-// retail (value 20 is the unproven stand-in).
+// grenades with the owner's entity. Retail uses right * RANDOM_LONG(-200,200)
+// plus forward * RANDOM_LONG(50,250) for velocity. The spawn offset is right *
+// RANDOM_LONG(-15,15) plus forward * RANDOM_LONG(5,20). It sets model
+// artillary.mdl and calls SUB_Remove after 5.0 s. Retail CClusterGrenade::Spawn
+// initializes damage from sk_dml_rocket_d * 0.47619048; this caller does not
+// override it.
 void CClusterGod::ShootClusterGrenades()
 {
 	pev->angles.x = RANDOM_FLOAT(-90, -70);
@@ -504,9 +537,13 @@ void CClusterGod::ShootClusterGrenades()
 	entvars_t* pevOwner = pev->owner ? VARS(pev->owner) : pev;
 	for (int i = 0; i < 4; i++)
 	{
-		Vector vecOffset = gpGlobals->v_right * RANDOM_LONG(-200, 200);
-		Vector vecVel = gpGlobals->v_forward * RANDOM_LONG(50, 250) + gpGlobals->v_right * RANDOM_LONG(-15, 15) + gpGlobals->v_up * RANDOM_LONG(5, 20);
-		CBaseEntity* pCluster = Dml_ShootClusterGrenade(pevOwner, pev->origin + vecOffset, vecVel, 20.0f);
+		int lateralVelocity = RANDOM_LONG(-200, 200);
+		int forwardVelocity = RANDOM_LONG(50, 250);
+		int lateralOffset = RANDOM_LONG(-15, 15);
+		int forwardOffset = RANDOM_LONG(5, 20);
+		Vector vecVel = gpGlobals->v_right * lateralVelocity + gpGlobals->v_forward * forwardVelocity;
+		Vector vecOffset = gpGlobals->v_right * lateralOffset + gpGlobals->v_forward * forwardOffset;
+		CBaseEntity* pCluster = Dml_ShootClusterGrenadeDefaultDamage(pevOwner, pev->origin + vecOffset, vecVel);
 		if (pCluster)
 			SET_MODEL(ENT(pCluster->pev), "models/artillary.mdl");
 	}

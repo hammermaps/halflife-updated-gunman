@@ -30,38 +30,29 @@
 //   CBeamGun::PrimaryAttack (0x1007c440): a real charge-up/continuous-
 //     beam state machine - idle state plays "egon_windup2.wav" and
 //     transitions to firing state; firing state calls a per-tick
-//     helper (0x1007e4d0) every frame that both fires the beam damage
-//     AND accumulates a 0-100 overheat counter (this+0xe8, difficulty-
-//     scaled increment rate). At counter==100 it calls the confirmed
-//     ball_lightning spawner FUN_1007fc40 (see findings' Nachtrag 4 -
-//     the exact same CBallLightning class already implemented in
-//     cinematic2_misc.cpp for monster_rustflier, confirmed shared
-//     between both callers), plays "weapons/electro4.wav", and arms a
-//     self-damage timer on the player (matches the official manual's
-//     documented text: "overheating this volatile weapon sends a
-//     surge through your body... deploy an energy-wasting round of
-//     ball lightning").
+//     helper (0x1007e4d0) every frame that fires the beam and advances
+//     the 0-100 heat counter (+0xe8) on a deadline. Retail Spawn defaults
+//     to +0xa4=3, +0xa8=2, +0xac=2; the default counter gains 2 per
+//     0.1 s (single-player) or 0.16 s (multiplayer). At 100, Retail
+//     enters an overheat state, plays "weapons/electro4.wav", and sets
+//     the player's next-attack deadline to 5 s. The ball_lightning
+//     branch is conditional on the high-voltage setting (+0xac>3) and
+//     a random gate; it is not the default threshold behavior. Exact
+//     self-damage call path remains unresolved.
 //   CBeamGun::SecondaryAttack (0x1007c430) is NOT a ball_lightning
 //     spawn - its body is a single call into the beam's own Slot-89
 //     function (0x1007dc60), a purely cosmetic 7-way random spark-
 //     discharge temp-entity burst (no CBaseEntity::Create/projectile
 //     spawn at all), consistent with the precached "electro4.wav"/
 //     "sprites/XSpark1.spr" assets.
-// Reproduced here accordingly: PrimaryAttack keeps the previously-
-// written continuous-beam state machine (independently written,
-// modeled on CEgon::Attack/Fire's confirmed stock-SDK pattern per
-// agents.md's "keine dekompilierten Originalquellen als Implementierung
-// übernehmen" rule - CEgon's own file remains untouched) but now
-// accumulates heat every tick and spawns ball_lightning plus
-// self-damage on overheat, exactly where the decompile puts it.
-// SecondaryAttack now fires the cosmetic spark-discharge effect
-// instead. The exact heat-increment/difficulty-scaling formulas and
-// the random pre-100 escalation chance in 0x1007e4d0 are NOT
-// reproduced byte-exact - approximated as a flat per-tick increment,
-// same simplification level used throughout this project for
-// documented-but-not-fully-traced numeric constants. The "Long/Medium/
-// Short range"/"Power" configuration keyvalues and the "Chain"
-// lightning-form remain out of scope, unrelated to this correction.
+// The server's default mode now follows these verified timers, heat
+// increments, holster cooling, and five-second recovery. The custom
+// selector values, exact delayed self-damage consumer, and conditional
+// high-voltage ball_lightning branch remain open. The continuous beam
+// damage trace and the SecondaryAttack tracer targeting still contain
+// separate approximations. The "Long/Medium/Short range"/"Power"
+// configuration keyvalues and the "Chain" lightning-form remain
+// unresolved.
 //
 // CORRECTION (2026-09-05, later pass): the "SecondaryAttack is purely
 // cosmetic" claim above was itself incomplete. Fresh decompile of the
@@ -199,6 +190,7 @@ public:
 	void PrimaryAttack() override;
 	void SecondaryAttack() override;
 	void WeaponIdle() override;
+	bool UpdateClientData(CBasePlayer* pPlayer) override;
 	bool Save(CSave& save) override;
 	bool Restore(CRestore& restore) override;
 	static TYPEDESCRIPTION m_SaveData[];
@@ -216,10 +208,15 @@ public:
 private:
 	void EndAttack();
 	void SparkDischarge();
+	void SendHeatHud(CBasePlayer* pPlayer);
 
 	CBeam* m_pBeam = nullptr;
 	float m_flAmmoUseTime = 0;
-	float m_flHeat = 0; // confirmed 0-100 overheat counter, see file header
+	float m_flHeat = 1; // Retail Spawn initializes +0xe8 to 1.
+	float m_flNextHeatTick = 0; // Retail +0xec: active heat-increase deadline.
+	float m_flNextHeatCool = 0; // Retail +0xf8: inventory-update cooling deadline.
+	float m_flOverheatStart = 0; // Retail +0xf4.
+	bool m_bOverheated = false; // Retail +0xf0.
 	float m_flNextTracerVolley = 0;
 };
 LINK_ENTITY_TO_CLASS(weapon_beamgun, CBeamGun);
@@ -230,6 +227,10 @@ TYPEDESCRIPTION CBeamGun::m_SaveData[] =
 		DEFINE_FIELD(CBeamGun, m_pBeam, FIELD_CLASSPTR),
 		DEFINE_FIELD(CBeamGun, m_flAmmoUseTime, FIELD_TIME),
 		DEFINE_FIELD(CBeamGun, m_flHeat, FIELD_FLOAT),
+		DEFINE_FIELD(CBeamGun, m_flNextHeatTick, FIELD_TIME),
+		DEFINE_FIELD(CBeamGun, m_flNextHeatCool, FIELD_TIME),
+		DEFINE_FIELD(CBeamGun, m_flOverheatStart, FIELD_TIME),
+		DEFINE_FIELD(CBeamGun, m_bOverheated, FIELD_BOOLEAN),
 		DEFINE_FIELD(CBeamGun, m_flNextTracerVolley, FIELD_TIME),
 	};
 
@@ -238,6 +239,11 @@ IMPLEMENT_SAVERESTORE(CBeamGun, CBasePlayerWeapon);
 void CBeamGun::Spawn()
 {
 	pev->classname = MAKE_STRING("weapon_beamgun");
+	m_flHeat = 1;
+	m_flNextHeatTick = 0;
+	m_flNextHeatCool = 0;
+	m_flOverheatStart = 0;
+	m_bOverheated = false;
 	Precache();
 	m_iId = WEAPON_BEAMGUN;
 	SET_MODEL(ENT(pev), "models/w_beam.mdl");
@@ -302,12 +308,49 @@ void CBeamGun::EndAttack()
 	}
 	STOP_SOUND(m_pPlayer->edict(), CHAN_WEAPON, "weapons/egon_run3.wav");
 	m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 2.0;
-	m_flHeat = V_max(m_flHeat - 20, 0.0);
+}
+
+void CBeamGun::SendHeatHud(CBasePlayer* pPlayer)
+{
+	if (!pPlayer)
+		return;
+
+	MESSAGE_BEGIN(MSG_ONE, gmsgSliderX, nullptr, pPlayer->pev);
+	WRITE_BYTE(WEAPON_BEAMGUN);
+	WRITE_BYTE((int)m_flHeat);
+	MESSAGE_END();
+}
+
+bool CBeamGun::UpdateClientData(CBasePlayer* pPlayer)
+{
+	// Retail slot 67 (FUN_1007db50) runs once for every inventory item.
+	// While overheated, it holds the state for five seconds, then resumes
+	// at heat 70. Otherwise it cools one point every 0.2 seconds, to 1.
+	if (m_bOverheated)
+	{
+		if (gpGlobals->time - m_flOverheatStart >= 5.0f)
+		{
+			m_bOverheated = false;
+			m_flHeat = 70;
+		}
+		SendHeatHud(pPlayer);
+	}
+	else if (gpGlobals->time > m_flNextHeatCool)
+	{
+		if (m_flHeat > 1.0f)
+			m_flHeat = V_max(m_flHeat - 1.0f, 1.0f);
+		m_flNextHeatCool = gpGlobals->time + 0.2f;
+
+		if (pPlayer && pPlayer->m_pActiveItem == this)
+			SendHeatHud(pPlayer);
+	}
+
+	return CBasePlayerWeapon::UpdateClientData(pPlayer);
 }
 
 void CBeamGun::PrimaryAttack()
 {
-	if (m_iClip <= 0)
+	if (m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType] <= 0)
 	{
 		PlayEmptySound();
 		m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + 0.25;
@@ -342,8 +385,12 @@ void CBeamGun::PrimaryAttack()
 
 	if (gpGlobals->time >= m_flAmmoUseTime)
 	{
-		m_iClip--;
-		m_flAmmoUseTime = gpGlobals->time + 0.2;
+		// Retail checks the player's ammo pool and debits one battery from it
+		// on the discharge timer; the beamgun has no local clip (iMaxClip=-1).
+		if (m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType] > 0)
+			m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType]--;
+		// Retail Spawn defaults (+0xa4=3, +0xa8=2), selecting 0.12 s.
+		m_flAmmoUseTime = gpGlobals->time + 0.12f;
 	}
 
 	if (tr.flFraction < 1.0)
@@ -357,28 +404,28 @@ void CBeamGun::PrimaryAttack()
 		}
 	}
 
-	// Confirmed 0-100 overheat counter (0x1007e4d0) - increment rate
-	// approximated, see file header. At 100 the original spawns
-	// ball_lightning and damages the player (matches the official
-	// manual's documented overheat text).
-	m_flHeat += 4;
-	if (m_flHeat >= 100)
+	// Retail +0xa8 defaults to 2: two heat points per due tick. Retail
+	// schedules ticks at 0.1 s (single-player) or 0.16 s (multiplayer).
+	if (gpGlobals->time > m_flNextHeatTick)
 	{
-		m_flHeat = 60; // stays hot, doesn't fully reset - matches confirmed "stays escalated" shape
+		m_flHeat = V_min(m_flHeat + 2.0f, 100.0f);
+		m_flNextHeatTick = gpGlobals->time + (g_pGameRules->IsMultiplayer() ? 0.16f : 0.1f);
+		SendHeatHud(m_pPlayer);
 
-		Vector vecBallSrc = vecSrc + vecAiming * 32;
-		CBaseEntity* pBall = CBaseEntity::Create("ball_lightning", vecBallSrc, m_pPlayer->pev->v_angle);
-		pBall->pev->owner = m_pPlayer->edict();
-		pBall->pev->velocity = vecAiming * 300;
-
-		EMIT_SOUND_DYN(m_pPlayer->edict(), CHAN_WEAPON, "weapons/electro4.wav", 1.0, ATTN_NORM, 0, 100);
-		m_pPlayer->TakeDamage(pev, pev, 5, DMG_SHOCK);
+		if (m_flHeat >= 100.0f && !m_bOverheated)
+		{
+			m_bOverheated = true;
+			m_flOverheatStart = gpGlobals->time;
+			m_pPlayer->m_flNextAttack = gpGlobals->time + 5.0f;
+			m_flTimeWeaponIdle = gpGlobals->time + 0.2f;
+			EMIT_SOUND_DYN(m_pPlayer->edict(), CHAN_WEAPON, "weapons/electro4.wav", 1.0, ATTN_NORM, 0, 100);
+		}
 	}
 
 	m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 0.1;
 	m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + 0.1;
 
-	if (m_iClip <= 0)
+	if (m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType] <= 0)
 		EndAttack();
 }
 

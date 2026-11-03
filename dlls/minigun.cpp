@@ -48,11 +48,9 @@
 //     per call despite the double pellet count. The `cust_1MinigunSpin`
 //     inventory item enables the customization UI; its exact client-side
 //     selection command and the server transition path are still open.
-//   - Heat counter caps at 100 and forces an overheat lockout (state
-//     field transitions match a "must cool down" branch) until it
-//     drops back below threshold - reproduced with the same shape,
-//     cool-down rate approximated (not decompiled to the exact
-//     value).
+//   - Heat counter caps at 100 and forces an overheat lockout. Retail's
+//     default holster cooling is implemented in UpdateClientData below;
+//     the custom cooling gates/mode are still unresolved.
 // The precached MechaSpinUp.wav/MechaSpinDown.wav sounds are real but
 // their exact trigger site was not conclusively located in
 // PrimaryAttack itself - kept here as cosmetic transition sounds
@@ -72,9 +70,8 @@
 #include "UserMessages.h"
 #include "dbg_log.h"
 
-#define MINIGUN_HEAT_PER_SHOT 1.0 // confirmed (normal mode; Barrel Spin mode's 2/shot not reproduced, see file header
-#define MINIGUN_HEAT_MAX 100.0	  // confirmed
-#define MINIGUN_HEAT_COOL_RATE 25.0 // per second while not firing - rate approximated, see file header
+#define MINIGUN_HEAT_PER_SHOT 1 // Retail m_iTemp is an integer; spin mode's +2 remains unported
+#define MINIGUN_HEAT_MAX 100	  // confirmed
 #define MINIGUN_FIRE_DELAY 0.2	  // confirmed
 
 class CMinigun : public CBasePlayerWeapon
@@ -89,6 +86,7 @@ public:
 
 	void PrimaryAttack() override;
 	void WeaponIdle() override;
+	bool UpdateClientData(CBasePlayer* pPlayer) override;
 	bool Save(CSave& save) override;
 	bool Restore(CRestore& restore) override;
 	static TYPEDESCRIPTION m_SaveData[];
@@ -99,7 +97,13 @@ private:
 	void AmmoHudUpdate();
 
 	bool m_bSpinning = false;
-	float m_flHeat = 0;
+	int m_iSpinState = 0;
+	int m_iOverheating = 0;
+	int m_iTemp = 0;
+	float m_flTimeStartOverheating = 0;
+	float m_flNextTempChangeTime = 0;
+	float m_flNextTempDrop = 0;
+	bool m_bWaterCooled = false;
 	int m_iLastHudHeat = -1;
 };
 LINK_ENTITY_TO_CLASS(weapon_minigun, CMinigun);
@@ -108,7 +112,13 @@ LINK_ENTITY_TO_CLASS(weapon_mechagun, CMinigun);
 TYPEDESCRIPTION CMinigun::m_SaveData[] =
 {
 	DEFINE_FIELD(CMinigun, m_bSpinning, FIELD_BOOLEAN),
-	DEFINE_FIELD(CMinigun, m_flHeat, FIELD_FLOAT),
+	DEFINE_FIELD(CMinigun, m_iSpinState, FIELD_INTEGER),
+	DEFINE_FIELD(CMinigun, m_iOverheating, FIELD_INTEGER),
+	DEFINE_FIELD(CMinigun, m_iTemp, FIELD_INTEGER),
+	DEFINE_FIELD(CMinigun, m_flTimeStartOverheating, FIELD_TIME),
+	DEFINE_FIELD(CMinigun, m_flNextTempChangeTime, FIELD_TIME),
+	DEFINE_FIELD(CMinigun, m_flNextTempDrop, FIELD_TIME),
+	DEFINE_FIELD(CMinigun, m_bWaterCooled, FIELD_BOOLEAN),
 };
 
 IMPLEMENT_SAVERESTORE(CMinigun, CBasePlayerWeapon);
@@ -161,7 +171,6 @@ bool CMinigun::GetItemInfo(ItemInfo* p)
 bool CMinigun::Deploy()
 {
 	m_bSpinning = false;
-	m_flHeat = 0;
 	m_iClip = m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType]; // Anzeige: Pool als Magazinwert
 	return DefaultDeploy("models/v_mechagun.mdl", "models/p_9mmAR.mdl", 0, "mp5");
 }
@@ -187,7 +196,7 @@ void CMinigun::AmmoHudUpdate()
 {
 	// TempX überträgt Waffen-ID und Hitze. Nur geänderte ganzzahlige Werte
 	// senden; Retail aktualisiert den Wert ebenfalls nur bei Änderungen.
-	const int iHeat = (int)m_flHeat;
+	const int iHeat = m_iTemp;
 	if (iHeat == m_iLastHudHeat)
 		return;
 	m_iLastHudHeat = iHeat;
@@ -209,14 +218,6 @@ void CMinigun::PrimaryAttack()
 		return;
 	}
 
-	if (m_flHeat >= MINIGUN_HEAT_MAX)
-	{
-		SpinDown();
-		PlayEmptySound();
-		m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + 1.5;
-		return;
-	}
-
 	if (!m_bSpinning)
 	{
 		m_bSpinning = true;
@@ -225,8 +226,21 @@ void CMinigun::PrimaryAttack()
 
 	m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType]--;
 	m_iClip = m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType]; // Entscheidung 2026-11-01: Magazinanzeige zeigt den Pool (HUD liest m_iClip, siehe weapon_minigun.md Nachtrag 7)
-	m_flHeat = V_min(m_flHeat + MINIGUN_HEAT_PER_SHOT, MINIGUN_HEAT_MAX);
-	AmmoHudUpdate();
+	const float flNow = UTIL_WeaponTimeBase();
+	if (m_iOverheating == 0 && m_flNextTempChangeTime < flNow)
+	{
+		m_iTemp += m_iSpinState == 1 ? 2 : MINIGUN_HEAT_PER_SHOT;
+		const float flHeatStep = m_iSpinState == 1 ? 0.1f : MINIGUN_FIRE_DELAY;
+		m_flNextTempChangeTime = flNow + (m_bWaterCooled ? flHeatStep * 2.0f : flHeatStep);
+
+		if (m_iTemp > 99)
+		{
+			m_iTemp = MINIGUN_HEAT_MAX;
+			m_iOverheating = 1;
+			m_flTimeStartOverheating = flNow;
+		}
+		AmmoHudUpdate();
+	}
 
 	Vector vecSrc = m_pPlayer->GetGunPosition();
 	Vector vecAiming = m_pPlayer->GetAutoaimVector(AUTOAIM_5DEGREES);
@@ -250,18 +264,64 @@ void CMinigun::PrimaryAttack()
 
 void CMinigun::WeaponIdle()
 {
-	// Abkuehlung nur bei losgelassenem Feuerknopf und zeitabhaengig (Frametime). Vorher: fester Abzug von 2,5 je
-	// Aufruf, also je Frame; dadurch blieb die Hitze bei jedem Schuss bei 0 (Nutzerbericht, TEMP PA-Log: heat=0.0).
-	if (m_flHeat > 0 && (m_pPlayer->pev->button & IN_ATTACK) == 0)
-		m_flHeat = V_max(m_flHeat - MINIGUN_HEAT_COOL_RATE * gpGlobals->frametime, 0.0f);
-	AmmoHudUpdate();
+	const float flNow = UTIL_WeaponTimeBase();
 
-	if (m_flTimeWeaponIdle > UTIL_WeaponTimeBase())
+	if (m_iOverheating != 0)
+	{
+		if (m_flTimeWeaponIdle > flNow)
+			return;
+
+		if (flNow - m_flTimeStartOverheating < 5.0f)
+		{
+			// Retail WeaponIdle calls the PrimaryAttack vtable slot every 0.1s
+			// throughout overheat; PrimaryAttack still fires but does not add heat.
+			PrimaryAttack();
+			m_flTimeWeaponIdle = flNow + 0.1f;
+			return;
+		}
+
+		m_iOverheating = 0;
+		m_iTemp = 83;
+		m_flTimeWeaponIdle = flNow + 0.1f;
+		AmmoHudUpdate();
+		return;
+	}
+
+	if (m_flNextTempDrop <= flNow)
+	{
+		if (m_iTemp > 1)
+		{
+			--m_iTemp;
+			AmmoHudUpdate();
+		}
+		const float flCoolStep = m_iSpinState == 1 ? (m_bWaterCooled ? 0.2f : 0.85f) : (m_bWaterCooled ? 0.075f : 0.2f);
+		m_flNextTempDrop = flNow + flCoolStep;
+	}
+
+	if (m_flTimeWeaponIdle > flNow)
 		return;
 
 	SpinDown();
 	SendWeaponAnim(0);
 	m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + RANDOM_FLOAT(10, 15);
+}
+
+bool CMinigun::UpdateClientData(CBasePlayer* pPlayer)
+{
+	// Retail invokes vtable slot 67 for every item in all 11 inventory
+	// categories. Its Minigun callback cools only while holstered, one
+	// heat point per 0.2 s in the default (non-cooled) mode, down to 1.
+	if (pPlayer && pPlayer->m_pActiveItem != this && m_iOverheating == 0 && m_flNextTempDrop < gpGlobals->time)
+	{
+		if (m_iTemp > 1)
+		{
+			--m_iTemp;
+			AmmoHudUpdate();
+		}
+		m_flNextTempDrop = gpGlobals->time + (m_bWaterCooled ? 0.075f : 0.2f);
+	}
+
+	return CBasePlayerWeapon::UpdateClientData(pPlayer);
 }
 
 

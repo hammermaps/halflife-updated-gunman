@@ -741,13 +741,14 @@ public:
 	bool GetItemInfo(ItemInfo* p) override;
 
 	void PrimaryAttack() override;
-	void SecondaryAttack() override;
 	bool Deploy() override;
-	void Reload() override;
+	void ApplyCustomSetting(char option, int value) override;
 	void WeaponIdle() override;
 	void ItemPostFrame() override;
-	int m_fInReload; //TODO: not used, remove
-	float m_flNextReload;
+	Vector m_vecSpread;
+	Vector m_iSlidePos;
+	int m_iNumShells;
+	float m_flNextCustomize;
 	int m_iShell;
 
 	bool UseDecrement() override
@@ -760,8 +761,7 @@ public:
 	}
 
 private:
-	unsigned short m_usDoubleFire;
-	unsigned short m_usSingleFire;
+	unsigned short m_usFire;
 };
 
 class CLaserSpot : public CBaseEntity

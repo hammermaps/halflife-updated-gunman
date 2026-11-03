@@ -866,9 +866,10 @@ void CRotDoor::Spawn()
 	// set the axis of rotation
 	CBaseToggle::AxisDir(pev);
 
-	// check for clockwise rotation
+	// Retail CRotDoor::Spawn negates the initial angles for ROTATE_BACKWARDS;
+	// it leaves the axis direction from AxisDir unchanged.
 	if (FBitSet(pev->spawnflags, SF_DOOR_ROTATE_BACKWARDS))
-		pev->movedir = pev->movedir * -1;
+		pev->angles = pev->angles * -1;
 
 	//m_flWait			= 2; who the hell did this? (sjb)
 	m_vecAngle1 = pev->angles;

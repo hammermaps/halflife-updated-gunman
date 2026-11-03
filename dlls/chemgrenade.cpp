@@ -21,6 +21,7 @@
 #include "gamerules.h"
 #include "decals.h"
 #include "chemgrenade.h"
+#include "dbg_log.h"
 
 LINK_ENTITY_TO_CLASS(chem_grenade, CChemGrenade);
 
@@ -174,6 +175,10 @@ void CChemGrenade::ChemicalTrail()
 // Retail @0x10092040: Treffer -> Himmel entfernt die Granate; sonst Flaeche suchen, zerplatzen, entfernen.
 void CChemGrenade::SplatterTouch(CBaseEntity* pOther)
 {
+	DBG_LOG("CHEMGRENADE %d SplatterTouch other=%s origin=(%.1f %.1f %.1f) velocity=(%.1f %.1f %.1f)",
+		ENTINDEX(edict()), pOther ? STRING(pOther->pev->classname) : "world",
+		pev->origin.x, pev->origin.y, pev->origin.z,
+		pev->velocity.x, pev->velocity.y, pev->velocity.z);
 	if (UTIL_PointContents(pev->origin) == CONTENTS_SKY)
 	{
 		UTIL_Remove(this);
@@ -371,6 +376,10 @@ void CChemGrenade::StickyChemicalTouch(CBaseEntity* pOther)
 // Retail @0x10093120
 void CChemGrenade::BouncyChemicalTouch(CBaseEntity* pOther)
 {
+	DBG_LOG("CHEMGRENADE %d BouncyTouch other=%s origin=(%.1f %.1f %.1f) velocity=(%.1f %.1f %.1f)",
+		ENTINDEX(edict()), pOther ? STRING(pOther->pev->classname) : "world",
+		pev->origin.x, pev->origin.y, pev->origin.z,
+		pev->velocity.x, pev->velocity.y, pev->velocity.z);
 	if (UTIL_PointContents(pev->origin) != CONTENTS_SKY)
 	{
 		if (pOther->edict() == pev->owner)
@@ -571,12 +580,16 @@ void CChemGrenade::ChemRadiusDamage(const Vector& vecSrc, entvars_t* pevInflicto
 
 		if (tr.flFraction != 1.0f)
 		{
+			DBG_LOG("CHEMGRENADE %d RadiusTrace target=%s damage=%.1f type=%d",
+				ENTINDEX(ENT(pevInflictor)), STRING(pEntity->pev->classname), flAdjusted, iType);
 			ClearMultiDamage();
 			pEntity->TraceAttack(pevInflictor, flAdjusted, (tr.vecEndPos - vecSrc).Normalize(), &tr, iBits);
 			ApplyMultiDamage(pevInflictor, pevAttacker);
 		}
 		else
 		{
+			DBG_LOG("CHEMGRENADE %d RadiusDamage target=%s damage=%.1f type=%d",
+				ENTINDEX(ENT(pevInflictor)), STRING(pEntity->pev->classname), flAdjusted, iType);
 			pEntity->TakeDamage(pevInflictor, pevAttacker, flAdjusted, iBits);
 		}
 	}

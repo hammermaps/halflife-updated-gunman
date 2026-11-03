@@ -929,7 +929,8 @@ void CRotButton::Spawn()
 
 	// check for clockwise rotation
 	if (FBitSet(pev->spawnflags, SF_DOOR_ROTATE_BACKWARDS))
-		pev->movedir = pev->movedir * -1;
+		// Retail negates the start angles after AxisDir; it leaves movedir alone.
+		pev->angles = pev->angles * -1;
 
 	pev->movetype = MOVETYPE_PUSH;
 

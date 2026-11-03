@@ -37,10 +37,8 @@
 //   decore_pteradon:  LINK @0x10069f60, vtable @0x100f6f24, Spawn
 //     @0x10069ff0 -> shared CBaseBird spawn tail @0x100689a0 (also
 //     used by decore_eagle per findings/entity_review_list.csv -
-//     confirms decore_eagle/CChopper/CRustFlier's full CBaseBird base
-//     with HuntThink/FlyTouch is a separate, still-undone task; only
-//     Spawn/Precache stats are reproduced here, not HuntThink/FlyTouch
-//     themselves).
+//     confirms decore_eagle shares the CBaseBird implementation; chopper
+//     and rustflier use separate flight classes).
 //   decore_butterflyflock: LINK @0x1006fb70, ctor helper @0x1006fce0
 //     (vtable @0x100f7c74, confirms findings' "Vtable 0x100f7c74"),
 //     flock-spawn body @0x1006fd40 (loops iFlockSize times, each
@@ -55,16 +53,10 @@
 //     CDragonfly's IdleThink/Start/FlockLeaderThink/FallHack pattern -
 //     same simplification applies, see CDragonfly's entry above).
 //
-// - CPteradon: only Spawn's concrete stats (bbox, MOVETYPE_FLY,
-//   DAMAGE_AIM takedamage, health 10, random start frame) are
-//   reproduced; CBaseBird::HuntThink/FlyTouch (real hunting flight AI
-//   and player-collision push/crash behavior, shared with
-//   decore_eagle/monster_human_chopper/monster_rustflier per
-//   findings) are NOT reproduced - replaced with the same simplified
-//   wandering-circular-flight Think already used for CDragonfly, and
-//   damage uses the default CBaseMonster TakeDamage/Killed path
-//   (still killable, matching the class being CLASS_ALIEN_PREY-ish
-//   huntable fauna, just not via the exact original combat logic).
+// - CPteradon and CEagle use the shared CBaseBird spawn, hunt-flight,
+//   damage and touch implementation in basebird.cpp. The port's remaining
+//   approximations and unverified retail A/B behavior are documented in
+//   findings/entities/cbasebird_huntthink_2026-10-31.md.
 // - CButterfly: same simplification as CDragonfly (wandering flight
 //   instead of true boids flock steering) - CButterflyFlock's own
 //   spawn-loop-and-scatter behavior IS reproduced faithfully, since
@@ -945,7 +937,6 @@ void CTargetRocket::Spawn()
 {
 	Precache();
 
-	pev->effects = 5;
 	SET_MODEL(ENT(pev), "models/rocket.mdl");
 	UTIL_SetSize(pev, g_vecZero, g_vecZero);
 	pev->solid = SOLID_BBOX;
@@ -1040,10 +1031,10 @@ void CTargetRocket::RocketExplodeTouch(CBaseEntity* pOther)
 //=========================================================
 // decore_pteradon - CPteradon. A large flying, killable creature
 // (confirmed pev->takedamage=DAMAGE_AIM in Spawn, unlike the
-// non-damageable dragonfly/butterfly ambient fauna). Shares its real
-// hunting-flight AI (CBaseBird::HuntThink/FlyTouch) with decore_eagle
-// and monster_human_chopper/monster_rustflier - not reproduced here,
-// see file header.
+// non-damageable dragonfly/butterfly ambient fauna). Shares the ported
+// CBaseBird hunting-flight AI with decore_eagle; see basebird.cpp and
+// findings/entities/cbasebird_huntthink_2026-10-31.md for remaining
+// approximations and runtime comparisons.
 //=========================================================
 class CPteradon : public CBaseBird
 {
@@ -1055,8 +1046,8 @@ LINK_ENTITY_TO_CLASS(decore_pteradon, CPteradon);
 
 //=========================================================
 // monster_butterfly - CButterfly. Ambient, harmless, non-damageable
-// flying fauna, spawned in bulk by decore_butterflyflock below. Same
-// simplified-flight rationale as CDragonfly (see file header).
+// flying fauna, spawned in bulk by decore_butterflyflock below. Follower
+// steering is ported; leader obstacle/formation steering remains open.
 //=========================================================
 class CButterfly : public CBaseMonster
 {
@@ -1066,6 +1057,12 @@ public:
 	void Spawn() override;
 	void Precache() override;
 	void EXPORT IdleThink();
+	void EXPORT Start();
+	void EXPORT FlockFollowerThink();
+	void FlockLeaderThink();
+	bool FlockPathBlocked();
+	void FlockCohesion();
+	void UpdateFlightAnimation();
 	void ConfigureFlockMember(CButterfly* pLeader);
 
 	static TYPEDESCRIPTION m_SaveData[];
@@ -1075,6 +1072,12 @@ private:
 	// butterfly and pushes it onto that leader's follower chain.
 	EHANDLE m_hFlockLeader;
 	EHANDLE m_hNextFlockmate;
+	float m_flFlockTargetSpeed = 0.0f;
+	float m_flLeaderThinkUntil = 0.0f;
+	bool m_fTurning = false;
+	float m_flLastBlockedTime = 0.0f;
+	float m_flAvoidanceUntil = 0.0f;
+	float m_flNextFormationThink = 0.0f;
 };
 LINK_ENTITY_TO_CLASS(monster_butterfly, CButterfly);
 
@@ -1082,6 +1085,12 @@ TYPEDESCRIPTION CButterfly::m_SaveData[] =
 	{
 		DEFINE_FIELD(CButterfly, m_hFlockLeader, FIELD_EHANDLE),
 		DEFINE_FIELD(CButterfly, m_hNextFlockmate, FIELD_EHANDLE),
+		DEFINE_FIELD(CButterfly, m_flFlockTargetSpeed, FIELD_FLOAT),
+		DEFINE_FIELD(CButterfly, m_flLeaderThinkUntil, FIELD_TIME),
+		DEFINE_FIELD(CButterfly, m_fTurning, FIELD_BOOLEAN),
+		DEFINE_FIELD(CButterfly, m_flLastBlockedTime, FIELD_TIME),
+		DEFINE_FIELD(CButterfly, m_flAvoidanceUntil, FIELD_TIME),
+		DEFINE_FIELD(CButterfly, m_flNextFormationThink, FIELD_TIME),
 	};
 
 IMPLEMENT_SAVERESTORE(CButterfly, CBaseMonster);
@@ -1095,6 +1104,9 @@ void CButterfly::Spawn()
 	pev->movetype = MOVETYPE_FLY;
 	pev->takedamage = DAMAGE_NO;
 	pev->health = 1;
+	// Retail Spawn helper writes this+0x124 = 0.2; that member is the
+	// CBaseMonster field of view consumed by FInViewCone during flocking.
+	m_flFieldOfView = 0.2f;
 	pev->skin = RANDOM_LONG(0, 9);
 	pev->flags |= FL_FLY;
 
@@ -1136,45 +1148,230 @@ void CButterfly::Precache()
 
 void CButterfly::IdleThink()
 {
-	// Retail CButterfly::IdleThink @ 0x100703b0 uses the same 0.2-second
-	// cadence as the flock-spawn helper.
+	// Retail IdleThink waits for a client in this entity's PVS before
+	// switching to Start. The engine callbacks match enginefuncs_t slots
+	// 17 (FindClientInPVS) and 70 (EntOffsetOfPEntity).
 	pev->nextthink = gpGlobals->time + 0.2f;
+	edict_t* pVisibleClient = FIND_CLIENT_IN_PVS(pev->pContainingEntity);
+	if (pVisibleClient != nullptr && g_engfuncs.pfnEntOffsetOfPEntity(pVisibleClient) != 0)
+	{
+		SetThink(&CButterfly::Start);
+		pev->nextthink = gpGlobals->time + 0.1f;
+	}
+}
+
+void CButterfly::Start()
+{
+	// Retail selects the leader/follower think from the flock link.
+	if (static_cast<CBaseEntity*>(m_hFlockLeader) == this)
+		SetThink(&CButterfly::FlockLeaderThink);
+	else
+		SetThink(&CButterfly::FlockFollowerThink);
+	pev->nextthink = gpGlobals->time + 0.1f;
+	SetActivity(ACT_FLY);
+	ResetSequenceInfo();
+	pev->speed = 75.0f;
+}
+
+
+void CButterfly::UpdateFlightAnimation()
+{
+	// Retail FUN_10070300 smooths animation rate from pev->speed.
+	float flSpeedDelta = (pev->speed - pev->armorvalue) * 0.5f;
+	pev->armorvalue = pev->armorvalue * 0.8f + pev->speed * 0.2f;
+	pev->framerate = fabs(flSpeedDelta);
+	if (pev->framerate < 0.25f)
+		pev->framerate = 0.25f;
+	if (pev->framerate > 1.9f)
+		pev->framerate = 1.9f;
+	pev->avelocity.x = -(pev->framerate * 5.0f + pev->angles.x);
+	pev->avelocity.y = -(pev->avelocity.z + pev->angles.z);
 	float flInterval = StudioFrameAdvance();
 	DispatchAnimEvents(flInterval);
-
-	// Nachtrag 2026-09-06 (RE-Vertiefung, dann "unaufgeloeste Funktionen
-	// nachgehen"): CButterfly::FlockLeaderThink (0x10070dd0, frisch
-	// decompiliert) nutzt denselben Ausweich-Mechanismus wie
-	// CDragonfly::FlockLeaderThink/FUN_1006f2c0 - zwei seitlich um
-	// v_right*192.0 (DAT_100f80cc, bestaetigt - der seitliche Versatz,
-	// nicht die Vorausschau-Reichweite) versetzte Kandidaten-Traces,
-	// Vergleich der jeweiligen Blockade-Distanz, Steuerung Richtung der
-	// freieren Seite (bei Gleichstand zufaellig per RANDOM_LONG(0,1),
-	// direkt im Funktionskoerper sichtbar - kein separater Helferaufruf
-	// wie bei Dragonfly). Fuer eine eigene, direkte Vorausschau-
-	// Reichweite (Dragonflys Aequivalent zu DAT_100f7c70=125.0) wurde
-	// bei Butterfly keine eigene Konstante identifiziert; hier
-	// weiterhin ein plausibler Schaetzwert. Die Retail-Spawnverkettung
-	// (Leader + Follower-Kette) wird seit 2026-09-08 gespeichert, die
-	// nachfolgende IdleThink->Start->FlockLeaderThink-Kette bleibt aber
-	// unreproduziert (Datei-Kopf-Kommentar) - hier nur der gemeinsame Ausweich-
-	// Mechanismus uebernommen, analog zu CDragonfly::FlockLeaderThink.
-	UTIL_MakeVectors(pev->angles);
-	TraceResult tr;
-	constexpr float LOOKAHEAD = 64.0f; // Schaetzwert, siehe Kommentar oben
-	UTIL_TraceLine(pev->origin, pev->origin + gpGlobals->v_forward * LOOKAHEAD, ignore_monsters, ENT(pev), &tr);
-	if (tr.flFraction != 1.0f)
-	{
-		pev->angles.y += RANDOM_FLOAT(60.0f, 150.0f) * (RANDOM_LONG(0, 1) != 0 ? 1.0f : -1.0f);
-	}
-	else
-	{
-		pev->angles.y += RANDOM_FLOAT(-8.0, 8.0);
-	}
-
-	UTIL_MakeVectors(pev->angles);
-	pev->velocity = gpGlobals->v_forward * 20;
 }
+
+
+void CButterfly::FlockFollowerThink()
+{
+	pev->nextthink = gpGlobals->time + 0.1f;
+	CButterfly* pLeader = static_cast<CButterfly*>(static_cast<CBaseEntity*>(m_hFlockLeader));
+	if (pev->velocity.Length() < 5.0f)
+	{
+		SetThink(&CButterfly::FlockLeaderThink);
+		m_flLeaderThinkUntil = gpGlobals->time + RANDOM_LONG(5, 24);
+		return;
+	}
+	if (!pLeader || pLeader == this)
+	{
+		SetThink(&CButterfly::FlockLeaderThink);
+		return;
+	}
+
+	Vector vecToLeader = pLeader->pev->origin - pev->origin;
+	float flLeaderDistance = vecToLeader.Length();
+	if (flLeaderDistance > 0.0f)
+		vecToLeader = vecToLeader / flLeaderDistance;
+	Vector vecHeading = pev->velocity;
+	if (vecHeading.Length() > 0.0f)
+		vecHeading = vecHeading.Normalize();
+	pev->angles = UTIL_VecToAngles(vecToLeader + vecHeading);
+
+	float flLeaderSpeed = pLeader->pev->velocity.Length();
+	if (!FInViewCone(pLeader))
+		m_flFlockTargetSpeed = flLeaderSpeed * 0.5f;
+	else if (flLeaderDistance > 256.0f)
+		m_flFlockTargetSpeed = flLeaderSpeed * 1.5f;
+	else if (flLeaderDistance < 40.0f)
+		m_flFlockTargetSpeed = flLeaderSpeed * 0.5f;
+
+	// Retail adds a separation vector for each flockmate within 40 units.
+	for (CButterfly* pMember = pLeader; pMember; pMember = static_cast<CButterfly*>(static_cast<CBaseEntity*>(pMember->m_hNextFlockmate)))
+	{
+		if (pMember == this || (pev->origin - pMember->pev->origin).Length() > 40.0f)
+			continue;
+		Vector vecSeparate = pev->origin - pMember->pev->origin;
+		if (vecSeparate.Length() == 0.0f)
+			vecSeparate = Vector(0, 0, 1);
+		else
+			vecSeparate = vecSeparate.Normalize();
+		pev->velocity = pev->velocity + vecSeparate;
+	}
+
+	float flSpeed = pev->velocity.Length();
+	Vector vecVelocity = pev->velocity;
+	if (flSpeed > 0.0f)
+		vecVelocity = vecVelocity / flSpeed;
+	if (flLeaderDistance > 256.0f)
+	{
+		vecVelocity = vecVelocity + vecToLeader;
+		if (vecVelocity.Length() > 0.0f)
+			vecVelocity = vecVelocity.Normalize();
+	}
+
+	if (m_flFlockTargetSpeed > 150.0f)
+		m_flFlockTargetSpeed = 150.0f;
+	if (m_flFlockTargetSpeed > flSpeed)
+		pev->speed = flSpeed + 2.0f;
+	else if (m_flFlockTargetSpeed < flSpeed)
+		pev->speed = flSpeed - 2.0f;
+	else
+		pev->speed = flSpeed;
+	pev->velocity = vecVelocity * pev->speed;
+	UpdateFlightAnimation();
+}
+
+
+bool CButterfly::FlockPathBlocked()
+{
+	if (gpGlobals->time < m_flAvoidanceUntil)
+	{
+		m_flLastBlockedTime = gpGlobals->time;
+		return true;
+	}
+
+	UTIL_MakeVectors(pev->angles);
+	const Vector vecForward = gpGlobals->v_forward * 192.0f;
+	const Vector vecRight = gpGlobals->v_right * 12.0f;
+	TraceResult tr;
+	bool fBlocked = false;
+	UTIL_TraceLine(pev->origin, pev->origin + vecForward, ignore_monsters, ENT(pev), &tr);
+	const bool fForwardBlocked = tr.flFraction != 1.0f;
+	fBlocked |= fForwardBlocked;
+	if (fForwardBlocked)
+		m_flLastBlockedTime = gpGlobals->time;
+
+	UTIL_TraceLine(pev->origin + vecRight, pev->origin + vecForward + vecRight, ignore_monsters, ENT(pev), &tr);
+	const bool fRightBlocked = tr.flFraction != 1.0f;
+	fBlocked |= fRightBlocked;
+	if (fRightBlocked)
+		m_flLastBlockedTime = gpGlobals->time;
+
+	UTIL_TraceLine(pev->origin - vecRight, pev->origin + vecForward - vecRight, ignore_monsters, ENT(pev), &tr);
+	const bool fLeftBlocked = tr.flFraction != 1.0f;
+	fBlocked |= fLeftBlocked;
+	if (fLeftBlocked)
+		m_flLastBlockedTime = gpGlobals->time;
+
+	if (!fBlocked && gpGlobals->time - m_flLastBlockedTime > 6.0f)
+		m_flAvoidanceUntil = gpGlobals->time + RANDOM_LONG(1, 3);
+	return fBlocked;
+}
+
+
+void CButterfly::FlockCohesion()
+{
+	for (CButterfly* pMember = this; pMember; pMember = static_cast<CButterfly*>(static_cast<CBaseEntity*>(pMember->m_hNextFlockmate)))
+	{
+		if (pMember == this)
+			continue;
+		Vector vecSeparation = pMember->pev->origin - pev->origin;
+		if (vecSeparation.Length() > 40.0f)
+			continue;
+
+		const float flMemberSpeed = pMember->pev->velocity.Length();
+		if (vecSeparation.Length() > 0.0f)
+			vecSeparation = vecSeparation.Normalize();
+		Vector vecMemberDirection = pMember->pev->velocity;
+		if (vecMemberDirection.Length() > 0.0f)
+			vecMemberDirection = vecMemberDirection.Normalize();
+		Vector vecSteering = (vecSeparation + vecMemberDirection) * 0.5f;
+		pMember->pev->velocity = vecSteering * flMemberSpeed;
+	}
+}
+
+
+void CButterfly::FlockLeaderThink()
+{
+	if (static_cast<CBaseEntity*>(m_hFlockLeader) != this && m_flLeaderThinkUntil < gpGlobals->time)
+	{
+		SetThink(&CButterfly::FlockFollowerThink);
+		pev->nextthink = gpGlobals->time + 0.1f;
+		return;
+	}
+	pev->nextthink = gpGlobals->time + 0.1f;
+	UTIL_MakeVectors(pev->angles);
+	const bool fBlocked = FlockPathBlocked();
+	if (!fBlocked)
+	{
+		if (m_fTurning)
+		{
+			m_fTurning = false;
+			pev->angles.y = 0.0f;
+		}
+		if (pev->speed <= 75.0f)
+			pev->speed += 5.0f;
+	}
+	else if (!m_fTurning)
+	{
+		UTIL_MakeVectors(pev->angles);
+		const Vector vecRight = gpGlobals->v_right * 192.0f;
+		TraceResult trRight, trLeft;
+		UTIL_TraceLine(pev->origin, pev->origin + vecRight, ignore_monsters, ENT(pev), &trRight);
+		UTIL_TraceLine(pev->origin, pev->origin - vecRight, ignore_monsters, ENT(pev), &trLeft);
+		if (trRight.flFraction == trLeft.flFraction)
+			pev->angles.y = RANDOM_LONG(0, 1) ? -120.0f : 120.0f;
+		else
+			pev->angles.y = trRight.flFraction > trLeft.flFraction ? -120.0f : 120.0f;
+		m_fTurning = true;
+	}
+
+	if (static_cast<CBaseEntity*>(m_hFlockLeader) == this)
+		FlockCohesion();
+	pev->velocity = gpGlobals->v_forward * pev->speed;
+	TraceResult trDown;
+	UTIL_TraceLine(pev->origin, pev->origin - gpGlobals->v_up * 16.0f, ignore_monsters, ENT(pev), &trDown);
+	if (trDown.flFraction != 1.0f && pev->velocity.z < 0.0f)
+		pev->velocity.z = 0.0f;
+	if (FBitSet(pev->flags, 0x200))
+	{
+		UTIL_SetOrigin(pev, pev->origin + Vector(0, 0, 1));
+		pev->velocity.z = 0.0f;
+	}
+	if (m_flNextFormationThink < gpGlobals->time)
+		m_flNextFormationThink = gpGlobals->time + RANDOM_FLOAT(1.0f, 3.0f);
+	UpdateFlightAnimation();
+}
+
 
 //=========================================================
 // decore_butterflyflock - CButterflyFlock. Not a real entity in the

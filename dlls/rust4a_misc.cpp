@@ -298,7 +298,7 @@ public:
 	const char* CustomGibModel() override { return "models/gunnergibs.mdl"; }
 
 protected:
-	void FireRocket(int iAttachment);
+	void FireRocket(int iAttachment, bool bRunAISalvo = false);
 	int m_fHackPitch = 75; // Retail +0x2c0; randomized in Spawn
 	float m_fNextRangeAttack = 0; // Retail +0x2c4
 	int m_iAttackSide = 0;		  // Retail +0x2cc: 1 = right arm sequence, 2 = left arm sequence
@@ -814,7 +814,7 @@ void CGunner::RunAI()
 		--m_iVollyCount;
 		if (m_iVollyCount <= 0)
 			m_iVollyCount = 4;
-		FireRocket(3);
+		FireRocket(3, true);
 	}
 }
 
@@ -979,13 +979,30 @@ static void ApplyGunnerMeleeImpact(CBaseEntity* pVictim, const Vector& vecAttack
 		pMonster->SetActivity(ACT_SMALL_FLINCH);
 }
 
-void CGunner::FireRocket(int iAttachment)
+void CGunner::FireRocket(int iAttachment, bool bRunAISalvo)
 {
 	if (!m_hEnemy)
 		return;
 
 	Vector vecSrc, vecAngles;
 	GetAttachment(iAttachment, vecSrc, vecAngles);
+
+	// RunAI's retail slot-140 path emits this launch cue before the muzzle
+	// effect. The animation-event helper omits this sound.
+	if (bRunAISalvo)
+		EMIT_SOUND_DYN(ENT(pev), CHAN_WEAPON, "weapons/kaboom1.wav", 0.7f, 0.8f, 0, 100);
+
+	// Both retail paths send this muzzle smoke payload at the attachment
+	// point (TE_SMOKE, scale 10, rate 16).
+	MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, vecSrc);
+	WRITE_BYTE(TE_SMOKE);
+	WRITE_COORD(vecSrc.x);
+	WRITE_COORD(vecSrc.y);
+	WRITE_COORD(vecSrc.z);
+	WRITE_SHORT(g_sModelIndexSmoke);
+	WRITE_BYTE(10);
+	WRITE_BYTE(16);
+	MESSAGE_END();
 
 	Vector vecDir = (m_hEnemy->pev->origin - vecSrc).Normalize();
 

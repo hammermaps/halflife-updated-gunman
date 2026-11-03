@@ -47,6 +47,7 @@
 #include "soundent.h"
 #include "human_base.h"
 #include "chemgrenade.h"
+#include "dbg_log.h"
 
 class CHumanScientist : public CHumanBase
 {
@@ -172,7 +173,7 @@ void CHumanScientist::Spawn()
 
 // Retail @0x100b2080 (Slot 80): Wurfpruefung der Chemie-Granate. Bei nicht erledigter Wartezeit gilt das alte
 // Ergebnis. Das Ziel muss am Boden oder im Wasser sein; Zielpunkt = Koerperziel des Feindes relativ zu seiner
-// letzten bekannten Position; Wurfbahn per VecCheckToss; Wiederholung nach 0,3 s (Erfolg) bzw. 0,2 s (Fehlschlag).
+// letzten bekannten Position; Wurfbahn per Retail-VecCheckThrow (Speed 600, Gravity 1,5); Wiederholung nach 0,3 s (Erfolg) bzw. 0,2 s (Fehlschlag).
 // Das Retail-Statusbit this+0xbc & 0x10 entspricht bits_COND_SEE_ENEMY;
 // in diesem Zustand korrigiert Retail den Granatenwurf um den Gegner-Vorhalt.
 bool CHumanScientist::CheckRangeAttack1(float flDot, float flDist)
@@ -197,7 +198,10 @@ bool CHumanScientist::CheckRangeAttack1(float flDot, float flDist)
 		const float flLeadTime = (vecTarget - pev->origin).Length() / 900.0f;
 		vecTarget = vecTarget + m_hEnemy->pev->velocity * flLeadTime;
 	}
-	const Vector vecToss = VecCheckToss(pev, GetGunPosition(), vecTarget, 0.5f);
+	// Retail pushes speed=600 and gravity adjustment=1.5 before its throw
+	// solver (0x10021250). The grenade's Spawn path uses gravity 1.5 too;
+	// VecCheckToss(..., 0.5) produced a steep arc that landed short in-game.
+	const Vector vecToss = VecCheckThrow(pev, GetGunPosition(), vecTarget, 600.0f, 1.5f);
 
 	if (vecToss == g_vecZero)
 	{
@@ -293,11 +297,18 @@ void CHumanScientist::ThrowChemGrenade()
 		pGrenade = CChemGrenade::ShootBouncing(pev, GetGunPosition(), m_vecTossVelocity, params); // Zuendzeit (int)(flBounce * 0.1) s im Erzeuger
 	if (pGrenade)
 		pGrenade->pev->gravity = 1.5f;
+	DBG_LOG("EVILSCIENTIST %d ThrowChemGrenade chemical=%d contact=%d projectile=%d origin=(%.1f %.1f %.1f) velocity=(%.1f %.1f %.1f)",
+		ENTINDEX(edict()), params.iType, bContact ? 1 : 0, pGrenade ? ENTINDEX(pGrenade->edict()) : 0,
+		pGrenade ? pGrenade->pev->origin.x : 0.0f, pGrenade ? pGrenade->pev->origin.y : 0.0f, pGrenade ? pGrenade->pev->origin.z : 0.0f,
+		m_vecTossVelocity.x, m_vecTossVelocity.y, m_vecTossVelocity.z);
 }
 
 // Retail @0x100b2690 (Slot 58)
 void CHumanScientist::HandleAnimEvent(MonsterEvent_t* pEvent)
 {
+	DBG_LOG("EVILSCIENTIST %d HandleAnimEvent event=%d frame=%.1f seq=%d enemy=%s",
+		ENTINDEX(edict()), pEvent->event, pev->frame, pev->sequence,
+		m_hEnemy ? STRING(m_hEnemy->pev->classname) : "none");
 	switch (pEvent->event)
 	{
 	case 1:

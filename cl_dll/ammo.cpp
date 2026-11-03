@@ -198,6 +198,9 @@ void WeaponsResource::LoadWeaponSprites(WEAPON* pWeapon)
 // Returns the first weapon for a given slot.
 WEAPON* WeaponsResource::GetFirstPos(int iSlot)
 {
+	if (iSlot < 0 || iSlot >= MAX_WEAPON_SLOT_COUNT)
+		return NULL;
+
 	WEAPON* pret = NULL;
 
 	for (int i = 0; i < MAX_WEAPON_POSITIONS; i++)
@@ -215,15 +218,17 @@ WEAPON* WeaponsResource::GetFirstPos(int iSlot)
 
 WEAPON* WeaponsResource::GetNextActivePos(int iSlot, int iSlotPos)
 {
-	if (iSlotPos >= MAX_WEAPON_POSITIONS || iSlot >= MAX_WEAPON_SLOTS)
+	if (iSlot < 0 || iSlot >= MAX_WEAPON_SLOT_COUNT || iSlotPos < -1 || iSlotPos >= MAX_WEAPON_POSITIONS - 1)
 		return NULL;
 
-	WEAPON* p = gWR.rgSlots[iSlot][iSlotPos + 1];
+	for (int pos = iSlotPos + 1; pos < MAX_WEAPON_POSITIONS; ++pos)
+	{
+		WEAPON* p = rgSlots[iSlot][pos];
+		if (p && HasAmmo(p))
+			return p;
+	}
 
-	if (!p || !gWR.HasAmmo(p))
-		return GetNextActivePos(iSlot, iSlotPos + 1);
-
-	return p;
+	return NULL;
 }
 
 
@@ -417,7 +422,7 @@ void WeaponsResource::SelectSlot(int iSlot, bool fAdvance, int iDirection)
 		return;
 	}
 
-	if (iSlot > MAX_WEAPON_SLOTS)
+	if (iSlot < 0 || iSlot >= MAX_WEAPON_SLOT_COUNT)
 		return;
 
 	if (gHUD.m_fPlayerDead || (gHUD.m_iHideHUDDisplay & (HIDEHUD_WEAPONS | HIDEHUD_ALL)) != 0)
@@ -659,10 +664,10 @@ bool CHudAmmo::MsgFunc_WeaponList(const char* pszName, int iSize, void* pbuf)
 	if (Weapon.iId < 0 || Weapon.iId >= MAX_WEAPONS)
 		return 0;
 
-	if (Weapon.iSlot < 0 || Weapon.iSlot >= MAX_WEAPON_SLOTS + 1)
+	if (Weapon.iSlot < 0 || Weapon.iSlot >= MAX_WEAPON_SLOT_COUNT)
 		return 0;
 
-	if (Weapon.iSlotPos < 0 || Weapon.iSlotPos >= MAX_WEAPON_POSITIONS + 1)
+	if (Weapon.iSlotPos < 0 || Weapon.iSlotPos >= MAX_WEAPON_POSITIONS)
 		return 0;
 
 	if (Weapon.iAmmoType < -1 || Weapon.iAmmoType >= MAX_AMMO_TYPES)
@@ -776,7 +781,7 @@ void CHudAmmo::UserCmd_NextWeapon()
 
 	for (int loop = 0; loop <= 1; loop++)
 	{
-		for (; slot < MAX_WEAPON_SLOTS; slot++)
+		for (; slot < MAX_WEAPON_SLOT_COUNT; slot++)
 		{
 			for (; pos < MAX_WEAPON_POSITIONS; pos++)
 			{
@@ -808,7 +813,7 @@ void CHudAmmo::UserCmd_PrevWeapon()
 		gpActiveSel = m_pWeapon;
 
 	int pos = MAX_WEAPON_POSITIONS - 1;
-	int slot = MAX_WEAPON_SLOTS - 1;
+	int slot = MAX_WEAPON_SLOT_COUNT - 1;
 	if (gpActiveSel)
 	{
 		pos = gpActiveSel->iSlotPos - 1;
@@ -833,7 +838,7 @@ void CHudAmmo::UserCmd_PrevWeapon()
 			pos = MAX_WEAPON_POSITIONS - 1;
 		}
 
-		slot = MAX_WEAPON_SLOTS - 1;
+			slot = MAX_WEAPON_SLOT_COUNT - 1;
 	}
 
 	gpActiveSel = NULL;
@@ -975,6 +980,8 @@ int DrawBar(int x, int y, int width, int height, float f)
 
 	if (0 != f)
 	{
+		// Retail __ftol sets the x87 rounding mode to truncate before FISTP;
+		// the float-to-int cast below matches that conversion.
 		int w = f * width;
 
 		// Always show at least one pixel if we have ammo.
@@ -986,9 +993,8 @@ int DrawBar(int x, int y, int width, int height, float f)
 		width -= w;
 	}
 
-	UnpackRGB(r, g, b, RGB_YELLOWISH);
-
-	FillRGBA(x, y, width, height, r, g, b, 128);
+	// Retail FUN_10024d70 fills the remainder with (R,G,B,A)=(255,255,128,128).
+	FillRGBA(x, y, width, height, 255, 255, 128, 128);
 
 	return (x + width);
 }
@@ -1031,157 +1037,62 @@ void DrawAmmoBar(WEAPON* p, int x, int y, int width, int height)
 //
 bool CHudAmmo::DrawWList(float flTime)
 {
-	int r, g, b, x, y, a, i;
-
 	if (!gpActiveSel)
 		return false;
 
-	int iActiveSlot;
-
 	if (gpActiveSel == (WEAPON*)1)
-		iActiveSlot = -1; // current slot has no weapons
-	else
-		iActiveSlot = gpActiveSel->iSlot;
+		return true;
 
-	x = 10; //!!!
-	y = 10; //!!!
+	const int slot = gpActiveSel->iSlot;
+	if (slot < 0 || slot >= MAX_WEAPON_SLOT_COUNT)
+		return false;
 
-
-	// Ensure that there are available choices in the active slot
-	if (iActiveSlot > 0)
+	if (!gWR.GetFirstPos(slot))
 	{
-		if (!gWR.GetFirstPos(iActiveSlot))
-		{
-			gpActiveSel = (WEAPON*)1;
-			iActiveSlot = -1;
-		}
+		gpActiveSel = (WEAPON*)1;
+		return true;
 	}
 
-	// Draw top line
-	for (i = 0; i < MAX_WEAPON_SLOTS; i++)
+	// Retail presents the selected slot as a vertical list at the right edge.
+	const int x = ScreenWidth < 641 ? ScreenWidth - 128 : ScreenWidth - 256;
+	int y = 0;
+	for (int iPos = 0; iPos < MAX_WEAPON_POSITIONS; ++iPos)
 	{
-		int iWidth;
+		WEAPON* p = gWR.GetWeaponSlot(slot, iPos);
+		if (!p || p->iId == 0)
+			continue;
 
+		int r, g, b;
 		UnpackRGB(r, g, b, RGB_YELLOWISH);
-
-		if (iActiveSlot == i)
-			a = 255;
-		else
-			a = 192;
-
-		ScaleColors(r, g, b, 255);
-		SPR_Set(gHUD.GetSprite(m_HUD_bucket0 + i), r, g, b);
-
-		// make active slot wide enough to accomodate gun pictures
-		if (i == iActiveSlot)
+		const bool selected = gpActiveSel == p;
+		const bool activeSprite = selected && p->hActive != 0;
+		const Rect& rect = activeSprite ? p->rcActive : p->rcInactive;
+		const HSPRITE sprite = activeSprite ? p->hActive : p->hInactive;
+		if (!selected && !gWR.HasAmmo(p))
 		{
-			WEAPON* p = gWR.GetFirstPos(iActiveSlot);
-			if (p)
-				iWidth = p->rcActive.right - p->rcActive.left;
-			else
-				iWidth = giBucketWidth;
+			UnpackRGB(r, g, b, RGB_REDISH);
+			ScaleColors(r, g, b, 128);
 		}
-		else
-			iWidth = giBucketWidth;
-
-		SPR_DrawAdditive(0, x, y, &gHUD.GetSpriteRect(m_HUD_bucket0 + i));
-
-		x += iWidth + 5;
-	}
-
-
-	a = 128; //!!!
-	x = 10;
-
-	// Draw all of the buckets
-	for (i = 0; i < MAX_WEAPON_SLOTS; i++)
-	{
-		y = giBucketHeight + 10;
-
-		// If this is the active slot, draw the bigger pictures,
-		// otherwise just draw boxes
-		if (i == iActiveSlot)
+		else if (!selected)
 		{
-			WEAPON* p = gWR.GetFirstPos(i);
-			int iWidth = giBucketWidth;
-			if (p)
-				iWidth = p->rcActive.right - p->rcActive.left;
+			ScaleColors(r, g, b, 192);
+		}
 
-			for (int iPos = 0; iPos < MAX_WEAPON_POSITIONS; iPos++)
+		if (sprite != 0)
+		{
+			SPR_Set(sprite, r, g, b);
+			SPR_DrawAdditive(0, x, y, &rect);
+			if (selected && m_HUD_selection >= 0)
 			{
-				p = gWR.GetWeaponSlot(i, iPos);
-
-				if (!p || 0 == p->iId)
-					continue;
-
-				UnpackRGB(r, g, b, RGB_YELLOWISH);
-
-				// if active, then we must have ammo.
-
-				if (gpActiveSel == p)
-				{
-					SPR_Set(p->hActive, r, g, b);
-					SPR_DrawAdditive(0, x, y, &p->rcActive);
-
-					SPR_Set(gHUD.GetSprite(m_HUD_selection), r, g, b);
-					SPR_DrawAdditive(0, x, y, &gHUD.GetSpriteRect(m_HUD_selection));
-				}
-				else
-				{
-					// Draw Weapon if Red if no ammo
-
-					if (gWR.HasAmmo(p))
-						ScaleColors(r, g, b, 192);
-					else
-					{
-						UnpackRGB(r, g, b, RGB_REDISH);
-						ScaleColors(r, g, b, 128);
-					}
-
-					SPR_Set(p->hInactive, r, g, b);
-					SPR_DrawAdditive(0, x, y, &p->rcInactive);
-				}
-
-				// Draw Ammo Bar
-
-				DrawAmmoBar(p, x + giABWidth / 2, y, giABWidth, giABHeight);
-
-				y += p->rcActive.bottom - p->rcActive.top + 5;
+				SPR_Set(gHUD.GetSprite(m_HUD_selection), r, g, b);
+				SPR_DrawAdditive(0, x, y, &gHUD.GetSpriteRect(m_HUD_selection));
 			}
-
-			x += iWidth + 5;
 		}
-		else
-		{
-			// Draw Row of weapons.
 
-			UnpackRGB(r, g, b, RGB_YELLOWISH);
-
-			for (int iPos = 0; iPos < MAX_WEAPON_POSITIONS; iPos++)
-			{
-				WEAPON* p = gWR.GetWeaponSlot(i, iPos);
-
-				if (!p || 0 == p->iId)
-					continue;
-
-				if (gWR.HasAmmo(p))
-				{
-					UnpackRGB(r, g, b, RGB_YELLOWISH);
-					a = 128;
-				}
-				else
-				{
-					UnpackRGB(r, g, b, RGB_REDISH);
-					a = 96;
-				}
-
-				FillRGBA(x, y, giBucketWidth, giBucketHeight, r, g, b, a);
-
-				y += giBucketHeight + 5;
-			}
-
-			x += giBucketWidth + 5;
-		}
+		const int iconWidth = rect.right - rect.left;
+		const int iconHeight = rect.bottom - rect.top;
+		DrawAmmoBar(p, x + iconWidth + 4, y + iconHeight / 2, giABWidth, giABHeight);
+		y += iconHeight + 9 + (ScreenWidth > 640 ? 10 : 0);
 	}
 
 	return true;

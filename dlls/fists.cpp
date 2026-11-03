@@ -35,16 +35,14 @@
 //   branch taken, i.e. LeftPunch1-3.wav are precached but this
 //   function never plays them. Knife mode hit alternates
 //   KnifeAttack2.wav / KnifeAttack2b.wav by parity.
-// - Damage type/amount and the exact per-branch timer constants
-//   (param_1[0x1e]/[0x37]) were not reliably recoverable from this
-//   decompile (Ghidra flagged "type propagation not settling" and
-//   several float constants are opaque without deeper analysis
-//   disproportionate to this weapon's scope). Simplified here:
+// - Damage type/amount remain uncertain. The fresh Swing decompile
+//   does recover the primary-attack timers in param_1[0x1e]; these
+//   are applied per mode/parity below. The separate 8-13s value written
+//   to param_1[0x37] by PrimaryAttack is not mapped to an SDK field.
+//   Damage is still simplified here:
 //   damage reuses gSkillData.plrDmgCrowbar like the stock crowbar,
 //   DMG_CLUB for fist mode and DMG_SLASH for knife mode (a reasoned
-//   choice matching the mode's real-world analogue, not decompiled),
-//   and attack-delay timing follows CCrowbar's GetNextAttackDelay
-//   pattern rather than the untranslated opaque constants above.
+//   choice matching the mode's real-world analogue, not decompiled).
 // - LeftPunch1-3.wav are precached (per the original findings doc)
 //   but confirmed unused in this function; kept in Precache() only
 //   because they are genuinely precached in retail, not because
@@ -303,7 +301,8 @@ bool CFists::Swing(bool fFirst)
 			// Miss - confirmed identical for both parity variants:
 			// fist mode always plays cbar_miss1.wav, knife mode
 			// alternates KnifeAttack1/1b.wav by parity.
-			m_flNextPrimaryAttack = GetNextAttackDelay(0.5);
+			const float flAttackDelay = fKnife ? (iVariant == 0 ? 0.65f : 0.5f) : 0.4f;
+			m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + flAttackDelay;
 
 			SendWeaponAnim(fKnife ? FISTS_KNIFEATTACK1 : FISTS_RIGHTPUNCH, m_iMode);
 			m_pPlayer->SetAnimation(PLAYER_ATTACK1);
@@ -343,7 +342,8 @@ bool CFists::Swing(bool fFirst)
 
 #endif
 
-		m_flNextPrimaryAttack = GetNextAttackDelay(0.25);
+		const float flAttackDelay = fKnife ? (iVariant == 0 ? 0.5f : 0.45f) : 0.2f;
+		m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + flAttackDelay;
 
 #ifndef CLIENT_DLL
 		if (fKnife)

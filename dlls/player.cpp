@@ -111,7 +111,6 @@ TYPEDESCRIPTION CBasePlayer::m_playerSaveData[] =
 
 		DEFINE_FIELD(CBasePlayer, m_pTank, FIELD_EHANDLE),
 		DEFINE_FIELD(CBasePlayer, m_fHasTankGas, FIELD_BOOLEAN),
-		DEFINE_FIELD(CBasePlayer, m_fTankGasFlag279, FIELD_BOOLEAN),
 		DEFINE_FIELD(CBasePlayer, m_hViewEntity, FIELD_EHANDLE),
 		DEFINE_FIELD(CBasePlayer, m_iHideHUD, FIELD_INTEGER),
 		DEFINE_FIELD(CBasePlayer, m_iFOV, FIELD_INTEGER),
@@ -4279,6 +4278,18 @@ void CBasePlayer::UpdateClientData()
 		MESSAGE_END();
 
 		m_iTrain &= ~TRAIN_NEW;
+	}
+
+	// Retail client-data update checks player bytes +0x279 and +0x278:
+	// when tank gas is still held but its Tank(3) state was invalidated,
+	// resend that state once. Dismount clears only the sent-state byte, so
+	// this restores the gascan HUD state after leaving the tank.
+	if (!m_fTankGasFlag279 && m_fHasTankGas)
+	{
+		m_fTankGasFlag279 = true;
+		MESSAGE_BEGIN(MSG_ONE, gmsgTank, NULL, pev);
+		WRITE_SHORT(3);
+		MESSAGE_END();
 	}
 
 	//

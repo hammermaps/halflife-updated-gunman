@@ -4099,7 +4099,6 @@ bool CGunmanItemGasCan::MyTouch(CBasePlayer* pPlayer)
 {
 	if (pPlayer->m_fHasTankGas)
 		return false;
-
 	pPlayer->m_fHasTankGas = true;
 	pPlayer->m_fTankGasFlag279 = true;
 	MESSAGE_BEGIN(MSG_ONE, gmsgTank, NULL, pPlayer->pev);

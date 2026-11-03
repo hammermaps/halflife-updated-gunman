@@ -35,6 +35,11 @@ void CShotgun::Spawn()
 	SET_MODEL(ENT(pev), "models/w_shotgun.mdl");
 
 	m_iDefaultAmmo = SHOTGUN_DEFAULT_GIVE;
+	m_iClip = WEAPON_NOCLIP;
+	m_vecSpread = Vector(0.08716f, 0.08716f, 0.08716f);
+	m_iSlidePos = Vector(2, 0, 2);
+	m_iNumShells = 2;
+	m_flNextCustomize = 0;
 
 	FallInit(); // get ready to fall
 }
@@ -62,8 +67,7 @@ void CShotgun::Precache()
 	PrecacheSound("weapons/357_cock1.wav"); // gun empty sound
 	PrecacheSound("weapons/scock1.wav");	 // cock gun
 
-	m_usSingleFire = PrecacheEvent(1, "events/shotgun1.sc");
-	m_usDoubleFire = PrecacheEvent(1, "events/shotgun2.sc");
+	m_usFire = PrecacheEvent(1, "events/gw_shotgun.sc");
 }
 
 bool CShotgun::GetItemInfo(ItemInfo* p)
@@ -92,28 +96,106 @@ bool CShotgun::Deploy()
 	return DefaultDeploy("models/v_shotgun.mdl", "models/p_shotgun.mdl", 0, "shotgun");
 }
 
+void CShotgun::ApplyCustomSetting(char option, int value)
+{
+	if (option == '1')
+	{
+		m_iSlidePos.x = (float)value;
+		switch (value)
+		{
+		case 1: m_vecSpread = Vector(0.05234f, 0.05234f, 0.05234f); break;
+		case 2: m_vecSpread = Vector(0.08716f, 0.08716f, 0.08716f); break;
+		case 3: m_vecSpread = Vector(0.13053f, 0.13053f, 0.13053f); break;
+		case 4: m_vecSpread = Vector(0.17365f, 0.17365f, 0.17365f); break;
+		default: m_vecSpread = Vector(0.02618f, 0.02618f, 0.02618f); break;
+		}
+	}
+	else if (option == '2')
+	{
+		m_iNumShells = value;
+		m_iSlidePos.z = (float)value;
+		switch (value)
+		{
+		case 1: m_iSlidePos.y = 4; break;
+		case 2: m_iSlidePos.y = 8; break;
+		case 3: m_iSlidePos.y = 11; break;
+		case 4: m_iSlidePos.y = 13; break;
+		}
+	}
+
+	const float flTime = UTIL_WeaponTimeBase();
+	if (m_flNextCustomize < flTime)
+	{
+		SendWeaponAnim(7);
+		m_flNextCustomize = flTime;
+		m_flTimeWeaponIdle = flTime + RANDOM_FLOAT(1.0f, 10.0f);
+	}
+}
+
 void CShotgun::PrimaryAttack()
 {
-	// don't fire underwater
-	if (m_pPlayer->pev->waterlevel == 3)
+	// Retail uses a player ammo-pool count and m_iNumShells, not a
+	// magazine clip. Its three spread values are refreshed per shot.
+	switch ((int)m_iSlidePos.x)
+	{
+	case 1:
+		m_vecSpread = Vector(0.05234f, 0.05234f, 0.05234f);
+		break;
+	case 2:
+		m_vecSpread = Vector(0.10906f, 0.10906f, 0.10906f);
+		break;
+	case 3:
+	default:
+		m_vecSpread = Vector(0.17365f, 0.17365f, 0.17365f);
+		break;
+	}
+
+	const int iAmmoAvailable = m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType];
+	if (iAmmoAvailable <= 0)
 	{
 		PlayEmptySound();
-		m_flNextPrimaryAttack = GetNextAttackDelay(0.15);
+		m_flNextPrimaryAttack = UTIL_WeaponTimeBase();
 		return;
 	}
 
-	if (m_iClip <= 0)
+	int iShellsFired = m_iNumShells;
+	int iPellets = (int)m_iSlidePos.y;
+	if (iAmmoAvailable < m_iNumShells)
 	{
-		Reload();
-		if (m_iClip == 0)
-			PlayEmptySound();
-		return;
+		iShellsFired = iAmmoAvailable;
+		m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType] = 0;
+		switch (iShellsFired)
+		{
+		case 1: iPellets = 4; break;
+		case 2: iPellets = 7; break;
+		case 3: iPellets = 9; break;
+		case 4: iPellets = 11; break;
+		default: iPellets = 0; break;
+		}
 	}
+	else
+	{
+		m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType] -= m_iNumShells;
+		switch (m_iNumShells)
+		{
+		case 1: iPellets = 4; break;
+		case 2: iPellets = 7; break;
+		case 3: iPellets = 9; break;
+		case 4: iPellets = 11; break;
+		default: iPellets = 0; break;
+		}
+
+		if (g_pGameRules->IsMultiplayer())
+		{
+			if (m_iNumShells == 2) iPellets = 8;
+			else if (m_iNumShells == 3) iPellets = 12;
+			else if (m_iNumShells == 4) iPellets = 16;
+		}
+	}
+	m_iSlidePos.y = (float)iPellets;
 
 	m_pPlayer->m_iWeaponVolume = LOUD_GUN_VOLUME;
 	m_pPlayer->m_iWeaponFlash = NORMAL_GUN_FLASH;
-
-	m_iClip--;
 
 	int flags;
 #if defined(CLIENT_WEAPONS)
@@ -128,161 +210,23 @@ void CShotgun::PrimaryAttack()
 	Vector vecSrc = m_pPlayer->GetGunPosition();
 	Vector vecAiming = m_pPlayer->GetAutoaimVector(AUTOAIM_5DEGREES);
 
-	Vector vecDir;
+	m_pPlayer->FireBulletsPlayer(iPellets, vecSrc, vecAiming, m_vecSpread,
+		2048, BULLET_PLAYER_BUCKSHOT, 0, 0, m_pPlayer->pev,
+		m_pPlayer->random_seed);
 
-#ifdef CLIENT_DLL
-	if (bIsMultiplayer())
-#else
-	if (g_pGameRules->IsMultiplayer())
-#endif
-	{
-		vecDir = m_pPlayer->FireBulletsPlayer(4, vecSrc, vecAiming, VECTOR_CONE_DM_SHOTGUN, 2048, BULLET_PLAYER_BUCKSHOT, 0, 0, m_pPlayer->pev, m_pPlayer->random_seed);
-	}
-	else
-	{
-		// regular old, untouched spread.
-		vecDir = m_pPlayer->FireBulletsPlayer(6, vecSrc, vecAiming, VECTOR_CONE_10DEGREES, 2048, BULLET_PLAYER_BUCKSHOT, 0, 0, m_pPlayer->pev, m_pPlayer->random_seed);
-	}
+	PLAYBACK_EVENT_FULL(flags, m_pPlayer->edict(), m_usFire, 0.0,
+		g_vecZero, g_vecZero, 0, 0, (int)m_iSlidePos.x, m_iNumShells, 0, 0);
 
-	PLAYBACK_EVENT_FULL(flags, m_pPlayer->edict(), m_usSingleFire, 0.0, g_vecZero, g_vecZero, vecDir.x, vecDir.y, 0, 0, 0, 0);
-
-
-	if (0 == m_iClip && m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType] <= 0)
+	if (m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType] <= 0)
 		// HEV suit - indicate out of ammo condition
 		m_pPlayer->SetSuitUpdate("!HEV_AMO0", false, 0);
 
 	//if (m_iClip != 0)
-	m_flPumpTime = gpGlobals->time + 0.5;
+	m_flPumpTime = UTIL_WeaponTimeBase();
 
-	m_flNextPrimaryAttack = GetNextAttackDelay(0.75);
-	m_flNextSecondaryAttack = UTIL_WeaponTimeBase() + 0.75;
-	if (m_iClip != 0)
-		m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 5.0;
-	else
-		m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 1;
-	m_fInSpecialReload = 0;
-}
-
-
-void CShotgun::SecondaryAttack()
-{
-	// don't fire underwater
-	if (m_pPlayer->pev->waterlevel == 3)
-	{
-		PlayEmptySound();
-		m_flNextPrimaryAttack = GetNextAttackDelay(0.15);
-		return;
-	}
-
-	if (m_iClip <= 1)
-	{
-		Reload();
-		PlayEmptySound();
-		return;
-	}
-
-	m_pPlayer->m_iWeaponVolume = LOUD_GUN_VOLUME;
-	m_pPlayer->m_iWeaponFlash = NORMAL_GUN_FLASH;
-
-	m_iClip -= 2;
-
-
-	int flags;
-#if defined(CLIENT_WEAPONS)
-	flags = FEV_NOTHOST;
-#else
-	flags = 0;
-#endif
-
-	m_pPlayer->pev->effects = (int)(m_pPlayer->pev->effects) | EF_MUZZLEFLASH;
-
-	// player "shoot" animation
-	m_pPlayer->SetAnimation(PLAYER_ATTACK1);
-
-	Vector vecSrc = m_pPlayer->GetGunPosition();
-	Vector vecAiming = m_pPlayer->GetAutoaimVector(AUTOAIM_5DEGREES);
-
-	Vector vecDir;
-
-#ifdef CLIENT_DLL
-	if (bIsMultiplayer())
-#else
-	if (g_pGameRules->IsMultiplayer())
-#endif
-	{
-		// tuned for deathmatch
-		vecDir = m_pPlayer->FireBulletsPlayer(8, vecSrc, vecAiming, VECTOR_CONE_DM_DOUBLESHOTGUN, 2048, BULLET_PLAYER_BUCKSHOT, 0, 0, m_pPlayer->pev, m_pPlayer->random_seed);
-	}
-	else
-	{
-		// untouched default single player
-		vecDir = m_pPlayer->FireBulletsPlayer(12, vecSrc, vecAiming, VECTOR_CONE_10DEGREES, 2048, BULLET_PLAYER_BUCKSHOT, 0, 0, m_pPlayer->pev, m_pPlayer->random_seed);
-	}
-
-	PLAYBACK_EVENT_FULL(flags, m_pPlayer->edict(), m_usDoubleFire, 0.0, g_vecZero, g_vecZero, vecDir.x, vecDir.y, 0, 0, 0, 0);
-
-	if (0 == m_iClip && m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType] <= 0)
-		// HEV suit - indicate out of ammo condition
-		m_pPlayer->SetSuitUpdate("!HEV_AMO0", false, 0);
-
-	//if (m_iClip != 0)
-	m_flPumpTime = gpGlobals->time + 0.95;
-
-	m_flNextPrimaryAttack = GetNextAttackDelay(1.5);
-	m_flNextSecondaryAttack = UTIL_WeaponTimeBase() + 1.5;
-	if (m_iClip != 0)
-		m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 6.0;
-	else
-		m_flTimeWeaponIdle = 1.5;
-
-	m_fInSpecialReload = 0;
-}
-
-
-void CShotgun::Reload()
-{
-	if (m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType] <= 0 || m_iClip == SHOTGUN_MAX_CLIP)
-		return;
-
-	// don't reload until recoil is done
-	if (m_flNextPrimaryAttack > UTIL_WeaponTimeBase())
-		return;
-
-	// check to see if we're ready to reload
-	if (m_fInSpecialReload == 0)
-	{
-		SendWeaponAnim(SHOTGUN_START_RELOAD);
-		m_fInSpecialReload = 1;
-		m_pPlayer->m_flNextAttack = UTIL_WeaponTimeBase() + 0.6;
-		m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 0.6;
-		m_flNextPrimaryAttack = GetNextAttackDelay(1.0);
-		m_flNextSecondaryAttack = UTIL_WeaponTimeBase() + 1.0;
-		return;
-	}
-	else if (m_fInSpecialReload == 1)
-	{
-		if (m_flTimeWeaponIdle > UTIL_WeaponTimeBase())
-			return;
-		// was waiting for gun to move to side
-		m_fInSpecialReload = 2;
-
-		if (RANDOM_LONG(0, 1))
-			EMIT_SOUND_DYN(ENT(m_pPlayer->pev), CHAN_ITEM, "weapons/reload1.wav", 1, ATTN_NORM, 0, 85 + RANDOM_LONG(0, 0x1f));
-		else
-			EMIT_SOUND_DYN(ENT(m_pPlayer->pev), CHAN_ITEM, "weapons/reload3.wav", 1, ATTN_NORM, 0, 85 + RANDOM_LONG(0, 0x1f));
-
-		SendWeaponAnim(SHOTGUN_RELOAD);
-
-		m_flNextReload = UTIL_WeaponTimeBase() + 0.5;
-		m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 0.5;
-	}
-	else
-	{
-		// Add them to the clip
-		m_iClip += 1;
-		m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType] -= 1;
-		m_fInSpecialReload = 1;
-	}
+	m_flNextPrimaryAttack = UTIL_WeaponTimeBase();
+	m_flNextSecondaryAttack = UTIL_WeaponTimeBase();
+	m_flTimeWeaponIdle = UTIL_WeaponTimeBase();
 }
 
 
@@ -292,59 +236,17 @@ void CShotgun::WeaponIdle()
 
 	m_pPlayer->GetAutoaimVector(AUTOAIM_5DEGREES);
 
-	//Moved to ItemPostFrame
-	/*
-	if ( m_flPumpTime && m_flPumpTime < gpGlobals->time )
-	{
-		// play pumping sound
-		EMIT_SOUND_DYN(ENT(m_pPlayer->pev), CHAN_ITEM, "weapons/scock1.wav", 1, ATTN_NORM, 0, 95 + RANDOM_LONG(0,0x1f));
-		m_flPumpTime = 0;
-	}
-	*/
-
 	if (m_flTimeWeaponIdle < UTIL_WeaponTimeBase())
 	{
-		if (m_iClip == 0 && m_fInSpecialReload == 0 && 0 != m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType])
+		if (RANDOM_FLOAT(0, 1) > 0)
 		{
-			Reload();
-		}
-		else if (m_fInSpecialReload != 0)
-		{
-			if (m_iClip != 8 && 0 != m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType])
-			{
-				Reload();
-			}
-			else
-			{
-				// reload debounce has timed out
-				SendWeaponAnim(SHOTGUN_PUMP);
-
-				// play cocking sound
-				EMIT_SOUND_DYN(ENT(m_pPlayer->pev), CHAN_ITEM, "weapons/scock1.wav", 1, ATTN_NORM, 0, 95 + RANDOM_LONG(0, 0x1f));
-				m_fInSpecialReload = 0;
-				m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 1.5;
-			}
+			SendWeaponAnim(2);
+			m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + RANDOM_LONG(7, 13);
 		}
 		else
 		{
-			int iAnim;
-			float flRand = UTIL_SharedRandomFloat(m_pPlayer->random_seed, 0, 1);
-			if (flRand <= 0.8)
-			{
-				iAnim = SHOTGUN_IDLE_DEEP;
-				m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + (60.0 / 12.0); // * RANDOM_LONG(2, 5);
-			}
-			else if (flRand <= 0.95)
-			{
-				iAnim = SHOTGUN_IDLE;
-				m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + (20.0 / 9.0);
-			}
-			else
-			{
-				iAnim = SHOTGUN_IDLE4;
-				m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + (20.0 / 9.0);
-			}
-			SendWeaponAnim(iAnim);
+			SendWeaponAnim(1);
+			m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + RANDOM_LONG(2, 5);
 		}
 	}
 }

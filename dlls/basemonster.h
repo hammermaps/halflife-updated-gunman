@@ -15,6 +15,9 @@
 
 #pragma once
 
+// Set by the sv_cheats-only dbg_monsters command for a short diagnostic trace.
+extern float g_flDbgMonsterStateTraceUntil;
+
 //
 // generic Monster
 //

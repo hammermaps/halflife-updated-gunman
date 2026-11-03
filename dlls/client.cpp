@@ -38,6 +38,7 @@ bool g_bDbgCamTrack = false;
 #include "com_model.h"
 #include "saverestore.h"
 #include "player.h"
+#include "monsters.h"
 #include "spectator.h"
 #include "client.h"
 #include "soundent.h"
@@ -46,6 +47,7 @@ bool g_bDbgCamTrack = false;
 #include "customentity.h"
 #include "weapons.h"
 #include "weaponinfo.h"
+#include "schedule.h"
 #include "usercmd.h"
 #include "netadr.h"
 #include "pm_shared.h"
@@ -55,6 +57,8 @@ bool g_bDbgCamTrack = false;
 DLL_GLOBAL unsigned int g_ulFrameCount;
 
 extern void CopyToBodyQue(entvars_t* pev);
+extern bool g_bDbgRouteProbe;
+extern bool g_bDbgRouteExpandedOnly;
 
 void LinkUserMessages();
 
@@ -673,6 +677,93 @@ void ClientCommand(edict_t* pEntity)
 		pev->velocity = g_vecZero;
 		pev->basevelocity = g_vecZero;
 		ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs("tp: requested (%.0f %.0f %.0f), placed at (%.0f %.0f %.0f), offset z +%.0f\n", requested.x, requested.y, requested.z, target.x, target.y, target.z, target.z - requested.z));
+	}
+	else if (FStrEq(pcmd, "dbg_route") || FStrEq(pcmd, "dbg_route_expanded"))
+	{
+		// Single local-route probe for separating direct movement, triangulation,
+		// and graph fallback from whatever schedule the selected monster runs.
+		if (0 == g_psv_cheats->value || CMD_ARGC() < 5)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "usage: dbg_route[_expanded] <classname> <x> <y> <z> (needs sv_cheats 1)\n");
+			return;
+		}
+
+		CBaseMonster* pMonster = nullptr;
+		edict_t* pEdict = INDEXENT(1);
+		for (int i = 1; i < gpGlobals->maxEntities; ++i, ++pEdict)
+		{
+			if (pEdict->free || (pEdict->v.flags & FL_MONSTER) == 0 ||
+				!FStrEq(STRING(pEdict->v.classname), CMD_ARGV(1)))
+				continue;
+
+			CBaseEntity* pEntity = CBaseEntity::Instance(pEdict);
+			pMonster = pEntity ? pEntity->MyMonsterPointer() : nullptr;
+			if (pMonster != nullptr)
+				break;
+		}
+
+		if (pMonster == nullptr)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs("dbg_route: no monster '%s'\n", CMD_ARGV(1)));
+			return;
+		}
+
+		const Vector goal(atof(CMD_ARGV(2)), atof(CMD_ARGV(3)), atof(CMD_ARGV(4)));
+		float distanceToBlock = 0.0f;
+		const int localMove = pMonster->CheckLocalMove(pMonster->pev->origin, goal, nullptr, &distanceToBlock);
+		Vector apex = g_vecZero;
+		g_bDbgRouteProbe = true;
+		g_bDbgRouteExpandedOnly = FStrEq(pcmd, "dbg_route_expanded");
+		const bool triangulated = localMove != LOCALMOVE_VALID && localMove != LOCALMOVE_INVALID_DONT_TRIANGULATE &&
+			pMonster->FTriangulate(pMonster->pev->origin, goal, distanceToBlock, nullptr, &apex);
+		g_bDbgRouteExpandedOnly = false;
+		g_bDbgRouteProbe = false;
+		ClientPrint(pev, HUD_PRINTCONSOLE,
+			UTIL_VarArgs("%s local=%d dist=%.0f triangulated=%d apex=(%.0f %.0f %.0f)\n",
+				pcmd, localMove, distanceToBlock, triangulated, apex.x, apex.y, apex.z));
+	}
+	else if (FStrEq(pcmd, "dbg_monsters"))
+	{
+		// Diagnostic snapshot for controlled NPC tests (sv_cheats only).
+		if (0 == g_psv_cheats->value)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "dbg_monsters needs sv_cheats 1\n");
+			return;
+		}
+
+		int count = 0;
+		edict_t* pEdict = INDEXENT(1);
+		for (int i = 1; i < gpGlobals->maxEntities; ++i, ++pEdict)
+		{
+			if (pEdict->free || (pEdict->v.flags & FL_MONSTER) == 0)
+				continue;
+
+			CBaseEntity* pEntity = CBaseEntity::Instance(pEdict);
+			CBaseMonster* pMonster = pEntity ? pEntity->MyMonsterPointer() : nullptr;
+			if (pMonster == nullptr)
+				continue;
+
+			CBaseEntity* pEnemy = pMonster->m_hEnemy;
+			const char* pszSchedule = pMonster->m_pSchedule && pMonster->m_pSchedule->pName
+				? pMonster->m_pSchedule->pName
+				: "<none>";
+			ClientPrint(pev, HUD_PRINTCONSOLE,
+				UTIL_VarArgs("dbg_monsters #%d %s class=%d alpha=%.0f enemy=%s#%d cine=%d state=%d schedule=%s task=%d health=%.0f origin=(%.0f %.0f %.0f) route=%d waypoint=(%.0f %.0f %.0f)\n",
+					ENTINDEX(pMonster->edict()), STRING(pMonster->pev->classname), pMonster->Classify(),
+					pMonster->pev->renderamt,
+					pEnemy ? STRING(pEnemy->pev->classname) : "<none>",
+					pEnemy ? ENTINDEX(pEnemy->edict()) : 0,
+					pMonster->m_pCine != nullptr, pMonster->m_MonsterState, pszSchedule,
+					pMonster->m_iScheduleIndex, pMonster->pev->health,
+					pMonster->pev->origin.x, pMonster->pev->origin.y, pMonster->pev->origin.z,
+					pMonster->m_iRouteIndex,
+					pMonster->m_iRouteIndex >= 0 && pMonster->m_iRouteIndex < ROUTE_SIZE ? pMonster->m_Route[pMonster->m_iRouteIndex].vecLocation.x : 0.0f,
+					pMonster->m_iRouteIndex >= 0 && pMonster->m_iRouteIndex < ROUTE_SIZE ? pMonster->m_Route[pMonster->m_iRouteIndex].vecLocation.y : 0.0f,
+					pMonster->m_iRouteIndex >= 0 && pMonster->m_iRouteIndex < ROUTE_SIZE ? pMonster->m_Route[pMonster->m_iRouteIndex].vecLocation.z : 0.0f));
+			++count;
+		}
+		ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs("dbg_monsters: %d monster(s)\n", count));
+		g_flDbgMonsterStateTraceUntil = gpGlobals->time + 12.0f;
 	}
 	else if (FStrEq(pcmd, "dbg_focus"))
 	{

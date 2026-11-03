@@ -44,11 +44,9 @@
 //   The exact skill-cvar health lookup (FUN_100608d0(DAT_10136ec8))
 //   was not traced to a specific gSkillData field - plausible fixed
 //   health used instead.
-// - CDartTrap: DartShootThink's exact rejection-sampled cone spread
-//   (~40 decompiled lines of vector math) is approximated with simpler
-//   random yaw/pitch jitter scaled by the "spread" keyvalue. CDart's
-//   worldspawn impact path, including its 12-unit embedded presentation,
-//   is reproduced separately below.
+// - CDartTrap: DartShootThink spread and projectile speed are now ported
+//   from the retail rejection-sampled cone and firing helper. CRaptor's
+//   simplified combat details remain listed above.
 //=========================================================
 
 #include "extdll.h"
@@ -97,7 +95,9 @@ void CDart::Spawn()
 	pev->avelocity.z = RANDOM_LONG(-200, 200);
 	SetTouch(&CDart::ShotTouch);
 
-	EMIT_SOUND_DYN(ENT(pev), CHAN_WEAPON, RANDOM_LONG(0, 1) ? "darts/blowdart2.wav" : "darts/blowdart3.wav", 1.0, ATTN_NORM, 0, 100);
+	// Retail FUN_100608b0(0x55) selects blowdart3 on 85 of 100 outcomes.
+	const char* pszFlightSound = RANDOM_LONG(0, 99) < 85 ? "darts/blowdart3.wav" : "darts/blowdart2.wav";
+	EMIT_SOUND_DYN(ENT(pev), CHAN_WEAPON, pszFlightSound, 1.0, ATTN_NORM, 0, 100);
 }
 
 void CDart::ShotTouch(CBaseEntity* pOther)
@@ -235,20 +235,24 @@ void CDartTrap::DartShootThink()
 		m_iDartCount--;
 	}
 
-	UTIL_MakeVectors(pev->angles);
-	Vector vecDir = gpGlobals->v_forward;
-	// Approximated spread cone (see file header) - a simple angular
-	// jitter scaled by the "spread" keyvalue instead of the original's
-	// rejection-sampled unit-disk cone math.
-	if (m_iSpread > 0)
+	const float flSpreadRadians = m_iSpread * 0.00873f;
+	float flRightOffset;
+	float flUpOffset;
+	do
 	{
-		vecDir = vecDir + gpGlobals->v_right * RANDOM_FLOAT(-1, 1) * (m_iSpread * 0.01) + gpGlobals->v_up * RANDOM_FLOAT(-1, 1) * (m_iSpread * 0.01);
-		vecDir = vecDir.Normalize();
-	}
+		// Retail samples each disk coordinate as the sum of two independent
+		// RANDOM_FLOAT(-0.5, 0.5) values, then rejects points outside the unit disk.
+		flRightOffset = RANDOM_FLOAT(-0.5f, 0.5f) + RANDOM_FLOAT(-0.5f, 0.5f);
+		flUpOffset = RANDOM_FLOAT(-0.5f, 0.5f) + RANDOM_FLOAT(-0.5f, 0.5f);
+	} while (flRightOffset * flRightOffset + flUpOffset * flUpOffset > 1.0f);
+
+	UTIL_MakeVectors(pev->angles);
+	Vector vecDir = gpGlobals->v_forward + gpGlobals->v_right * (flSpreadRadians * flRightOffset) + gpGlobals->v_up * (flSpreadRadians * flUpOffset);
+	vecDir = vecDir.Normalize();
 
 	CBaseEntity* pDart = CBaseEntity::Create("monster_darttrap_dart", pev->origin, UTIL_VecToAngles(vecDir), edict());
 	if (pDart)
-		pDart->pev->velocity = vecDir * 400;
+		pDart->pev->velocity = vecDir * 800.0f;
 
 	pev->nextthink = gpGlobals->time + m_flTimeBetweenShots;
 }

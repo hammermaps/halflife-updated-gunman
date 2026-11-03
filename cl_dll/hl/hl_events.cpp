@@ -44,6 +44,7 @@ void Game_HookEvents()
 	gEngfuncs.pfnHookEvent("events/snipershot.sc", EV_SniperShot);
 	gEngfuncs.pfnHookEvent("events/RapidImpact.sc", EV_RapidImpact);
 	gEngfuncs.pfnHookEvent("events/ChargedImpact.sc", EV_ChargedImpact);
+	gEngfuncs.pfnHookEvent("events/ClusterExplosion.sc", EV_ClusterExplosion);
 	gEngfuncs.pfnHookEvent("events/ChemicalSpray.sc", EV_ChemicalSpray);
 	gEngfuncs.pfnHookEvent("events/train.sc", EV_TrainPitchAdjust);
 	gEngfuncs.pfnHookEvent("events/vehicle.sc", EV_VehiclePitchAdjust);

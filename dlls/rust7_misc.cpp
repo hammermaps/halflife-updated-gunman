@@ -49,6 +49,7 @@
 #include "saverestore.h"
 #include "weapons.h"
 #include "skill.h"
+#include "dbg_log.h"
 
 //=========================================================
 // xenomeshot - CXenomeShot. Retail CXenome::HandleAnimEvent events 2/3
@@ -275,6 +276,9 @@ void CXenome::ShootAtEnemy(int iSide)
 
 void CXenome::LeapAttack()
 {
+	DBG_LOG("XENOME %d LeapAttack enemy=%s origin=(%.1f %.1f %.1f)",
+		ENTINDEX(edict()), m_hEnemy ? STRING(m_hEnemy->pev->classname) : "none",
+		pev->origin.x, pev->origin.y, pev->origin.z);
 	// Retail vtable slot +0x20c selects one claw attack sound before the hull trace.
 	EMIT_SOUND_DYN(ENT(pev), CHAN_WEAPON,
 		RANDOM_LONG(0, 1) ? "xenome/xenome_clawattack_2.wav" : "xenome/xenome_clawattack_1.wav",
@@ -283,7 +287,12 @@ void CXenome::LeapAttack()
 	TraceResult tr;
 	CBaseEntity* pHurt = CheckTraceHullAttack(64.0f, gSkillData.xenomeMeleeDamage, DMG_SLASH, &tr);
 	if (!pHurt)
+	{
+		DBG_LOG("XENOME %d LeapAttack miss", ENTINDEX(edict()));
 		return;
+	}
+	DBG_LOG("XENOME %d LeapAttack hit=%s health=%.1f", ENTINDEX(edict()),
+		STRING(pHurt->pev->classname), pHurt->pev->health);
 
 	// Retail assigns integer view punch values from [-10, 10] on both axes.
 	pHurt->pev->punchangle.z = RANDOM_LONG(-10, 10);
@@ -310,6 +319,9 @@ void CXenome::LeapAttack()
 
 void CXenome::LeapTouch(CBaseEntity* pOther)
 {
+	DBG_LOG("XENOME %d LeapTouch target=%s flags=0x%x grounded=%d", ENTINDEX(edict()),
+		pOther ? STRING(pOther->pev->classname) : "none", pOther ? pOther->pev->flags : 0,
+		FBitSet(pev->flags, FL_ONGROUND) ? 1 : 0);
 	// Retail tests entvars +0x16c (takedamage), not the target's vertical velocity.
 	if (!pOther || pOther->pev->takedamage == DAMAGE_NO ||
 		pOther->Classify() == Classify() || FBitSet(pev->flags, FL_ONGROUND))
@@ -337,6 +349,8 @@ void CXenome::LeapTouch(CBaseEntity* pOther)
 
 void CXenome::HandleAnimEvent(MonsterEvent_t* pEvent)
 {
+	DBG_LOG("XENOME %d HandleAnimEvent event=%d enemy=%s sequence=%d", ENTINDEX(edict()),
+		pEvent->event, m_hEnemy ? STRING(m_hEnemy->pev->classname) : "none", pev->sequence);
 	switch (pEvent->event)
 	{
 	case 2:

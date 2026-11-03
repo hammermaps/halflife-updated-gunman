@@ -33,6 +33,10 @@
 #include "decals.h"
 #include "soundent.h"
 #include "gamerules.h"
+#include "dbg_log.h"
+
+bool g_bDbgRouteProbe = false;
+bool g_bDbgRouteExpandedOnly = false;
 
 #define MONSTER_CUT_CORNER_DIST 8 // 8 means the monster's bounding box is contained without the box of the node in WC
 
@@ -512,10 +516,53 @@ CSound* CBaseMonster::PBestScent()
 // Monster Think - calls out to core AI functions and handles this
 // monster's specific animation events
 //=========================================================
+float g_flDbgMonsterStateTraceUntil = 0;
+
 void CBaseMonster::MonsterThink()
 {
 	pev->nextthink = gpGlobals->time + 0.1; // keep monster thinking.
+	// Position trace for the isolated Rustbit obstacle-routing arena. It is
+	// emitted only by the existing debug logger and is rate-limited per entity.
+	if (FStrEq(STRING(pev->classname), "monster_rustbit"))
+	{
+		static float s_nextRouteTrace[4096] = {};
+		const int entityIndex = ENTINDEX(edict());
+		if (entityIndex > 0 && entityIndex < ARRAYSIZE(s_nextRouteTrace) &&
+			gpGlobals->time >= s_nextRouteTrace[entityIndex])
+		{
+			s_nextRouteTrace[entityIndex] = gpGlobals->time + 1.0f;
+			const Vector waypoint = m_iRouteIndex >= 0 && m_iRouteIndex < ROUTE_SIZE
+				? m_Route[m_iRouteIndex].vecLocation
+				: g_vecZero;
+			DBG_LOG("ROUTE_TRACE #%d origin=(%.1f %.1f %.1f) index=%d waypoint=(%.1f %.1f %.1f) schedule=%s task=%d",
+				entityIndex, pev->origin.x, pev->origin.y, pev->origin.z, m_iRouteIndex,
+				waypoint.x, waypoint.y, waypoint.z,
+				m_pSchedule && m_pSchedule->pName ? m_pSchedule->pName : "<none>", m_iScheduleIndex);
+		}
+	}
 
+	if (gpGlobals->time < g_flDbgMonsterStateTraceUntil)
+	{
+		static float s_nextDumpTime[4096] = {};
+		const int entityIndex = ENTINDEX(edict());
+		if (entityIndex > 0 && entityIndex < ARRAYSIZE(s_nextDumpTime) &&
+			gpGlobals->time >= s_nextDumpTime[entityIndex])
+		{
+			s_nextDumpTime[entityIndex] = gpGlobals->time + 1.0f;
+			CBaseEntity* pEnemy = m_hEnemy;
+			const char* pszSchedule = m_pSchedule && m_pSchedule->pName ? m_pSchedule->pName : "<none>";
+			ALERT(at_console,
+				"dbg_monsters #%d %s class=%d alpha=%.0f enemy=%s#%d cine=%d state=%d schedule=%s task=%d health=%.0f origin=(%.0f %.0f %.0f) route=%d waypoint=(%.0f %.0f %.0f)\n",
+				entityIndex, STRING(pev->classname), Classify(), pev->renderamt,
+				pEnemy ? STRING(pEnemy->pev->classname) : "<none>",
+				pEnemy ? ENTINDEX(pEnemy->edict()) : 0, m_pCine != nullptr,
+				m_MonsterState, pszSchedule, m_iScheduleIndex, pev->health,
+				pev->origin.x, pev->origin.y, pev->origin.z, m_iRouteIndex,
+				m_iRouteIndex >= 0 && m_iRouteIndex < ROUTE_SIZE ? m_Route[m_iRouteIndex].vecLocation.x : 0.0f,
+				m_iRouteIndex >= 0 && m_iRouteIndex < ROUTE_SIZE ? m_Route[m_iRouteIndex].vecLocation.y : 0.0f,
+				m_iRouteIndex >= 0 && m_iRouteIndex < ROUTE_SIZE ? m_Route[m_iRouteIndex].vecLocation.z : 0.0f);
+		}
+	}
 
 	RunAI();
 
@@ -1667,7 +1714,7 @@ bool CBaseMonster::FTriangulate(const Vector& vecStart, const Vector& vecEnd, fl
 	if (pev->movetype == MOVETYPE_FLY)
 		vecDirUp = vecDirUp * sizeZ * 2;
 
-	for (i = 0; i < 8; i++)
+	for (i = 0; i < 8 && !g_bDbgRouteExpandedOnly; i++)
 	{
 // Debug, Draw the triangulation
 #if 0
@@ -1725,6 +1772,8 @@ bool CBaseMonster::FTriangulate(const Vector& vecStart, const Vector& vecEnd, fl
 				{
 					*pApex = vecRight;
 				}
+				if (g_bDbgRouteProbe)
+					DBG_LOG("ROUTE_PROBE classic-right apex=(%.1f %.1f %.1f)", vecRight.x, vecRight.y, vecRight.z);
 
 				return true;
 			}
@@ -1737,6 +1786,8 @@ bool CBaseMonster::FTriangulate(const Vector& vecStart, const Vector& vecEnd, fl
 				{
 					*pApex = vecLeft;
 				}
+				if (g_bDbgRouteProbe)
+					DBG_LOG("ROUTE_PROBE classic-left apex=(%.1f %.1f %.1f)", vecLeft.x, vecLeft.y, vecLeft.z);
 
 				return true;
 			}
@@ -1820,6 +1871,8 @@ bool CBaseMonster::FTriangulate(const Vector& vecStart, const Vector& vecEnd, fl
 
 					if (pApex)
 						*pApex = candidate;
+					if (g_bDbgRouteProbe)
+						DBG_LOG("ROUTE_PROBE expanded depth=%d side=%d width=%d apex=(%.1f %.1f %.1f)", depth, side, width, candidate.x, candidate.y, candidate.z);
 					return true;
 				}
 			}
@@ -2592,26 +2645,26 @@ CBaseEntity* CBaseMonster::BestVisibleEnemy()
 //=========================================================
 void CBaseMonster::MakeIdealYaw(Vector vecTarget)
 {
-	Vector vecProjection;
+	Vector vecDirection = vecTarget - pev->origin;
 
 	// strafing monster needs to face 90 degrees away from its goal
 	if (m_movementActivity == ACT_STRAFE_LEFT)
 	{
-		vecProjection.x = -vecTarget.y;
-		vecProjection.y = vecTarget.x;
-
-		pev->ideal_yaw = UTIL_VecToYaw(vecProjection - pev->origin);
+		float flTargetX = vecDirection.x;
+		vecDirection.x = -vecDirection.y;
+		vecDirection.y = flTargetX;
+		pev->ideal_yaw = UTIL_VecToYaw(vecDirection);
 	}
 	else if (m_movementActivity == ACT_STRAFE_RIGHT)
 	{
-		vecProjection.x = vecTarget.y;
-		vecProjection.y = vecTarget.x;
-
-		pev->ideal_yaw = UTIL_VecToYaw(vecProjection - pev->origin);
+		float flTargetX = vecDirection.x;
+		vecDirection.x = vecDirection.y;
+		vecDirection.y = flTargetX;
+		pev->ideal_yaw = UTIL_VecToYaw(vecDirection);
 	}
 	else
 	{
-		pev->ideal_yaw = UTIL_VecToYaw(vecTarget - pev->origin);
+		pev->ideal_yaw = UTIL_VecToYaw(vecDirection);
 	}
 }
 

@@ -40,12 +40,11 @@
 //     the FGD's documented 32x32x40 footprint.
 //
 // Simplified relative to the original (documented per-case):
-// - CRustbit: the persistent two-hand glow sprite rig (events 1-4),
-//   its Save/Restore links and death cleanup are reproduced. The
-//   former approximation that events 2/4 fire rustbitshot was removed:
-//   retail's events 1-4 are visual only. The confirmed melee claw
-//   attack (events 5/6) uses the retail 80-unit hull trace, but its
-//   exact skill-scaled damage remains unresolved.
+// - CRustbit: events 1-4 fire rustbitshot through the recovered Retail
+//   helper, play RapidFire audio, and maintain their corresponding hand
+//   glow sprite. Save/Restore links and death cleanup are reproduced.
+//   The confirmed melee claw attack (events 5/6) uses the retail 80-unit
+//   hull trace, but its exact skill-scaled damage remains unresolved.
 //   findings/entities/rustbot_family.md's "GetSchedule/GetScheduleOfType
 //   waehlen ueber Distanz-/Zustandsfelder zwischen Melee-/
 //   Fernkampf-Schedules" custom AI is not reproduced - default
@@ -128,23 +127,14 @@ LINK_ENTITY_TO_CLASS(ammo_dmlsingle, CDMLSingleAmmo);
 // behavior, no special effects, matching the doc's own conclusion
 // exactly.
 //
-// Where it's actually launched from was empirically re-checked this
-// session via tools/mdl_inspect.py against the real rustbit.mdl: the
-// "shootarm" (ACT_RANGE_ATTACK1) and "rapidfire" (ACT_RANGE_ATTACK2)
-// sequences embed ONLY the confirmed hand-glow-sprite events (1/2 and
-// 3/4 respectively) - there is no additional embedded event that
-// could carry a shot-spawn call, and CRustbit::HandleAnimEvent's own
-// decompiled switch (below) has no case beyond 1-6. The real
-// projectile-launch site is therefore NOT in HandleAnimEvent at all -
-// most likely dispatched directly from a custom AI schedule/task this
-// project does not reproduce (same "no custom Schedule_t/Task_t
-// tables" scope boundary already applied throughout this project).
-// It is intentionally not launched from an animation event: the
-// decompiled event switch proves that events 1-4 only maintain the hand
-// sprites and events 5-6 are melee. Its custom schedule/task launch site
-// remains unresolved. The reconstructed SDK uses the common range-attack
-// task as a conservative compatibility hook: it produces exactly one
-// rustbitshot after the range-attack activity has started.
+// Where the shot is launched was re-checked against the Retail event
+// handler: events 1/3 call FUN_100b6ff0 with attachment index 0, events
+// 2/4 with index 1. That helper calls FUN_100b5870, which creates and
+// spawns the CRustbitShot vtable (0x10101530). Thus each of the four
+// animation events launches a shot; the SDK now follows that event timing.
+// The Retail speed and skill-dependent spread progression are now ported.
+// The additional random aim offset from FUN_1002d200 remains a documented
+// difference; current targeting uses BodyTarget plus the firing spread.
 //=========================================================
 class CRustbitShot : public CBaseEntity
 {
@@ -203,10 +193,10 @@ void CRustbitShot::ShotTouch(CBaseEntity* pOther)
 //=========================================================
 // monster_rustbit - CRustbit.
 //=========================================================
-#define RUSTBIT_AE_GLOW_LEFT_1 1
-#define RUSTBIT_AE_GLOW_LEFT_2 3
-#define RUSTBIT_AE_GLOW_RIGHT_1 2
-#define RUSTBIT_AE_GLOW_RIGHT_2 4
+#define RUSTBIT_AE_FIRE_RIGHT_1 1
+#define RUSTBIT_AE_FIRE_LEFT_1 2
+#define RUSTBIT_AE_FIRE_RIGHT_2 3
+#define RUSTBIT_AE_FIRE_LEFT_2 4
 #define RUSTBIT_AE_CLAW_LEFT 5
 #define RUSTBIT_AE_CLAW_RIGHT 6
 
@@ -444,20 +434,22 @@ public:
 		CBaseMonster::SetActivity(NewActivity);
 	}
 	void StartTask(Task_t* pTask) override;
-	void RunTask(Task_t* pTask) override;
 	void HandleAnimEvent(MonsterEvent_t* pEvent) override;
 
 private:
 	void Claw();
-	void LaunchShot();
+	void PlayRapidFireSound();
+	void UpdateShotDeviation();
+	void LaunchShot(int attachment);
 	void EnsureHandGlow(bool rightHand);
 	void RemoveHandGlows();
 	CSprite* m_pRightGlow = nullptr;
 	CSprite* m_pLeftGlow = nullptr;
 	float m_flLastEnemyVisible = 0; // Retail +0x29c, updated while SEE_ENEMY.
+	float m_flLastShot = 0; // Retail +0x2bc.
+	float m_flDiviation = 0; // Retail spelling/field +0x2c0.
 	int m_iScheduleCoverCount = 0; // Retail +0x2c8.
-	bool m_bRangeShotPending = false;
-	int m_iNextShotAttachment = 1;
+	int m_iVoicePitch = 80; // Retail +0x2c4; randomized to 70..90 in Spawn.
 };
 LINK_ENTITY_TO_CLASS(monster_rustbit, CRustbit);
 
@@ -465,8 +457,10 @@ TYPEDESCRIPTION CRustbit::m_SaveData[] =
 {
 	DEFINE_FIELD(CRustbit, m_pRightGlow, FIELD_CLASSPTR),
 	DEFINE_FIELD(CRustbit, m_pLeftGlow, FIELD_CLASSPTR),
-	DEFINE_FIELD(CRustbit, m_bRangeShotPending, FIELD_BOOLEAN),
-	DEFINE_FIELD(CRustbit, m_iNextShotAttachment, FIELD_INTEGER),
+	DEFINE_FIELD(CRustbit, m_flLastEnemyVisible, FIELD_TIME),
+	DEFINE_FIELD(CRustbit, m_flLastShot, FIELD_TIME),
+	DEFINE_FIELD(CRustbit, m_flDiviation, FIELD_FLOAT),
+	DEFINE_FIELD(CRustbit, m_iVoicePitch, FIELD_INTEGER),
 };
 IMPLEMENT_SAVERESTORE(CRustbit, CBaseMonster);
 
@@ -628,8 +622,7 @@ void CRustbit::Spawn()
 	// Retail Spawn @0x100b7750: Health per FUN_100608d0 (Skill-Basis + Zufallsanteil).
 	pev->health = gSkillData.rustbitHealth + RANDOM_FLOAT(0, gSkillData.rustbitHealth) * (gSkillData.percentRandomHealth * 0.01f);
 	pev->view_ofs = Vector(0, 0, 40);
-	m_bRangeShotPending = false;
-	m_iNextShotAttachment = 1;
+	m_iVoicePitch = RANDOM_LONG(-10, 10) + 80;
 
 	m_afCapability = bits_CAP_HEAR | bits_CAP_TURN_HEAD | bits_CAP_RANGE_ATTACK1 | bits_CAP_MELEE_ATTACK1;
 
@@ -642,6 +635,8 @@ void CRustbit::Precache()
 {
 	PrecacheModel("models/rustbit.mdl");
 	PrecacheModel("sprites/rustbitglow.spr");
+	PrecacheSound("rustbit/Rustbit_RapidFire_FirstShot_F0.wav");
+	PrecacheSound("rustbit/Rustbit_RapidFire_SecondShot_F1.wav");
 
 	UTIL_PrecacheOther("rustbitshot");
 }
@@ -651,8 +646,8 @@ void CRustbit::StartTask(Task_t* pTask)
 	// The Retail Range1/Range2 schedules put FACE_ROUTE immediately before
 	// firing. On an isolated Rustbit with a visible enemy but no existing
 	// movement route, Retail's base task fails here and the attack never starts.
-	// Preserve route-facing when a path exists; otherwise face the known enemy
-	// and let RunTask complete the turn. This is an intentional gameplay fix.
+		// Preserve route-facing when a path exists; otherwise face the known enemy
+		// and let the base task complete the turn. This is an intentional gameplay fix.
 	if (pTask->iTask == TASK_FACE_ROUTE && FRouteClear() && m_hEnemy)
 	{
 		MakeIdealYaw(m_vecEnemyLKP);
@@ -661,46 +656,80 @@ void CRustbit::StartTask(Task_t* pTask)
 	}
 
 	CBaseMonster::StartTask(pTask);
-
-	// Retail's task ID 0x23 maps to the SDK's TASK_RANGE_ATTACK2 and selects
-	// ACT_RANGE_ATTACK2 (the rustbit rapidfire animation). Queue one projectile
-	// for each of those repeated attack tasks; events 1-4 only drive hand glows.
-	if (pTask->iTask == TASK_RANGE_ATTACK2 || pTask->iTask == TASK_RANGE_ATTACK2_NOTURN)
-		m_bRangeShotPending = true;
 }
 
-void CRustbit::RunTask(Task_t* pTask)
+void CRustbit::LaunchShot(int attachment)
 {
-	if ((pTask->iTask == TASK_RANGE_ATTACK2 || pTask->iTask == TASK_RANGE_ATTACK2_NOTURN) &&
-		m_bRangeShotPending && m_Activity == ACT_RANGE_ATTACK2)
-	{
-		m_bRangeShotPending = false;
-		LaunchShot();
-	}
-
-	CBaseMonster::RunTask(pTask);
-}
-
-void CRustbit::LaunchShot()
-{
-	if (!m_hEnemy || !m_hEnemy->IsAlive())
+	CBaseMonster* pEnemy = m_hEnemy ? m_hEnemy->MyMonsterPointer() : nullptr;
+	if (!pEnemy)
 		return;
 
 	Vector vecSource;
 	Vector vecAttachmentAngles;
-	GetAttachment(m_iNextShotAttachment, vecSource, vecAttachmentAngles);
+	GetAttachment(attachment, vecSource, vecAttachmentAngles);
 
-	const Vector vecDirection = (m_hEnemy->BodyTarget(vecSource) - vecSource).Normalize();
+	Vector vecDirection;
+	if (pEnemy->IsAlive() && pEnemy->m_hTargetEnt)
+	{
+		// Retail FUN_100b6ff0 calls FUN_1002d200 before applying deviation.
+		// For a live enemy with a target entity, that helper aims from the
+		// attachment at BodyTarget and adds its bounded per-axis jitter.
+		vecDirection = pEnemy->BodyTarget(vecSource) - vecSource;
+		vecDirection.x += RANDOM_LONG(-32, 32);
+		vecDirection.y += RANDOM_LONG(-32, 32);
+		vecDirection.z += RANDOM_LONG(0, 64);
+		vecDirection = vecDirection.Normalize();
+	}
+	else
+	{
+		// Without a live target-entity handle, Retail aims using the target's
+		// BodyTarget offset from its origin plus this monster's enemy LKP.
+		const Vector vecBodyOffset = pEnemy->BodyTarget(vecSource) - pEnemy->pev->origin;
+		vecDirection = (m_vecEnemyLKP + vecBodyOffset - vecSource).Normalize();
+	}
+	UTIL_MakeVectors(pev->angles);
+	float x;
+	float y;
+	do
+	{
+		x = RANDOM_FLOAT(-0.5f, 0.5f) + RANDOM_FLOAT(-0.5f, 0.5f);
+		y = RANDOM_FLOAT(-0.5f, 0.5f) + RANDOM_FLOAT(-0.5f, 0.5f);
+	} while (x * x + y * y > 1.0f);
+	vecDirection = vecDirection + gpGlobals->v_right * (x * m_flDiviation);
+	vecDirection = vecDirection + gpGlobals->v_forward * (y * m_flDiviation * 0.8333333f);
 	CBaseEntity* pShot = CBaseEntity::Create("rustbitshot", vecSource, UTIL_VecToAngles(vecDirection), edict());
 	if (!pShot)
 		return;
 
-	// No launch speed survived in the recovered task code. Use the common
-	// Gunman projectile speed so the otherwise orphaned retail projectile is
-	// visible and can reach the target within the stock range-attack window.
-	pShot->pev->velocity = vecDirection * 600.0f;
+	// Retail passes the 1000-unit range constant to the CRustbitShot factory.
+	pShot->pev->velocity = vecDirection * 1000.0f;
 	pShot->pev->owner = edict();
-	m_iNextShotAttachment = (m_iNextShotAttachment == 1) ? 2 : 1;
+}
+
+void CRustbit::UpdateShotDeviation()
+{
+	const bool firedRecently = gpGlobals->time <= m_flLastShot + 0.5f;
+	if (firedRecently)
+	{
+		if (g_iSkillLevel == SKILL_MEDIUM)
+			m_flDiviation -= 0.02f;
+		else if (g_iSkillLevel == SKILL_HARD)
+			m_flDiviation -= 0.03f;
+		else
+			m_flDiviation -= 0.01f;
+	}
+	else
+	{
+		if (g_iSkillLevel == SKILL_MEDIUM)
+			m_flDiviation += 0.05f;
+		else if (g_iSkillLevel == SKILL_HARD)
+			m_flDiviation += 0.03f;
+		else
+			m_flDiviation += 0.1f;
+	}
+
+	m_flDiviation = V_max(0.01f, V_min(0.15f, m_flDiviation));
+	m_flLastShot = gpGlobals->time;
 }
 
 void CRustbit::HandleAnimEvent(MonsterEvent_t* pEvent)
@@ -711,18 +740,38 @@ void CRustbit::HandleAnimEvent(MonsterEvent_t* pEvent)
 	case RUSTBIT_AE_CLAW_RIGHT:
 		Claw();
 		break;
-	case RUSTBIT_AE_GLOW_LEFT_1:
-	case RUSTBIT_AE_GLOW_LEFT_2:
-		EnsureHandGlow(false);
+	case RUSTBIT_AE_FIRE_RIGHT_1:
+	case RUSTBIT_AE_FIRE_RIGHT_2:
+		if (m_hEnemy)
+		{
+			UpdateShotDeviation();
+			LaunchShot(1); // Retail attachment index 0; SDK GetAttachment is 1-based.
+			PlayRapidFireSound();
+		}
+		EnsureHandGlow(true); // Retail writes the right-hand pointer at +0x2d4.
 		break;
-	case RUSTBIT_AE_GLOW_RIGHT_1:
-	case RUSTBIT_AE_GLOW_RIGHT_2:
-		EnsureHandGlow(true);
+	case RUSTBIT_AE_FIRE_LEFT_1:
+	case RUSTBIT_AE_FIRE_LEFT_2:
+		if (m_hEnemy)
+		{
+			UpdateShotDeviation();
+			LaunchShot(2); // Retail attachment index 1; SDK GetAttachment is 1-based.
+			PlayRapidFireSound();
+		}
+		EnsureHandGlow(false);
 		break;
 	default:
 		CBaseMonster::HandleAnimEvent(pEvent);
 		break;
 	}
+}
+
+void CRustbit::PlayRapidFireSound()
+{
+	const char* sample = RANDOM_LONG(0, 1) == 0
+		? "rustbit/Rustbit_RapidFire_SecondShot_F1.wav"
+		: "rustbit/Rustbit_RapidFire_FirstShot_F0.wav";
+	EMIT_SOUND_DYN(ENT(pev), CHAN_WEAPON, sample, 0.7f, 0.8f, 0, m_iVoicePitch);
 }
 
 void CRustbit::EnsureHandGlow(bool rightHand)

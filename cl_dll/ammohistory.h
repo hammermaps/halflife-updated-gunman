@@ -18,8 +18,9 @@
 
 #pragma once
 
-// this is the max number of items in each bucket
-#define MAX_WEAPON_POSITIONS MAX_WEAPON_SLOTS
+// Retail weapon registry contains twenty slots, with twenty positions each.
+#define MAX_WEAPON_SLOT_COUNT 20
+#define MAX_WEAPON_POSITIONS 20
 
 class WeaponsResource
 {
@@ -28,7 +29,7 @@ private:
 	WEAPON rgWeapons[MAX_WEAPONS]; // Weapons Array
 
 	// counts of weapons * ammo
-	WEAPON* rgSlots[MAX_WEAPON_SLOTS + 1][MAX_WEAPON_POSITIONS + 1]; // The slots currently in use by weapons.  The value is a pointer to the weapon;  if it's NULL, no weapon is there
+	WEAPON* rgSlots[MAX_WEAPON_SLOT_COUNT][MAX_WEAPON_POSITIONS]; // Registered weapon entries by retail slot and position.
 	int riAmmo[MAX_AMMO_TYPES];										 // count of each ammo type
 
 public:
@@ -57,11 +58,17 @@ public:
 
 	void PickupWeapon(WEAPON* wp)
 	{
+		if (!wp || wp->iSlot < 0 || wp->iSlot >= MAX_WEAPON_SLOT_COUNT ||
+			wp->iSlotPos < 0 || wp->iSlotPos >= MAX_WEAPON_POSITIONS)
+			return;
 		rgSlots[wp->iSlot][wp->iSlotPos] = wp;
 	}
 
 	void DropWeapon(WEAPON* wp)
 	{
+		if (!wp || wp->iSlot < 0 || wp->iSlot >= MAX_WEAPON_SLOT_COUNT ||
+			wp->iSlotPos < 0 || wp->iSlotPos >= MAX_WEAPON_POSITIONS)
+			return;
 		rgSlots[wp->iSlot][wp->iSlotPos] = NULL;
 	}
 
@@ -74,7 +81,12 @@ public:
 		}
 	}
 
-	WEAPON* GetWeaponSlot(int slot, int pos) { return rgSlots[slot][pos]; }
+	WEAPON* GetWeaponSlot(int slot, int pos)
+	{
+		if (slot < 0 || slot >= MAX_WEAPON_SLOT_COUNT || pos < 0 || pos >= MAX_WEAPON_POSITIONS)
+			return NULL;
+		return rgSlots[slot][pos];
+	}
 
 	void LoadWeaponSprites(WEAPON* wp);
 	void LoadAllWeaponSprites();
