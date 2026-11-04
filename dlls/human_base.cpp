@@ -1157,8 +1157,8 @@ void CHumanBase::TraceAttack(entvars_t* pevAttacker, float flDamage, Vector vecD
 }
 
 // Retail Slot 118 @0x100a8de0: combat headshots detach a skull and one human gib,
-// then continue with the shared death-activity selection. Retail's gib velocity,
-// lifetime and spawn offsets are not reproduced by SpawnCustomGibs yet.
+// then continue with the shared death-activity selection. SpawnCustomGibs
+// reproduces the Retail headshot velocity, spawn offsets, and smoke lifetime.
 Activity CHumanBase::GetDeathActivity()
 {
 	int group = 0;

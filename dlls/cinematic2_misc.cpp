@@ -100,21 +100,11 @@ void CTargSpeaker::Use(CBaseEntity* pActivator, CBaseEntity* pCaller, USE_TYPE u
 // cut-content developer flag with no findings-documented gameplay
 // effect - not reproduced.
 //
-// Simplified relative to the original (documented per findings'
-// still-open points and this session's own scope decision): the
-// real eye beam (events 2/3) is a hand-built two-sprite +
-// dynamic-light construction, live-repositioned and damage-ticked
-// every frame via a dedicated per-tick function
-// (FUN_100b8400, not fully decompiled this session). Reproduced here
-// instead with the SDK's existing CBeam class (same approach
-// egon.cpp already uses for a very similar continuous tracking
-// laser) - a single beam entity, retargeted and damage-ticked each
-// think, instead of the original's 2-sprite+dlight rig. Event 1's
-// melee still uses the confirmed 128-unit traceline range and deals
-// approximated (not byte-verified) damage. Spark-particle bursts on
-// both events are approximated with a generic TE_SPARKS effect
-// rather than the original's dedicated debris-spawner helper
-// (FUN_100b9c40, shared with CGunner, not decompiled this session).
+// The eye-beam entities and per-AI-frame update follow the retail
+// FUN_100b87d0/FUN_100b8400 path using the SDK CBeam/CSprite classes.
+// Retail's separate dynamic-light motion remains a visual approximation.
+// Event 1 melee uses the confirmed 128-unit traceline with skill damage;
+// attack sparks use one-shot temp entities to avoid persistent shower buildup.
 //=========================================================
 
 #define RUSTBOT_AE_MELEE 1
@@ -127,8 +117,21 @@ void CTargSpeaker::Use(CBaseEntity* pActivator, CBaseEntity* pCaller, USE_TYPE u
 #define TASK_RUSTBOT_POWERUP 0x64
 #define TASK_RUSTBOT_SENTENCE 0x65
 
+// rustbot.mdl's sole authored attachment is on the head bone, but its runtime
+// position does not line up with the visible blue eye. Place beam visuals at
+// the front of the model at its configured eye height instead.
+static Vector RustbotEyePosition(entvars_t* pev)
+{
+	UTIL_MakeVectors(pev->angles);
+	return pev->origin + gpGlobals->v_forward * 24.0f + pev->view_ofs;
+}
+
 static Task_t tlRustbotRangeAttack[] =
 {
+	// The range attack interrupts the old approach route before powering up;
+	// otherwise Move() continues driving into a nearby monster and can
+	// interrupt the beam sequence with the melee condition.
+	{TASK_STOP_MOVING, 0},
 	{TASK_FACE_ENEMY, 0},
 	{TASK_SET_ACTIVITY, ACT_RANGE_ATTACK1},
 	{TASK_RUSTBOT_POWERUP, 0},
@@ -247,16 +250,17 @@ static Schedule_t slRustbotFail =
 	tlRustbotFail, ARRAYSIZE(tlRustbotFail), 0xc00, 0, "Rustbot Fail",
 };
 
-static void CreateRustbotSparkShowers(entvars_t* pev, int count)
+static void CreateRustbotSparkFlash(const Vector& vecOrigin)
 {
-	for (int i = 0; i < count; ++i)
-	{
-		Vector vecOrigin = pev->origin + Vector(
-			RANDOM_LONG(0, 89) - 45,
-			RANDOM_LONG(0, 89) - 45,
-			RANDOM_LONG(0, 29) + 24);
-		CBaseEntity::Create("spark_shower", vecOrigin, pev->angles, nullptr);
-	}
+	// Use a one-shot temp entity instead of spark_shower: CShower emits every
+	// 0.1 s for up to 1.5 s and its independent lifetime lets repeated attacks
+	// overlap into a fireworks effect after the Rustbot has stopped attacking.
+	MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, vecOrigin);
+	WRITE_BYTE(TE_SPARKS);
+	WRITE_COORD(vecOrigin.x);
+	WRITE_COORD(vecOrigin.y);
+	WRITE_COORD(vecOrigin.z);
+	MESSAGE_END();
 }
 
 static void AdvanceRustbotSentenceCooldown()
@@ -272,6 +276,7 @@ public:
 	int MonsterProfile() override { return 13; } // retail slot 59
 	void Spawn() override;
 	void Precache() override;
+	void RunAI() override;
 	void StartTask(Task_t* pTask) override;
 	void RunTask(Task_t* pTask) override;
 	void PrescheduleThink() override;
@@ -507,11 +512,48 @@ void CRustbot::PrescheduleThink()
 		if (flRateAdjust > 0.7f)
 			flRateAdjust = 0.7f;
 		pev->framerate = 1.2f + flRateAdjust;
-		if (RANDOM_LONG(0, 39) < 2)
-			CreateRustbotSparkShowers(pev, 1);
+		// Do not emit recurring spark_shower entities here. They can outlive
+		// the firing animation and stack up across repeated attacks, producing
+		// a continuous fireworks effect. Keep the charge represented by the
+		// beam and its single start flash instead.
 	}
 
 	CBaseMonster::PrescheduleThink();
+}
+
+void CRustbot::RunAI()
+{
+	CBaseMonster::RunAI();
+
+	if (!IsAlive())
+		return;
+
+	// An enemy-death schedule can replace the firing sequence before its
+	// beam-off animation event runs. Never keep the persistent beam attached
+	// to a dead or removed target while the Rustbot changes schedules.
+	if ((m_pBeam || m_pBeamGlow || m_pBeamEnd) &&
+		(!m_hEnemy || !m_hEnemy->IsAlive()))
+		BeamOff();
+
+	// Retail slot 62 (FUN_100b9450) runs the base AI first, then calls the
+	// continuous eye-beam update only while ACT_RANGE_ATTACK1 (activity 0x1c)
+	// is active. MonsterThink remains responsible for advancing the sequence
+	// and dispatching the later beam-off animation event.
+	if (m_Activity == ACT_RANGE_ATTACK1)
+	{
+		pev->framerate = 2.5f;
+		BeamThink();
+	}
+	else if (static_cast<int>(m_Activity) == 0x21)
+	{
+		pev->framerate = 1.6f;
+	}
+	else if (static_cast<int>(m_Activity) != 0x1e)
+	{
+		pev->framerate = 1.0f;
+	}
+	// Retail activity 0x1e scales framerate from +0x2d8. That field is not
+	// identified yet; keep its formula in the TODO rather than guessing.
 }
 
 void CRustbot::Spawn()
@@ -528,7 +570,7 @@ void CRustbot::Spawn()
 	pev->view_ofs = Vector(0, 0, 40);
 	m_bBorg = true;
 	m_flChangeFrustration = gpGlobals->time;
-	m_iHeadTurn = 0;
+	m_iHeadTurn = 0; // Retail initializes this saved yaw offset to zero.
 
 	MonsterInit();
 
@@ -590,9 +632,15 @@ void CRustbot::RunTask(Task_t* pTask)
 {
 	if (pTask->iTask == TASK_RUSTBOT_POWERUP || pTask->iTask == TASK_RUSTBOT_PLASMA)
 	{
-		// Retail completes both custom activity tasks after their sequence,
-		// unless TASK_FAILED is set; otherwise the task keeps waiting.
-		if (m_fSequenceFinished && !HasConditions(bits_COND_TASK_FAILED))
+		// Do not let a finished previous sequence complete this task before
+		// UpdateIdealActivity has entered the animation requested by StartTask.
+		// In particular, skipping ACT_ARM also skips beamcrouch's event 3,
+		// which creates the Rustbot's eye beam.
+		const Activity expectedActivity = pTask->iTask == TASK_RUSTBOT_POWERUP
+			? ACT_ARM
+			: ACT_RANGE_ATTACK1;
+		if (m_Activity == expectedActivity && m_fSequenceFinished &&
+			!HasConditions(bits_COND_TASK_FAILED))
 			TaskComplete();
 		return;
 	}
@@ -605,7 +653,13 @@ void CRustbot::HandleAnimEvent(MonsterEvent_t* pEvent)
 	switch (pEvent->event)
 	{
 	case RUSTBOT_AE_MELEE:
-		CreateRustbotSparkShowers(pev, RANDOM_LONG(1, 3));
+		if (m_flFrustration >= 6)
+		{
+			Vector vecAttachment;
+			Vector vecAttachmentAngles;
+			GetAttachment(0, vecAttachment, vecAttachmentAngles);
+			CreateRustbotSparkFlash(vecAttachment);
+		}
 		AttackSound();
 		Melee();
 		break;
@@ -636,18 +690,15 @@ void CRustbot::BeamOn()
 {
 	BeamOff();
 	m_flFrustration += 2;
-	CreateRustbotSparkShowers(pev, 5);
-
-	MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, pev->origin);
-	WRITE_BYTE(TE_SPARKS);
-	WRITE_COORD(pev->origin.x);
-	WRITE_COORD(pev->origin.y);
-	WRITE_COORD(pev->origin.z + 40);
-	MESSAGE_END();
+	Vector vecBeamStart = RustbotEyePosition(pev);
+	CreateRustbotSparkFlash(vecBeamStart);
 
 	m_pBeam = CBeam::BeamCreate("sprites/xbeam1.spr", 5);
 	m_pBeamGlow = CBeam::BeamCreate("sprites/xbeam1.spr", 5);
-	m_pBeamEnd = CSprite::SpriteCreate("sprites/rustbeam_end.spr", pev->origin, true);
+	// Start all three visuals at the head attachment. BeamThink moves the
+	// endpoint to the trace hit on the next AI tick; starting it at pev->origin
+	// briefly made the blue glow appear at the Rustbot's feet/rear.
+	m_pBeamEnd = CSprite::SpriteCreate("sprites/rustbeam_end.spr", vecBeamStart, true);
 	if (!m_pBeam || !m_pBeamGlow || !m_pBeamEnd)
 	{
 		BeamOff();
@@ -655,24 +706,24 @@ void CRustbot::BeamOn()
 	}
 
 	// Retail builds two point beams and a glowing impact sprite. The second
-	// beam overlays the first; only the first carries the spark-start flag.
-	m_pBeam->PointsInit(pev->origin, pev->origin);
+	// beam overlays the first. Do not set SF_BEAM_SPARKSTART here: CBeam calls
+	// DoSparks on every beam update, which turns this persistent beam into a
+	// continuous shower. The one-shot start flash above represents the attack
+	// event without accumulating sparks while the beam is active.
+	m_pBeam->PointsInit(vecBeamStart, vecBeamStart);
 	m_pBeam->SetColor(80, 120, 255);
 	m_pBeam->SetBrightness(255);
 	m_pBeam->SetFrame(10);
 	m_pBeam->pev->owner = edict();
-	m_pBeamGlow->PointsInit(pev->origin, pev->origin);
+	m_pBeamGlow->PointsInit(vecBeamStart, vecBeamStart);
 	m_pBeamGlow->SetColor(80, 120, 255);
 	m_pBeamGlow->SetBrightness(255);
 	m_pBeamGlow->SetFrame(10);
 	m_pBeamGlow->pev->owner = edict();
-	m_pBeam->SetFlags(SF_BEAM_SPARKSTART);
 	m_pBeamEnd->SetScale(0.75f);
 	m_pBeamEnd->SetTransparency(kRenderGlow, 255, 255, 255, 200, kRenderFxNoDissipation);
 	m_pBeamEnd->pev->owner = edict();
 
-	SetThink(&CRustbot::BeamThink);
-	pev->nextthink = gpGlobals->time;
 }
 
 void CRustbot::BeamOff()
@@ -693,30 +744,15 @@ void CRustbot::BeamOff()
 		m_pBeamGlow = nullptr;
 	}
 
-	// BeamOn temporarily replaces the regular monster think callback.  Always
-	// restore it here; otherwise a finished beam leaves the rustbot running an
-	// inert BeamThink every 100 ms and prevents its normal AI from resuming.
-	SetThink(&CBaseMonster::CallMonsterThink);
-	pev->nextthink = gpGlobals->time;
 }
 
 void CRustbot::BeamThink()
 {
-	pev->nextthink = gpGlobals->time + 0.1;
-
 	if (!m_pBeam || !m_pBeamGlow || !m_pBeamEnd || !m_hEnemy)
 	{
 		BeamOff();
 		return;
 	}
-
-	// BeamOn replaces CBaseMonster::MonsterThink while the eye beam is
-	// active. Keep advancing the attack sequence here so its later beam-off
-	// event is dispatched instead of leaving the bot in an inert beam loop.
-	float flInterval = StudioFrameAdvance();
-	DispatchAnimEvents(flInterval);
-	if (!m_pBeam || !m_hEnemy)
-		return;
 
 	CBaseMonster* pEnemy = m_hEnemy->MyMonsterPointer();
 	if (!pEnemy)
@@ -725,9 +761,11 @@ void CRustbot::BeamThink()
 		return;
 	}
 
-	Vector vecSrc;
-	Vector vecAttachmentAngles;
-	GetAttachment(0, vecSrc, vecAttachmentAngles);
+	Vector vecSrc = RustbotEyePosition(pev);
+	Vector vecHeadAngles = pev->angles;
+	vecHeadAngles.y += static_cast<float>(m_iHeadTurn);
+	UTIL_MakeVectors(vecHeadAngles);
+	Vector vecHeading = gpGlobals->v_forward.Normalize();
 
 	Vector vecDirection;
 	if (pEnemy->IsAlive() && pEnemy->m_hTargetEnt)
@@ -747,11 +785,15 @@ void CRustbot::BeamThink()
 		const Vector vecBodyOffset = pEnemy->BodyTarget(vecSrc) - pEnemy->pev->origin;
 		vecDirection = (m_vecEnemyLKP + vecBodyOffset - vecSrc).Normalize();
 	}
+	// Retail FUN_100b8400 builds its horizontal beam heading from pev->angles
+	// with m_iHeadTurn added to yaw, then takes the vertical component from
+	// FUN_1002d200's current BodyTarget/LKP direction.
+	vecHeading.z = vecDirection.z;
+	vecDirection = vecHeading;
 	Vector vecEnd = vecSrc + vecDirection * 2048.0f;
 
 	TraceResult tr;
 	UTIL_TraceLine(vecSrc, vecEnd, dont_ignore_monsters, ENT(pev), &tr);
-
 	m_pBeam->SetStartPos(vecSrc);
 	m_pBeam->SetEndPos(tr.vecEndPos);
 	m_pBeamGlow->SetStartPos(vecSrc);

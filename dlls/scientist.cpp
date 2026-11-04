@@ -1425,7 +1425,9 @@ void CSittingScientist::Spawn()
 		// Retail CSittingScientist::Spawn randomizes only body variants 0..2.
 		pev->body = RANDOM_LONG(0, 2);
 	}
-	m_baseSequence = LookupSequence("sitlookleft");
+	// The staged Scientist model retains the Retail sequence's `sit#` prefix.
+	// Keep the Retail's consecutive five-sequence layout, starting at look-left.
+	m_baseSequence = LookupSequence("sit#lookleft");
 	pev->sequence = m_baseSequence + RANDOM_LONG(0, 4);
 	ResetSequenceInfo();
 
@@ -1437,7 +1439,7 @@ void CSittingScientist::Spawn()
 
 void CSittingScientist::Precache()
 {
-	m_baseSequence = LookupSequence("sitlookleft");
+	m_baseSequence = LookupSequence("sit#lookleft");
 	TalkInit();
 }
 

@@ -23,11 +23,9 @@
 //     CBanditGrunt::MechaVolley/CChopper elsewhere in this project) -
 //     confirmed as two mirrored arm attacks (left/right), reproduced
 //     here as a single ArmSwipe() used by both events.
-//   event 10 -> a stomp attack: skill-scaled radius (130/150/200 for
-//     skill 1/2/3), a ground-effect helper call (FUN_1005eb80) and a
-//     "spawn a beam-arc effect" helper (FUN_1000e140, the same helper
-//     seen in CDemomanRocket's AccelerateThink), plays
-//     "endboss/end_stomp2.wav".
+//   event 10 -> a stomp attack: skill-scaled damage (130/150/200) at
+//     origin + forward*64 in radius 300, ScreenShake (12, 3, 0.5, 600)
+//     from the same point, and ambient "endboss/end_stomp2.wav".
 //   default -> falls through to the shared generic
 //     footstep/miscellaneous animation-event handler (cosmetic only,
 //     same pattern used by every other monster_human_*/boss class in
@@ -324,6 +322,9 @@ public:
 	int MonsterProfile() override { return 22; } // retail slot 59
 	void Spawn() override;
 	void Precache() override;
+	bool Save(CSave& save) override;
+	bool Restore(CRestore& restore) override;
+	static TYPEDESCRIPTION m_SaveData[];
 	int Classify() override { return CLASS_ALIEN_BOSS; }
 	// BUG FIX (2026-09-05): scripted_sequence-driven "waiting" poses
 	// get stomped mid-animation without this - see the
@@ -378,18 +379,34 @@ public:
 	void SetYawSpeed() override;
 
 private:
-	float m_flNextKata = 0;	   // Retail +0x270
-	float m_flNextRocket = 0;  // Retail +0x274
-	float m_flNextSpecial = 0; // Retail +0x278
-	bool m_bRocketsEnabled = true; // Retail +0x284 (set to 1 in Spawn; no writer found yet)
+	float m_flNextRocket = 0; // Retail +0x270, m_flNextRocketAttack
+	float m_flNextKata = 0; // Retail +0x274, m_fNextKataAttack
+	float m_flNextMachinegun = 0; // Retail +0x278, m_fNextMachinegunAttack
+	float m_flLostKatagunTime = 0; // Retail +0x27c
+	float m_flNextSpeak = 0; // Retail +0x280
+	bool m_bHasKatagun = true; // Retail +0x284
+	int m_iKataFiring = 0; // Retail +0x28c
+	int m_iEnemyHitMe = 0; // Retail +0x288
 	void LaunchRocket();
 	void LaunchKataball();
 	void ArmSwipe();
 	void Stomp();
-
-	int m_iRocketCount = 0;
 };
 LINK_ENTITY_TO_CLASS(monster_endboss, CEndBoss);
+
+TYPEDESCRIPTION CEndBoss::m_SaveData[] =
+{
+	DEFINE_FIELD(CEndBoss, m_flNextSpeak, FIELD_TIME),
+	DEFINE_FIELD(CEndBoss, m_flNextKata, FIELD_TIME),
+	DEFINE_FIELD(CEndBoss, m_flNextRocket, FIELD_TIME),
+	DEFINE_FIELD(CEndBoss, m_flNextMachinegun, FIELD_TIME),
+	DEFINE_FIELD(CEndBoss, m_flLostKatagunTime, FIELD_TIME),
+	DEFINE_FIELD(CEndBoss, m_bHasKatagun, FIELD_BOOLEAN),
+	DEFINE_FIELD(CEndBoss, m_iKataFiring, FIELD_INTEGER),
+	DEFINE_FIELD(CEndBoss, m_iEnemyHitMe, FIELD_INTEGER),
+};
+
+IMPLEMENT_SAVERESTORE(CEndBoss, CBaseMonster);
 
 void CEndBoss::Spawn()
 {
@@ -416,7 +433,8 @@ void CEndBoss::Spawn()
 	// (Rundumsicht, 0xbf800000). Das Retail-Basisfeld +0x244 entspricht
 	// m_flDistTooFar (Gunner-Abgleich, findings/entities/gunner_friendly_2026-10-31.md).
 	m_flFieldOfView = -1.0f;
-	m_flNextKata = m_flNextRocket = m_flNextSpecial = gpGlobals->time;
+	m_flNextKata = m_flNextRocket = m_flNextMachinegun = m_flNextSpeak = gpGlobals->time;
+	m_bHasKatagun = true;
 	m_flDistTooFar = 4096.0f; // Retail Spawn setzt das gemeinsame Basisfeld +0x244.
 }
 
@@ -438,19 +456,19 @@ static Schedule_t slEndBossSpecial[] =
 
 bool CEndBoss::CheckRangeAttack1(float flDot, float flDist)
 {
-	// Rocket volley: pure cooldown, 2-5 s.
-	if (gpGlobals->time < m_flNextRocket || !m_bRocketsEnabled)
+	// Katagun: Retail +0x274 cooldown and +0x284 ownership flag.
+	if (gpGlobals->time < m_flNextKata || !m_bHasKatagun)
 		return false;
-	m_flNextRocket = gpGlobals->time + RANDOM_FLOAT(2, 5);
+	m_flNextKata = gpGlobals->time + RANDOM_FLOAT(2, 5);
 	return true;
 }
 
 bool CEndBoss::CheckRangeAttack2(float flDot, float flDist)
 {
-	// Kataball: pure cooldown, 5-8 s.
-	if (gpGlobals->time < m_flNextKata)
+	// Rockets: Retail +0x270 cooldown, 5-8 s.
+	if (gpGlobals->time < m_flNextRocket)
 		return false;
-	m_flNextKata = gpGlobals->time + RANDOM_FLOAT(5, 8);
+	m_flNextRocket = gpGlobals->time + RANDOM_FLOAT(5, 8);
 	return true;
 }
 
@@ -462,9 +480,9 @@ bool CEndBoss::CheckMeleeAttack1(float flDot, float flDist)
 bool CEndBoss::CheckMeleeAttack2(float flDot, float flDist)
 {
 	// Special machinegun attack: pure cooldown, 5-8 s.
-	if (gpGlobals->time < m_flNextSpecial)
+	if (gpGlobals->time < m_flNextMachinegun)
 		return false;
-	m_flNextSpecial = gpGlobals->time + RANDOM_FLOAT(5, 8);
+	m_flNextMachinegun = gpGlobals->time + RANDOM_FLOAT(5, 8);
 	return true;
 }
 
@@ -592,7 +610,6 @@ void CEndBoss::LaunchRocket()
 		static_cast<CEndBossRocket*>(pRocket)->SetTarget(m_hEnemy);
 	}
 
-	m_iRocketCount++;
 }
 
 void CEndBoss::LaunchKataball()
@@ -611,7 +628,6 @@ void CEndBoss::LaunchKataball()
 
 	EMIT_SOUND(ENT(pev), CHAN_WEAPON, "endboss/kata_cannon1.wav", 1.0, ATTN_NORM);
 
-	m_iRocketCount++;
 }
 
 //=========================================================
@@ -707,13 +723,16 @@ void CEndBoss::ArmSwipe()
 
 void CEndBoss::Stomp()
 {
-	float radius = 130;
+	float damage = 130;
 	if (g_iSkillLevel == SKILL_MEDIUM)
-		radius = 150;
+		damage = 150;
 	else if (g_iSkillLevel == SKILL_HARD)
-		radius = 200;
+		damage = 200;
 
-	EMIT_SOUND(ENT(pev), CHAN_WEAPON, "endboss/end_stomp2.wav", 1.0, ATTN_NORM);
-	UTIL_ScreenShake(pev->origin, 12.0, 3.0, 1.0, radius * 2);
-	RadiusDamage(pev->origin, pev, pev, 40, CLASS_NONE, DMG_CLUB);
+	UTIL_MakeVectors(pev->angles);
+	const Vector stompOrigin = pev->origin + gpGlobals->v_forward * 64.0f;
+	::RadiusDamage(stompOrigin, pev, pev, damage, 300.0f, CLASS_NONE, DMG_CLUB);
+	UTIL_ScreenShake(stompOrigin, 12.0f, 3.0f, 0.5f, 600.0f);
+	UTIL_EmitAmbientSound(ENT(pev), pev->origin, "endboss/end_stomp2.wav",
+		1.0f, ATTN_NONE, 0, 100);
 }

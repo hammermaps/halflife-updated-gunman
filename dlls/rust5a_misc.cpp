@@ -192,6 +192,9 @@ void CBeakBirther::Spawn()
 	pev->effects = 0;
 	pev->health = 150;
 	m_flFieldOfView = -0.7f;
+	// Retail Spawn @0x100c21c0 clears inherited m_MonsterState (+0x140)
+	// before its final virtual initialization call.
+	m_MonsterState = MONSTERSTATE_NONE;
 
 	MonsterInit();
 }

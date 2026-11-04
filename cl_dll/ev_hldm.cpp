@@ -48,10 +48,22 @@ extern engine_studio_api_t IEngineStudio;
 
 static int tracerCount[MAX_PLAYERS];
 
+// 72-byte effect structure (matches retail FUN_10002810 / DAT_10092658 list,
+// linked continuation at +0x48; consumer FUN_100396c0 for radius/alpha).
 struct cluster_explosion_effect_t
 {
-	Vector origin;
-	float startTime;
+	Vector origin;        // +0x00 (maps to event_args origin)
+	float startTime;      // +0x0c (client time at spawn)
+	float padding[2];     // +0x10..+0x17 reserved / angle/velocity area
+	int typeValue;        // +0x18 (+0x28 in retail offset; 1 = ClusterExplosion branch)
+	int subType;          // +0x1c (+0x2c; 2/3/4 handled by FUN_100392e0)
+	float velocity[3];    // +0x20..+0x28 (speed component)
+	float radiusRate;     // +0x30 (retail uses rate 3 from FUN_100396c0)
+	float alphaRate;      // +0x34 (retail decay 10 per tick)
+	float maxRadius;      // +0x38 (90.0 per finding)
+	int linkedNext;       // +0x3c placeholder (+0x48 linked continuation)
+	char soundGroup;      // +0x40 (+0x40 selects sound group)
+	float padding2[2];    // +0x44..+0x4b padding to 72-byte size
 };
 
 static cluster_explosion_effect_t clusterExplosionEffects[32];

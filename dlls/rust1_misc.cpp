@@ -133,8 +133,8 @@ LINK_ENTITY_TO_CLASS(ammo_dmlsingle, CDMLSingleAmmo);
 // spawns the CRustbitShot vtable (0x10101530). Thus each of the four
 // animation events launches a shot; the SDK now follows that event timing.
 // The Retail speed and skill-dependent spread progression are now ported.
-// The additional random aim offset from FUN_1002d200 remains a documented
-// difference; current targeting uses BodyTarget plus the firing spread.
+// FUN_1002d200's BodyTarget/Enemy-LKP and bounded random aim offsets are
+// reproduced in LaunchShot before the separately ported firing spread.
 //=========================================================
 class CRustbitShot : public CBaseEntity
 {
@@ -142,6 +142,9 @@ public:
 	void Spawn() override;
 	void Precache() override;
 	void EXPORT ShotTouch(CBaseEntity* pOther);
+
+private:
+	int m_iTrail = 0;
 };
 LINK_ENTITY_TO_CLASS(rustbitshot, CRustbitShot);
 
@@ -163,8 +166,22 @@ void CRustbitShot::Spawn()
 	// Additive rendering has no extra opacity above renderamt=255. The sprite
 	// palette is brightened as well, and this larger scale keeps the fast shot
 	// visible against both dark and bright map surfaces.
-	pev->scale = 3.0f;
+	pev->scale = 1.0f;
 	pev->takedamage = DAMAGE_NO;
+
+	// The projectile's bright sprite is still easy to lose during flight.
+	// Add a short, full-bright trail so the shot reads as a moving beam.
+	MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, pev->origin);
+	WRITE_BYTE(TE_BEAMFOLLOW);
+	WRITE_SHORT(entindex());
+	WRITE_SHORT(m_iTrail);
+	WRITE_BYTE(8); // 0.8 s trail keeps the fast projectile visible longer
+	WRITE_BYTE(4); // compact trail keeps the shot readable without dominating it
+	WRITE_BYTE(255);
+	WRITE_BYTE(56);
+	WRITE_BYTE(20);
+	WRITE_BYTE(120); // visibly translucent-looking trail while keeping its color readable
+	MESSAGE_END();
 
 	SetTouch(&CRustbitShot::ShotTouch);
 
@@ -175,6 +192,9 @@ void CRustbitShot::Spawn()
 void CRustbitShot::Precache()
 {
 	PrecacheModel("sprites/bitboltsmall.spr");
+	// Use a neutral white beam sprite so TE_BEAMFOLLOW's RGB tint is visible;
+	// muzzleflash3.spr has a green palette and overpowers the requested color.
+	m_iTrail = PRECACHE_MODEL("sprites/laserbeam.spr");
 	PrecacheSound("rustbit/RustBit_Projectile1.wav");
 	PrecacheSound("rustbit/RustBit_Projectile2.wav");
 }
@@ -1240,17 +1260,20 @@ void CBeak::StartTask(Task_t* pTask)
 		m_iTaskStatus = TASKSTATUS_RUNNING;
 		pev->ideal_yaw += RANDOM_FLOAT(-20, 20);
 		if (HasConditions(bits_COND_SEE_ENEMY))
+		{
 			TaskFail();
+			break;
+		}
 		m_IdealActivity = ACT_LEAP;
 		ClearBits(pev->flags, FL_ONGROUND);
 		{
-			// Retail: random hop along the facing direction (x100) with small random side/up jitter
-			// scaled by sv_gravity; exact scaling terms approximated.
+			// Retail task 0x66 uses v_forward * RANDOM_FLOAT(-1, 1) * 100,
+			// then adds two independent gravity-scaled vertical jitter terms.
 			UTIL_MakeVectors(pev->angles);
-			const float flGravity = CVAR_GET_FLOAT("sv_gravity");
-			Vector vecDir = gpGlobals->v_forward * 100.0f * RANDOM_FLOAT(-1.0f, 1.0f);
-			pev->velocity = vecDir;
-			pev->velocity.z += RANDOM_FLOAT(0.1f, 0.4f) * flGravity * 0.5f;
+			const float flHalfGravity = CVAR_GET_FLOAT("sv_gravity") * 0.5f;
+			pev->velocity = gpGlobals->v_forward * (100.0f * RANDOM_FLOAT(-1.0f, 1.0f));
+			pev->velocity.z += RANDOM_FLOAT(0.1f, 0.4f) * flHalfGravity;
+			pev->velocity.z += RANDOM_FLOAT(-0.4f, 0.4f) * flHalfGravity;
 		}
 		TaskFail(); // retail sets bits_COND_TASK_FAILED on the way out (see 0x100c1329 tail)
 		break;

@@ -129,8 +129,8 @@ void CAnimeRocket::Spawn()
 	{
 		// Retail CAnimeRocket::Spawn builds a point in front of the enemy,
 		// with independent lateral/up offsets, then aims the 500 u/s launch
-		// vector at that point. The caller sets the final rocket origin after
-		// Spawn, matching the retail constructor order.
+		// vector at that point. CreateForGunner sets the attachment origin
+		// before DispatchSpawn so this vector starts from the actual muzzle.
 		UTIL_MakeVectors(m_hEnemy->pev->angles);
 		const float flUpOffset = RANDOM_FLOAT(0.0f, 40.0f) - 20.0f;
 		const float flRightOffset = RANDOM_FLOAT(0.0f, 30.0f) - 15.0f;
@@ -149,14 +149,14 @@ CAnimeRocket* CAnimeRocket::CreateForGunner(CBaseEntity* pOwner, CBaseEntity* pE
 	if (!pOwner || !pEnemy)
 		return nullptr;
 
-	// Retail sets owner/target before virtual Spawn(), then applies the
-	// randomized attachment origin after Spawn() has calculated velocity.
+	// Set all Spawn inputs, including the randomized attachment origin, before
+	// DispatchSpawn: Spawn derives its initial velocity from pev->origin.
 	CAnimeRocket* pRocket = GetClassPtr(static_cast<CAnimeRocket*>(nullptr));
 	pRocket->pev->classname = MAKE_STRING("anime_rocket");
 	pRocket->pev->owner = pOwner->edict();
 	pRocket->m_hEnemy = pEnemy;
-	DispatchSpawn(pRocket->edict());
 	UTIL_SetOrigin(pRocket->pev, vecSpawnOrigin);
+	DispatchSpawn(pRocket->edict());
 	return pRocket;
 }
 
