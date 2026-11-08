@@ -45,6 +45,7 @@ target_sources(hl PRIVATE
 	dml.cpp
 	dml_customization.cpp
 	dmlgrenade.cpp
+	handgrenade.cpp
 	doors.cpp
 	effects.cpp
 	endboss.cpp

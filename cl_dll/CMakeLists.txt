@@ -102,6 +102,7 @@ target_sources(client PRIVATE
 	text_message.cpp
 	train.cpp
 	tank.cpp
+	dml_cross.cpp
 	tri.cpp
 	util.cpp
 	vgui_ClassMenu.cpp
