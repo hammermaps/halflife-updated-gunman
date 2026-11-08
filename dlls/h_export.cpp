@@ -49,6 +49,10 @@ static char s_eventNames[1024][64];
 
 // The cvar must exist before debug.cfg runs "dbg_eventlog 1" (otherwise: Unknown command).
 static cvar_t s_dbgEventLogCvar = { (char*)"dbg_eventlog", (char*)"0", 0, 0.0f, nullptr };
+// Schreibt waehrend der Bewegung die Spielerposition in dbg_events.log
+// ([pos]-Zeilen), damit sich Teleport-Ziele (tp x y z) aus echten Laufwegen
+// ableiten lassen. Debug only, nicht Teil des Retail-Spiels.
+static cvar_t s_dbgPosLogCvar = { (char*)"dbg_poslog", (char*)"0", 0, 0.0f, nullptr };
 
 static bool DbgEventLogEnabled()
 {
@@ -128,4 +132,5 @@ extern "C" void DLLEXPORT GiveFnptrsToDll(enginefuncs_t* pengfuncsFromEngine, gl
 	g_engfuncs.pfnPrecacheEvent = DbgPrecacheEvent;
 	g_engfuncs.pfnPlaybackEvent = DbgPlaybackEvent;
 	g_engfuncs.pfnCVarRegister(&s_dbgEventLogCvar);
+	g_engfuncs.pfnCVarRegister(&s_dbgPosLogCvar);
 }

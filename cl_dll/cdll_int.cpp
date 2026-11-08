@@ -53,6 +53,8 @@ void CL_UnloadParticleMan();
 void InitInput();
 void EV_HookEvents();
 void EV_UpdateClusterExplosionEffects();
+void EV_UpdateEffectTubes();
+void EV_UpdateEffectQuads();
 void EV_ResetClusterExplosionEffects();
 void IN_Commands();
 
@@ -203,6 +205,8 @@ int DLLEXPORT HUD_Redraw(float time, int intermission)
 {
 	//	RecClHudRedraw(time, intermission);
 	EV_UpdateClusterExplosionEffects();
+	EV_UpdateEffectTubes();
+	EV_UpdateEffectQuads();
 
 	gHUD.Redraw(time, 0 != intermission);
 
@@ -260,7 +264,200 @@ void DLLEXPORT HUD_Frame(double time)
 {
 	//	RecClHudFrame(time);
 
+	static int s_iTestFrame = 0;
+	static int s_iTestHold = 0;
+	static int s_iTestPhase = 0;
+	static bool s_bTestCvarReady = false;
+
 	GetClientVoiceMgr()->Frame(time);
+
+	// Selbsttest-Treiber: `gm_test_fire 1` laesst den Client selbst schiessen,
+	// damit Event-Handler ohne Tastatureingabe pruefbar sind (Xash3D
+	// protokolliert Event-Ausfuehrung nicht). Ablauf: Waffe waehlen, Angriff
+	// ueber mehrere Frames halten, loslassen — ein Impuls im selben Frame
+	// reicht nicht, weil die Engine den Tastenzustand erst im Folgeframe liest.
+	if (!s_bTestCvarReady)
+	{
+		gEngfuncs.pfnRegisterVariable("gm_test_fire", "0", FCVAR_ARCHIVE);
+		gEngfuncs.pfnRegisterVariable("gm_test_weapon", "weapon_shotgun", FCVAR_ARCHIVE);
+	// Haltedauer je Durchlauf in Frames (Standard 26). Laenger halten, wenn ein
+	// Effekt erst nach Sekunden Dauerfeuer kommt (z. B. Beamgun-Hitze ab 80).
+	gEngfuncs.pfnRegisterVariable("gm_test_hold", "26", FCVAR_ARCHIVE);
+	// 1 = Testtreiber drueckt die Sekundaertaste statt der Primaeren; noetig
+	// fuer den Sniper-Modus der Gauss-Pistole (Zoom halten, beim Loslassen
+	// feuert SecondaryAttack -> events/snipershot.sc).
+	gEngfuncs.pfnRegisterVariable("gm_test_attack2", "0", FCVAR_ARCHIVE);
+	// Anlaufzeit in Sekunden vor dem ersten Schuss (0 = kein Anlauf).
+	gEngfuncs.pfnRegisterVariable("gm_test_walk", "0", FCVAR_ARCHIVE);
+	// Wirft nach dem Anlauf einen Endboss-Kataball ab (Test fuer kataimpact.sc).
+	gEngfuncs.pfnRegisterVariable("gm_test_kata", "0", FCVAR_ARCHIVE);
+		s_bTestCvarReady = true;
+	}
+
+	s_iTestFrame++;
+
+	// Screenshot-Takt fuer den visuellen Abgleich: `gm_shot <sekunden>` nimmt
+	// in diesem Abstand ein Bild auf (0 = aus). Die Bilder landen im
+	// Spielverzeichnis und lassen sich danach mit den Retail-Effekten
+	// vergleichen.
+	{
+		static const char* s_szShotCvar = "gm_shot";
+		static float s_flNextShot = 0.0f;
+		static bool s_bShotCvar = false;
+
+		if (!s_bShotCvar)
+		{
+			gEngfuncs.pfnRegisterVariable(s_szShotCvar, "0", FCVAR_ARCHIVE);
+			s_bShotCvar = true;
+		}
+
+		const float flShotInterval = gEngfuncs.pfnGetCvarFloat(s_szShotCvar);
+
+		// Frame-basiert, weil `time` in HUD_Frame nicht zuverlaessig
+		// fortlaufend ist (empirisch: nur ein Impuls pro Lauf).
+		const int iShotEvery = (flShotInterval > 0.0f)
+			? (int)(flShotInterval * 72.0f) : 0;
+
+		if (iShotEvery > 0 && (s_iTestFrame % iShotEvery) == 0)
+		{
+			gEngfuncs.pfnClientCmd("screenshot\n");
+			gEngfuncs.Con_Printf("[shot] screenshot at frame %d\n", s_iTestFrame);
+		}
+	}
+
+	// Auswahl der Waffen-Modifikation automatisieren: `gm_test_custom 1` oeffnet
+	// mit +custom das Auswahlmenue und bestaetigt per Linksklick (Retail-Pfad
+	// CHudAmmo::Think). Nur so laesst sich `cust=` in der Serverzeile pruefen.
+	{
+		static bool s_bCustomCvar = false;
+		static int s_iCustomStep = 0;
+		static int s_iCustomTimer = 0;
+
+		if (!s_bCustomCvar)
+		{
+			gEngfuncs.pfnRegisterVariable("gm_test_custom", "0", FCVAR_ARCHIVE);
+			s_bCustomCvar = true;
+		}
+
+		if (gEngfuncs.pfnGetCvarFloat("gm_test_custom") > 0.0f)
+		{
+			if (s_iCustomTimer < s_iTestFrame)
+			{
+				switch (s_iCustomStep)
+				{
+				case 0: gEngfuncs.pfnClientCmd("+custom\n"); s_iCustomTimer = s_iTestFrame + 6; s_iCustomStep = 1; break;
+				case 1: gEngfuncs.pfnClientCmd("+attack\n");  s_iCustomTimer = s_iTestFrame + 4; s_iCustomStep = 2; break;
+				case 2: gEngfuncs.pfnClientCmd("-attack\n");
+					gEngfuncs.Con_Printf("[test] custom click (frame %d)\n", s_iTestFrame);
+					s_iCustomTimer = s_iTestFrame + 4; s_iCustomStep = 3; break;
+				default: gEngfuncs.pfnClientCmd("-custom\n"); s_iCustomTimer = s_iTestFrame + 120; s_iCustomStep = 0; break;
+				}
+			}
+		}
+	}
+
+	const float flTestMode = gEngfuncs.pfnGetCvarFloat("gm_test_fire");
+	if (flTestMode <= 0.0f)
+		return;
+
+	// Optionaler Anlauf: `gm_test_walk <Sekunden>` haelt +forward, damit der
+	// Spieler vor einer Wand steht, bevor geschossen wird (Nahkampf-Trace
+	// reicht nur 32 Einheiten).
+	{
+		static bool s_bWalkDone = false;
+		static int s_iWalkStartFrame = -1;
+		const float flWalk = gEngfuncs.pfnGetCvarFloat("gm_test_walk");
+
+		if (!s_bWalkDone && flWalk > 0.0f)
+		{
+			if (s_iWalkStartFrame < 0)
+			{
+				gEngfuncs.pfnClientCmd("+forward\n");
+				s_iWalkStartFrame = s_iTestFrame;
+				gEngfuncs.Con_Printf("[test] walk start (%.1f s, frame %d)\n",
+					flWalk, s_iTestFrame);
+			}
+			else if ((s_iTestFrame - s_iWalkStartFrame) < (int)(flWalk * 72.0f))
+			{
+				return;
+			}
+			else
+			{
+				gEngfuncs.pfnClientCmd("-forward\n");
+				gEngfuncs.Con_Printf("[test] walk stop (frame %d)\n", s_iTestFrame);
+				s_bWalkDone = true;
+
+				// Optional: nach dem Anlauf einen Test-Kataball abwerfen
+				// (gm_test_kata 1), damit der Wandtreffer ohne KI entsteht.
+				if (gEngfuncs.pfnGetCvarFloat("gm_test_kata") > 0.0f)
+				{
+					// gm_test_kata 2 = Variante "self" (Ball am Spieler, loest
+					// den katahitplayer-Zweig aus).
+					gEngfuncs.pfnClientCmd(
+						gEngfuncs.pfnGetCvarFloat("gm_test_kata") >= 2.0f
+							? "dbg_kata self\n" : "dbg_kata\n");
+				}
+			}
+		}
+	}
+
+	if (s_iTestPhase == 0)
+	{
+		if ((s_iTestFrame % 90) == 0)
+		{
+			// Waffe per Cvar waehlbar (Default wie bisher), damit auch
+			// Minigun, Gauss usw. ohne Tastatureingabe geprueft werden koennen.
+			const char* szWeapon = gEngfuncs.pfnGetCvarString("gm_test_weapon");
+
+			if (!szWeapon || !szWeapon[0])
+				szWeapon = "weapon_shotgun";
+
+			char szCmd[128];
+			snprintf(szCmd, sizeof(szCmd), "use %s\n", szWeapon);
+			gEngfuncs.pfnClientCmd(szCmd);
+			s_iTestPhase = 1;
+			s_iTestHold = 0;
+		}
+		return;
+	}
+
+	// Phase 1: Angriff halten, nach 8 Frames loslassen.
+	if (s_iTestHold == 0)
+	{
+		if (gEngfuncs.pfnGetCvarFloat("gm_test_attack2") > 0.0f)
+			gEngfuncs.pfnClientCmd("+attack2\n");
+		else
+			gEngfuncs.pfnClientCmd("+attack\n");
+		gEngfuncs.Con_Printf("[test] press attack (frame %d, mode %.1f)\n", s_iTestFrame, flTestMode);
+	}
+
+	// Aufnahme direkt nach dem Schuss: die Huelsen leben 2,5 s, ein
+	// Intervall-Takt trifft sie nur zufaellig.
+	// Sechs Aufnahmen je Schuss (Frames 2/4/6/12/18/24 ≈ 0,03-0,33 s), damit
+	// die Flugbahn UND die Rotation (Huelse dreht sich) in der Bildserie
+	// sichtbar werden — ein Einzelbild sagt nichts ueber die Bewegungskurve.
+	if ((s_iTestHold == 2 || s_iTestHold == 4 || s_iTestHold == 6
+		|| s_iTestHold == 12 || s_iTestHold == 18 || s_iTestHold == 24)
+		&& gEngfuncs.pfnGetCvarFloat("gm_shot") > 0.0f)
+	{
+		gEngfuncs.pfnClientCmd("screenshot\n");
+		gEngfuncs.Con_Printf("[shot] after-shot capture hold=%d frame=%d\n",
+			s_iTestHold, s_iTestFrame);
+	}
+
+	int iTestHoldMax = (int)gEngfuncs.pfnGetCvarFloat("gm_test_hold");
+	if (iTestHoldMax < 2)
+		iTestHoldMax = 26;
+
+	if (++s_iTestHold >= iTestHoldMax)
+	{
+		if (gEngfuncs.pfnGetCvarFloat("gm_test_attack2") > 0.0f)
+			gEngfuncs.pfnClientCmd("-attack2\n");
+		else
+			gEngfuncs.pfnClientCmd("-attack\n");
+		// Alternative Waffe fuer den naechsten Durchlauf.
+		s_iTestPhase = 0;
+	}
 }
 
 

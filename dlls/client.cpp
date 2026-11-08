@@ -40,6 +40,7 @@ bool g_bDbgCamTrack = false;
 #include "player.h"
 #include "monsters.h"
 #include "spectator.h"
+#include "dbg_log.h"
 #include "client.h"
 #include "soundent.h"
 #include "gamerules.h"
@@ -408,6 +409,12 @@ void Host_Say(edict_t* pEntity, bool teamonly)
 	if (!p || '\0' == p[0] || !Q_UnicodeValidate(p))
 		return; // no character found, so say nothing
 
+	// Gaming-Test-Marker: jede Chat-Zeile landet mit Position im Server-Log
+	// (`-condebug`), damit ein gemeldeter Bug spaeter genau dort wiedergefunden
+	// wird. Rein lesend, keine Zustandsaenderung.
+	ALERT(at_console, "[say] %s (%.0f %.0f %.0f): %s\n",
+		STRING(pev->netname), pev->origin.x, pev->origin.y, pev->origin.z, p);
+
 	// turn on color set 2  (color on,  no sound)
 	// turn on color set 2  (color on,  no sound)
 	if (player->IsObserver() && (teamonly))
@@ -507,6 +514,91 @@ ClientCommand
 called each time a player uses a "cmd" command
 ============
 */
+
+//=========================================================
+// Benannte Teleport-Punkte (Debug, nicht Teil des Retail-Spiels).
+//
+// Ablage: <gamedir>/waypoints.txt, eine Zeile je Punkt:
+//     map|name|x|y|z|yaw|pitch
+// Damit ueberleben die Punkte Kartenwechsel und Neustarts, und die Datei kann
+// auch von Hand (oder aus dem Chat uebernommen) ergaenzt werden.
+// Befehle: tp_add <name>, tp_list, tp_del <name>, tp <name> | tp <x> <y> <z> [yaw] [pitch]
+//=========================================================
+struct DbgWaypoint
+{
+	char szMap[32];
+	char szName[64];
+	Vector vecOrigin;
+	float flYaw;
+	float flPitch;
+};
+
+static void DbgWaypointPath(char* pszOut, size_t uiSize)
+{
+	char szGameDir[256];
+	szGameDir[0] = '\0';
+	GET_GAME_DIR(szGameDir);
+	snprintf(pszOut, uiSize, "%s/waypoints.txt", szGameDir);
+}
+
+static int DbgWaypointLoad(const char* pszPath, DbgWaypoint* pOut, int iMax)
+{
+	FILE* f = fopen(pszPath, "r");
+	if (f == nullptr)
+		return 0;
+
+	int iCount = 0;
+	char szLine[512];
+
+	while (iCount < iMax && fgets(szLine, sizeof(szLine), f) != nullptr)
+	{
+		if (szLine[0] == '#' || szLine[0] == '\n' || szLine[0] == '\r')
+			continue;
+
+		DbgWaypoint& wp = pOut[iCount];
+		if (sscanf(szLine, "%31[^|]|%63[^|]|%f|%f|%f|%f|%f",
+				wp.szMap, wp.szName,
+				&wp.vecOrigin.x, &wp.vecOrigin.y, &wp.vecOrigin.z,
+				&wp.flYaw, &wp.flPitch) == 7)
+		{
+			++iCount;
+		}
+	}
+
+	fclose(f);
+	return iCount;
+}
+
+static bool DbgWaypointSave(const char* pszPath, const DbgWaypoint* pIn, int iCount)
+{
+	FILE* f = fopen(pszPath, "w");
+	if (f == nullptr)
+		return false;
+
+	fprintf(f, "# map|name|x|y|z|yaw|pitch  (Debug-Teleportpunkte)\n");
+	for (int i = 0; i < iCount; ++i)
+	{
+		fprintf(f, "%s|%s|%.1f|%.1f|%.1f|%.1f|%.1f\n",
+			pIn[i].szMap, pIn[i].szName,
+			pIn[i].vecOrigin.x, pIn[i].vecOrigin.y, pIn[i].vecOrigin.z,
+			pIn[i].flYaw, pIn[i].flPitch);
+	}
+
+	fclose(f);
+	return true;
+}
+
+// Sucht einen Punkt der aktuellen Karte; -1 = nicht vorhanden.
+static int DbgWaypointFind(const DbgWaypoint* pList, int iCount, const char* pszMap, const char* pszName)
+{
+	for (int i = 0; i < iCount; ++i)
+	{
+		if (FStrEq(pList[i].szMap, pszMap) && FStrEq(pList[i].szName, pszName))
+			return i;
+	}
+	return -1;
+}
+
 // Debug helper for tp / dbg_focus: raises target in 16-unit steps (max 16)
 // until a human-hull trace from it is free (monsters block). Returns false
 // when no free position was found.
@@ -651,21 +743,105 @@ void ClientCommand(edict_t* pEntity)
 			pev->flags &= ~FL_GODMODE;
 		ClientPrint(pev, HUD_PRINTCONSOLE, on ? "dbg_god: on\n" : "dbg_god: off\n");
 	}
-	else if (FStrEq(pcmd, "tp"))
+	else if (FStrEq(pcmd, "dbg_danger"))
 	{
-		// Debug teleport (sv_cheats only, not part of the retail game): tp <x> <y> <z>
-		// Moves the player to the given coordinates (e.g. taken from a map's entity
-		// lump). To avoid spawning inside geometry or a monster, the target is
-		// checked with a human-hull trace (monsters count as blocking) and raised
-		// in 16-unit steps (up to 16 steps) until the hull is free. The final
-		// offset is reported on the console.
-		if (0 == g_psv_cheats->value || CMD_ARGC() < 4)
+		// One-shot AI diagnostic (sv_cheats only): insert a DANGER sound at a
+		// selected entity, e.g. dbg_danger monster_beak 1024 1.5. This exercises
+		// real alert/schedule selection without making an explosive or damage.
+		if (0 == g_psv_cheats->value || CMD_ARGC() < 2)
 		{
-			ClientPrint(pev, HUD_PRINTCONSOLE, "usage: tp <x> <y> <z> (needs sv_cheats 1)\n");
+			ClientPrint(pev, HUD_PRINTCONSOLE, "usage: dbg_danger <classname> [radius] [duration] (needs sv_cheats 1)\n");
 			return;
 		}
 
-		Vector target(atof(CMD_ARGV(1)), atof(CMD_ARGV(2)), atof(CMD_ARGV(3)));
+		CBaseEntity* pTarget = nullptr;
+		for (int i = 1; i < gpGlobals->maxEntities; ++i)
+		{
+			edict_t* pEdict = INDEXENT(i);
+			if (!pEdict->free && FClassnameIs(&pEdict->v, CMD_ARGV(1)))
+			{
+				pTarget = CBaseEntity::Instance(pEdict);
+				break;
+			}
+		}
+		if (!pTarget)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs("dbg_danger: no entity '%s'\n", CMD_ARGV(1)));
+			return;
+		}
+
+		const int iRadius = CMD_ARGC() >= 3 ? atoi(CMD_ARGV(2)) : 1024;
+		const float flDuration = CMD_ARGC() >= 4 ? static_cast<float>(atof(CMD_ARGV(3))) : 1.5f;
+		CSoundEnt::InsertSound(bits_SOUND_DANGER, pTarget->pev->origin, iRadius, flDuration);
+		ClientPrint(pev, HUD_PRINTCONSOLE,
+			UTIL_VarArgs("dbg_danger: inserted at %s#%d radius=%d duration=%.1f\n",
+				STRING(pTarget->pev->classname), ENTINDEX(pTarget->edict()), iRadius, flDuration));
+	}
+	else if (FStrEq(pcmd, "tp"))
+	{
+		// Debug teleport (sv_cheats only, not part of the retail game):
+		//   tp <x> <y> <z> [yaw] [pitch]   freie Koordinaten
+		//   tp <name>                      gespeicherter Punkt (waypoints.txt)
+		// Freie Koordinaten werden mit einem Human-Hull-Trace geprueft und in
+		// 16-Einheiten-Schritten angehoben, bis die Stelle frei ist.
+		if (0 == g_psv_cheats->value || CMD_ARGC() < 2)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE,
+				"usage: tp <x> <y> <z> [yaw] [pitch] | tp <name> | tp_list (needs sv_cheats 1)\n");
+			return;
+		}
+
+		const char* pszMapNow = STRING(gpGlobals->mapname);
+		Vector target;
+		float flYawArg = 0.0f;
+		float flPitchArg = 0.0f;
+		bool bHaveAngles = false;
+		bool bNamed = (CMD_ARGC() == 2);
+
+		if (bNamed)
+		{
+			// Name: Punkt der aktuellen Karte suchen.
+			char szPath[320];
+			DbgWaypointPath(szPath, sizeof(szPath));
+
+			static DbgWaypoint s_Waypoints[256];
+			const int iCount = DbgWaypointLoad(szPath, s_Waypoints, 256);
+			const int iFound = DbgWaypointFind(s_Waypoints, iCount, pszMapNow, CMD_ARGV(1));
+
+			if (iFound < 0)
+			{
+				ClientPrint(pev, HUD_PRINTCONSOLE,
+					UTIL_VarArgs("tp: '%s' ist auf Karte %s nicht gespeichert (tp_list zeigt alle)\n",
+						CMD_ARGV(1), pszMapNow));
+				return;
+			}
+
+			target = s_Waypoints[iFound].vecOrigin;
+			flYawArg = s_Waypoints[iFound].flYaw;
+			flPitchArg = s_Waypoints[iFound].flPitch;
+			bHaveAngles = true;
+		}
+		else
+		{
+			if (CMD_ARGC() < 4)
+			{
+				ClientPrint(pev, HUD_PRINTCONSOLE,
+					"usage: tp <x> <y> <z> [yaw] [pitch] | tp <name>\n");
+				return;
+			}
+
+			target = Vector(atof(CMD_ARGV(1)), atof(CMD_ARGV(2)), atof(CMD_ARGV(3)));
+
+			if (CMD_ARGC() >= 5)
+			{
+				flYawArg = atof(CMD_ARGV(4));
+				bHaveAngles = true;
+
+				if (CMD_ARGC() >= 6)
+					flPitchArg = atof(CMD_ARGV(5));
+			}
+		}
+
 		const Vector requested = target;
 		if (!DbgFindFreeSpot(pEntity, target))
 		{
@@ -676,7 +852,567 @@ void ClientCommand(edict_t* pEntity)
 		UTIL_SetOrigin(pev, target);
 		pev->velocity = g_vecZero;
 		pev->basevelocity = g_vecZero;
-		ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs("tp: requested (%.0f %.0f %.0f), placed at (%.0f %.0f %.0f), offset z +%.0f\n", requested.x, requested.y, requested.z, target.x, target.y, target.z, target.z - requested.z));
+
+		// Blickrichtung setzen (aus Koordinaten oder aus dem gespeicherten
+		// Punkt). yaw 0..360, pitch -90..90 wie in den [pos]-Zeilen.
+		if (bHaveAngles)
+		{
+			pev->v_angle.y = flYawArg;
+			pev->angles.y = flYawArg;
+			pev->fixangle = 1;
+
+			float flPitch = flPitchArg;
+			if (flPitch > 90.0f)
+				flPitch = 90.0f;
+			else if (flPitch < -90.0f)
+				flPitch = -90.0f;
+
+			pev->v_angle.x = flPitch;
+			pev->angles.x = flPitch;
+		}
+
+		ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs(
+			"tp: requested (%.0f %.0f %.0f), placed at (%.0f %.0f %.0f), offset z +%.0f%s%s\n",
+			requested.x, requested.y, requested.z, target.x, target.y, target.z,
+			target.z - requested.z, bNamed ? ", point " : "", bNamed ? CMD_ARGV(1) : ""));
+		DBG_LOG("[tp] map=%s target=%.1f %.1f %.1f yaw=%.1f pitch=%.1f%s%s",
+			pszMapNow, target.x, target.y, target.z, flYawArg, flPitchArg,
+			bNamed ? " point=" : "", bNamed ? CMD_ARGV(1) : "");
+	}
+	else if (FStrEq(pcmd, "tp_npc"))
+	{
+		// Spieler vor einen NPC setzen und ihn ansehen. Die Blickrichtung des
+		// NPC kommt aus seinen Kartenwinkeln (pev->angles), damit die Kamera
+		// nicht hinter dem Modell landet.
+		// usage: tp_npc <classname|targetname> [abstand]
+		if (0 == g_psv_cheats->value || CMD_ARGC() < 2)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE,
+				"usage: tp_npc <classname|targetname> [distance] (needs sv_cheats 1)\n");
+			return;
+		}
+
+		const char* pszWant = CMD_ARGV(1);
+		const float flDist = CMD_ARGC() >= 3 ? (float)atof(CMD_ARGV(2)) : 220.0f;
+
+		CBaseEntity* pNpc = UTIL_FindEntityByClassname(nullptr, pszWant);
+		if (pNpc == nullptr)
+			pNpc = UTIL_FindEntityByTargetname(nullptr, pszWant);
+		if (pNpc == nullptr)
+			pNpc = UTIL_FindEntityByClassname(nullptr, UTIL_VarArgs("monster_%s", pszWant));
+
+		if (pNpc == nullptr)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE,
+				UTIL_VarArgs("tp_npc: kein NPC '%s' auf dieser Karte\n", pszWant));
+			return;
+		}
+
+		Vector vecNpcForward;
+		AngleVectors(pNpc->pev->angles, &vecNpcForward, nullptr, nullptr);
+
+		const Vector vecNpcEye = pNpc->pev->origin + Vector(0, 0, pNpc->pev->view_ofs.z);
+
+		// Distanzleiter: auf engen Karten (REBAR2B/2C) gibt es bei der
+		// Wunschdistanz keine freie Stelle. Statt abzubrechen, schrittweise
+		// naeher herangehen und die benutzte Distanz mitloggen.
+		Vector vecSpot = vecNpcEye;
+		float flUsedDist = 0.0f;
+
+		// Erst Distanz verkleinern, dann einen Kegel von +/-60 Grad um die
+		// Blickachse abtasten: auf engen Karten steht der NPC oft direkt vor
+		// einer Wand, waehrend seitlich Platz ist (Spieler bleibt in Sicht).
+		static const float kFlYawOffsets[] = {0.0f, 20.0f, -20.0f, 40.0f, -40.0f, 60.0f, -60.0f};
+
+		for (const float flScale : {1.0f, 0.75f, 0.5f, 0.35f, 0.25f})
+		{
+			const float flTry = flDist * flScale;
+
+			if (flTry < 64.0f)
+				continue;
+
+			for (const float flYaw : kFlYawOffsets)
+			{
+				Vector vecDir;
+				AngleVectors(Vector(0.0f, pNpc->pev->angles.y + flYaw, 0.0f), &vecDir, nullptr, nullptr);
+
+				vecSpot = vecNpcEye + vecDir * flTry;
+				vecSpot.z = pNpc->pev->origin.z + 32.0f;
+
+				if (DbgFindFreeSpot(pEntity, vecSpot))
+				{
+					flUsedDist = flTry;
+					break;
+				}
+			}
+
+			if (flUsedDist > 0.0f)
+				break;
+		}
+
+		if (flUsedDist <= 0.0f)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE,
+				UTIL_VarArgs("tp_npc: keine freie Stelle zwischen 64 und %.0f Einheiten vor '%s'\n",
+					flDist, pszWant));
+			return;
+		}
+
+		if (flUsedDist < flDist)
+			ClientPrint(pev, HUD_PRINTCONSOLE,
+				UTIL_VarArgs("tp_npc: Wunschdistanz %.0f nicht frei, nutze %.0f\n", flDist, flUsedDist));
+
+		UTIL_SetOrigin(pev, vecSpot);
+		pev->velocity = g_vecZero;
+		pev->basevelocity = g_vecZero;
+
+		// Blick zur NPC-Mitte (Augenhoehe), Nickwinkel daraus.
+		const Vector vecLook = vecNpcEye - vecSpot;
+		Vector vecAngles = UTIL_VecToAngles(vecLook);
+		// UTIL_VecToAngles liefert den Nickwinkel umgekehrt zu v_angle
+		// (positiv = nach oben). v_angle.x ist in GoldSrc positiv = nach unten,
+		// deshalb negieren - sonst schaut die Kamera auf die Fuesse.
+		vecAngles.x = -vecAngles.x;
+		pev->v_angle = vecAngles;
+		pev->angles = vecAngles;
+		pev->fixangle = 1;
+
+		// Der NPC schaut oft in eine Wand (Kartenwinkel) und sieht den Spieler
+		// dann nie. Fuer den Test den NPC zum Spieler drehen und das Ergebnis
+		// pruefen, statt es zu vermuten.
+		// Volle Ausrichtung (Yaw **und** Pitch): nur die Yaw zu drehen liess
+		// den Pitch der Kartenwinkel stehen, und der Bandit schoss senkrecht
+		// (Spielerbeobachtung 2026-11-08).
+		const Vector vecPlayerEye = vecSpot + Vector(0, 0, 28.0f);
+		Vector vecToPlayer = vecPlayerEye - (pNpc->pev->origin + Vector(0, 0, pNpc->pev->view_ofs.z));
+
+		if (vecToPlayer.Length() > 1.0f)
+		{
+			Vector vecNpcAngles = UTIL_VecToAngles(vecToPlayer);
+			// UTIL_VecToAngles liefert den Nickwinkel invertiert (positiv = nach
+			// oben), v_angle.x ist positiv = nach unten.
+			vecNpcAngles.x = -vecNpcAngles.x;
+			vecNpcAngles.z = 0.0f;
+			pNpc->pev->angles = vecNpcAngles;
+			pNpc->pev->v_angle = vecNpcAngles;
+			pNpc->pev->ideal_yaw = vecNpcAngles.y;
+		}
+
+		CBaseEntity* pPlayerEnt = CBaseEntity::Instance(pev);
+		const bool bSees = pPlayerEnt != nullptr && pNpc->FVisible(pPlayerEnt) != 0;
+
+		ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs(
+			"tp_npc: %s bei (%.0f %.0f %.0f) -> Spieler (%.0f %.0f %.0f) yaw=%.0f pitch=%.0f npc_yaw=%.0f visible=%d\n",
+			STRING(pNpc->pev->classname), pNpc->pev->origin.x, pNpc->pev->origin.y, pNpc->pev->origin.z,
+			vecSpot.x, vecSpot.y, vecSpot.z, vecAngles.y, vecAngles.x,
+			pNpc->pev->angles.y, bSees ? 1 : 0));
+		DBG_LOG("[tp_npc] map=%s npc=%s npcorg=%.1f %.1f %.1f spot=%.1f %.1f %.1f yaw=%.1f pitch=%.1f",
+			STRING(gpGlobals->mapname), STRING(pNpc->pev->classname),
+			pNpc->pev->origin.x, pNpc->pev->origin.y, pNpc->pev->origin.z,
+			vecSpot.x, vecSpot.y, vecSpot.z, vecAngles.y, vecAngles.x);
+	}
+	else if (FStrEq(pcmd, "tp_add"))
+	{
+		// Aktuelle Position als benannten Punkt der laufenden Karte speichern
+		// (oder ueberschreiben). Ablage: <gamedir>/waypoints.txt.
+		if (0 == g_psv_cheats->value || CMD_ARGC() < 2)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "usage: tp_add <name> (needs sv_cheats 1)\n");
+			return;
+		}
+
+		char szPath[320];
+		DbgWaypointPath(szPath, sizeof(szPath));
+
+		static DbgWaypoint s_List[256];
+		int iCount = DbgWaypointLoad(szPath, s_List, 256);
+		const char* pszMapNow = STRING(gpGlobals->mapname);
+		const char* pszName = CMD_ARGV(1);
+
+		int iFound = DbgWaypointFind(s_List, iCount, pszMapNow, pszName);
+		if (iFound < 0)
+		{
+			if (iCount >= 256)
+			{
+				ClientPrint(pev, HUD_PRINTCONSOLE, "tp_add: list is full (256)\n");
+				return;
+			}
+			iFound = iCount++;
+			strncpy(s_List[iFound].szMap, pszMapNow, sizeof(s_List[iFound].szMap) - 1);
+			s_List[iFound].szMap[sizeof(s_List[iFound].szMap) - 1] = '\0';
+			strncpy(s_List[iFound].szName, pszName, sizeof(s_List[iFound].szName) - 1);
+			s_List[iFound].szName[sizeof(s_List[iFound].szName) - 1] = '\0';
+		}
+
+		s_List[iFound].vecOrigin = pev->origin;
+		s_List[iFound].flYaw = pev->v_angle.y;
+		s_List[iFound].flPitch = pev->v_angle.x;
+
+		if (!DbgWaypointSave(szPath, s_List, iCount))
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs("tp_add: could not write %s\n", szPath));
+			return;
+		}
+
+		ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs(
+			"tp_add: %s auf %s = (%.1f %.1f %.1f) yaw=%.1f pitch=%.1f\n",
+			pszName, pszMapNow, pev->origin.x, pev->origin.y, pev->origin.z,
+			pev->v_angle.y, pev->v_angle.x));
+		DBG_LOG("[tp] add map=%s point=%s %.1f %.1f %.1f yaw=%.1f pitch=%.1f",
+			pszMapNow, pszName, pev->origin.x, pev->origin.y, pev->origin.z,
+			pev->v_angle.y, pev->v_angle.x);
+	}
+	else if (FStrEq(pcmd, "tp_list"))
+	{
+		char szPath[320];
+		DbgWaypointPath(szPath, sizeof(szPath));
+
+		static DbgWaypoint s_List[256];
+		const int iCount = DbgWaypointLoad(szPath, s_List, 256);
+		const char* pszMapNow = STRING(gpGlobals->mapname);
+
+		ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs(
+			"tp_list: %d Punkt(e), Datei %s (aktuelle Karte %s)\n", iCount, szPath, pszMapNow));
+
+		for (int i = 0; i < iCount; ++i)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs(
+				"  %s%-16s %8.1f %8.1f %8.1f  yaw=%6.1f pitch=%5.1f\n",
+				FStrEq(s_List[i].szMap, pszMapNow) ? "* " : "  ",
+				s_List[i].szName, s_List[i].vecOrigin.x, s_List[i].vecOrigin.y,
+				s_List[i].vecOrigin.z, s_List[i].flYaw, s_List[i].flPitch));
+		}
+	}
+	else if (FStrEq(pcmd, "tp_del"))
+	{
+		if (0 == g_psv_cheats->value || CMD_ARGC() < 2)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "usage: tp_del <name> (needs sv_cheats 1)\n");
+			return;
+		}
+
+		char szPath[320];
+		DbgWaypointPath(szPath, sizeof(szPath));
+
+		static DbgWaypoint s_List[256];
+		int iCount = DbgWaypointLoad(szPath, s_List, 256);
+		const char* pszMapNow = STRING(gpGlobals->mapname);
+		const int iFound = DbgWaypointFind(s_List, iCount, pszMapNow, CMD_ARGV(1));
+
+		if (iFound < 0)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs("tp_del: '%s' nicht auf %s\n", CMD_ARGV(1), pszMapNow));
+			return;
+		}
+
+		for (int i = iFound; i < iCount - 1; ++i)
+			s_List[i] = s_List[i + 1];
+		--iCount;
+
+		DbgWaypointSave(szPath, s_List, iCount);
+		ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs("tp_del: '%s' entfernt (%d verbleiben)\n", CMD_ARGV(1), iCount));
+	}
+	else if (FStrEq(pcmd, "dbg_eye"))
+	{
+		// Testhilfe: schaltet bei allen Gunnern das rote Auge ein (die
+		// Helligkeit ist im Spiel sonst nur bei Sichtkontakt/Aerger 200).
+		extern void DbgForceGunnerEyes();
+		DbgForceGunnerEyes();
+		ClientPrint(pev, HUD_PRINTCONSOLE, "dbg_eye: Gunner-Augen aktiviert\n");
+	}
+	else if (FStrEq(pcmd, "dbg_scene"))
+	{
+		// Gaming-Test: Zustand von Spieler + Umgebung als Marker ins Log.
+		// Reiner Lesezugriff, aendert nichts. Radius optional, Standard 512.
+		if (0 == g_psv_cheats->value)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "dbg_scene: sv_cheats 1 erforderlich\n");
+			return;
+		}
+
+		float flRadius = (CMD_ARGC() >= 2) ? (float)atof(CMD_ARGV(1)) : 512.0f;
+		if (flRadius < 64.0f)
+			flRadius = 64.0f;
+		if (flRadius > 4096.0f)
+			flRadius = 4096.0f;
+
+		CBasePlayer* pPlayer = static_cast<CBasePlayer*>(CBaseEntity::Instance(pEntity));
+
+		ALERT(at_console, "[scene] ================ MARKER ================\n");
+		ALERT(at_console, "[scene] map=%s skill=%d time=%.1f\n",
+			STRING(gpGlobals->mapname), g_iSkillLevel, gpGlobals->time);
+
+		// Spielerzustand
+		ALERT(at_console, "[scene] player origin=(%.0f %.0f %.0f) v_angle=(%.1f %.1f %.1f)\n",
+			pev->origin.x, pev->origin.y, pev->origin.z,
+			pev->v_angle.x, pev->v_angle.y, pev->v_angle.z);
+		ALERT(at_console, "[scene] player health=%.0f armor=%.0f vel=(%.0f %.0f %.0f) movetype=%d water=%d\n",
+			pev->health, pev->armorvalue, pev->velocity.x, pev->velocity.y, pev->velocity.z,
+			(int)pev->movetype, (int)pev->waterlevel);
+		ALERT(at_console, "[scene] player flags=0x%x god=%d notarget=%d noclip=%d onground=%d\n",
+			(int)pev->flags, (pev->flags & FL_GODMODE) ? 1 : 0,
+			(pev->flags & FL_NOTARGET) ? 1 : 0, (pev->flags & FL_FLY) ? 1 : 0,
+			(pev->flags & FL_ONGROUND) ? 1 : 0);
+		if (pPlayer)
+		{
+			ALERT(at_console, "[scene] player weapon=%s\n",
+				(pPlayer->m_pActiveItem && pPlayer->m_pActiveItem->pev->classname)
+					? STRING(pPlayer->m_pActiveItem->pev->classname) : "none");
+		}
+
+		// Blickfokus: Trace entlang der Blickrichtung
+		Vector vecEye = pev->origin + pev->view_ofs;
+		Vector vecAngles = pev->v_angle;
+		Vector vecForward;
+		AngleVectors(vecAngles, &vecForward, nullptr, nullptr);
+		TraceResult trFocus;
+		UTIL_TraceLine(vecEye, vecEye + vecForward * 8192.0f, dont_ignore_monsters, pEntity, &trFocus);
+		CBaseEntity* pFocus = trFocus.pHit ? CBaseEntity::Instance(trFocus.pHit) : nullptr;
+		ALERT(at_console, "[scene] view hit=%s targetname=%s at=(%.0f %.0f %.0f) dist=%.0f\n",
+			(pFocus && pFocus->pev->classname) ? STRING(pFocus->pev->classname) : "(none)",
+			(pFocus && pFocus->pev->targetname) ? STRING(pFocus->pev->targetname) : "",
+			trFocus.vecEndPos.x, trFocus.vecEndPos.y, trFocus.vecEndPos.z,
+			(trFocus.vecEndPos - vecEye).Length());
+
+		// Umgebung
+		ALERT(at_console, "[scene] entities within %.0f units:\n", flRadius);
+		CBaseEntity* pEnt = NULL;
+		int iIndex = 0;
+		int iPrinted = 0;
+		while ((pEnt = UTIL_FindEntityInSphere(pEnt, pev->origin, flRadius)) != NULL)
+		{
+			iIndex++;
+			if (iPrinted >= 120)
+				continue;
+			iPrinted++;
+
+			const char* pszClass = (pEnt->pev->classname) ? STRING(pEnt->pev->classname) : "?";
+			const char* pszName = (pEnt->pev->targetname) ? STRING(pEnt->pev->targetname) : "";
+			// Brush-Entities haben origin 0; fuer den Abstand den Hull-Mittelpunkt
+			// nehmen, sonst zeigt die Liste unsinnige Tausenderwerte.
+			Vector vecCenter = pEnt->Center();
+			float flDist = (vecCenter - pev->origin).Length();
+			if (flDist > flRadius)
+				continue; // Brush-Entities mit origin 0 sonst mit Riesenabstand
+
+			ALERT(at_console, "[scene]  #%d ent=%d %s name=\"%s\" center=(%.0f %.0f %.0f) dist=%.0f hp=%.0f\n",
+				iPrinted, ENTINDEX(pEnt->edict()), pszClass, pszName,
+				vecCenter.x, vecCenter.y, vecCenter.z, flDist, pEnt->pev->health);
+
+			CBaseMonster* pMon = pEnt->MyMonsterPointer();
+			if (pMon)
+			{
+				ALERT(at_console, "[scene]       state=%d enemy=%s seq=%d frame=%.0f schedule=%d\n",
+					(int)pMon->m_MonsterState,
+					(pMon->m_hEnemy && pMon->m_hEnemy->pev->classname) ? STRING(pMon->m_hEnemy->pev->classname) : "none",
+					(int)pEnt->pev->sequence, pEnt->pev->frame, pMon->m_iScheduleIndex);
+			}
+		}
+		ALERT(at_console, "[scene] entities total=%d (printed %d)\n", iIndex, iPrinted);
+		ALERT(at_console, "[scene] ============== MARKER END ==============\n");
+
+		ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs("dbg_scene: %d Entities im Radius %.0f geloggt\n", iIndex, flRadius));
+	}
+	else if (FStrEq(pcmd, "dbg_bossinfo"))
+	{
+		CBaseEntity* pBoss = UTIL_FindEntityByClassname(NULL, "monster_endboss");
+		if (!pBoss)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "dbg_bossinfo: kein monster_endboss\n");
+			return;
+		}
+		extern void DbgEndBossInfo(CBaseEntity* pBossEnt, CBaseEntity* pPlayer);
+		DbgEndBossInfo(pBoss, CBaseEntity::Instance(pEntity));
+	}
+	else if (FStrEq(pcmd, "dbg_kata"))
+	{
+		CBaseEntity* pBoss = UTIL_FindEntityByClassname(NULL, "monster_endboss");
+		if (!pBoss)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "dbg_kata: kein monster_endboss auf dieser Map\n");
+			return;
+		}
+
+		extern void DbgEndBossKata(CBaseEntity* pBossEnt, CBaseEntity* pPlayer);
+		DbgEndBossKata(pBoss, CBaseEntity::Instance(pEntity));
+		ClientPrint(pev, HUD_PRINTCONSOLE, "dbg_kata: abgefeuert\n");
+	}
+	else if (FStrEq(pcmd, "dbg_stomp"))
+	{
+		CBaseEntity* pBoss = UTIL_FindEntityByClassname(NULL, "monster_endboss");
+		if (!pBoss)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "dbg_stomp: kein monster_endboss auf dieser Map\n");
+			return;
+		}
+
+		extern void DbgEndBossStomp(CBaseEntity* pBossEnt, CBaseEntity* pPlayer);
+		DbgEndBossStomp(pBoss, CBaseEntity::Instance(pEntity));
+		ClientPrint(pev, HUD_PRINTCONSOLE, "dbg_stomp: ausgeloest\n");
+	}
+	else if (FStrEq(pcmd, "dbg_activate"))
+	{
+		// Testhilfe: holt den Endboss aus der Warte-Sequenz in den Kampfzustand
+		// (Gegner = Spieler, Cooldowns zurueck). Vorher mit `dbg_focus
+		// monster_endboss <dist>` hinstellen.
+		CBaseEntity* pBoss = UTIL_FindEntityByClassname(NULL, "monster_endboss");
+
+		if (!pBoss)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "dbg_activate: kein monster_endboss auf dieser Map\n");
+			return;
+		}
+
+		extern void DbgEndBossActivate(CBaseEntity* pBossEnt, CBaseEntity* pPlayer);
+		DbgEndBossActivate(pBoss, CBaseEntity::Instance(pEntity));
+
+		ClientPrint(pev, HUD_PRINTCONSOLE, "dbg_activate: Boss in Kampfzustand gesetzt\n");
+	}
+	else if (FStrEq(pcmd, "dbg_armswipe"))
+	{
+		// Testhilfe: setzt den Endboss als Gegner des Spielers und loest den
+		// Arm-Schlag aus (Retail-Events 6/7, spielt events/tankmguns.sc).
+		CBaseEntity* pBoss = UTIL_FindEntityByClassname(NULL, "monster_endboss");
+
+		if (!pBoss)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "dbg_armswipe: kein monster_endboss auf dieser Map\n");
+			return;
+		}
+
+		extern void DbgEndBossArmSwipe(CBaseEntity* pBossEnt, CBaseEntity* pPlayer);
+		DbgEndBossArmSwipe(pBoss, CBaseEntity::Instance(pEntity));
+
+		ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs(
+			"dbg_armswipe: Boss bei (%.0f %.0f %.0f) ausgeloest\n",
+			pBoss->pev->origin.x, pBoss->pev->origin.y, pBoss->pev->origin.z));
+	}
+	else if (FStrEq(pcmd, "dbg_tank"))
+	{
+		// Testhilfe: stellt den Spieler vor den naechsten vehicle_tank-Controller
+		// und blickt auf ihn, damit der Use-Trace das Fahrzeug trifft.
+		CBaseEntity* pTank = UTIL_FindEntityByClassname(NULL, "vehicle_tank");
+
+		if (!pTank)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "dbg_tank: kein vehicle_tank auf dieser Map\n");
+			return;
+		}
+
+		UTIL_MakeVectors(pTank->pev->angles);
+		Vector vecSpot = pTank->pev->origin - gpGlobals->v_forward * 96.0f + Vector(0, 0, 24);
+
+		UTIL_SetOrigin(pev, vecSpot);
+		pev->v_angle = pTank->pev->angles;
+		pev->angles = pev->v_angle;
+		pev->fixangle = 1;
+
+		ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs(
+			"dbg_tank: Tank bei (%.0f %.0f %.0f), Spieler bei (%.0f %.0f %.0f)\n",
+			pTank->pev->origin.x, pTank->pev->origin.y, pTank->pev->origin.z,
+			vecSpot.x, vecSpot.y, vecSpot.z));
+	}
+	else if (FStrEq(pcmd, "dbg_sniper"))
+	{
+		// Testhilfe: spielt events/snipershot.sc vom Spieler aus ab, damit die
+		// Sniper-Effektkette (gaussring-Kette + gausspoof) reproduzierbar ist.
+		extern int g_iDbgSniperEvent;
+
+		if (0 == g_psv_cheats->value || 0 == g_iDbgSniperEvent)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE,
+				"dbg_sniper: nicht verfuegbar (sv_cheats 1 bzw. Event-Precache)\n");
+			return;
+		}
+
+		Vector vecSrc = pev->origin + pev->view_ofs;
+		PLAYBACK_EVENT_FULL(FEV_RELIABLE, pEntity, (unsigned short)g_iDbgSniperEvent, 0.0f,
+			vecSrc, pev->v_angle, 0.0f, 0.0f, 1, 0, 0, 1);
+
+		ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs(
+			"dbg_sniper: Event %d bei (%.0f %.0f %.0f) yaw=%.0f\n",
+			g_iDbgSniperEvent, vecSrc.x, vecSrc.y, vecSrc.z, pev->v_angle.y));
+	}
+	else if (FStrEq(pcmd, "dbg_eyemode"))
+	{
+		// Debug: Rendermodus der Gunner-Augen-Sprites in der Naehe setzen,
+		// um das Durchscheinen (Glow ohne Tiefentest) zu pruefen.
+		// usage: dbg_eyemode <0..5> [radius]
+		if (0 == g_psv_cheats->value || CMD_ARGC() < 2)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "usage: dbg_eyemode <0..5> [radius] (needs sv_cheats 1)\n");
+			return;
+		}
+
+		const int iMode = atoi(CMD_ARGV(1));
+		const float flRadius = CMD_ARGC() >= 3 ? (float)atof(CMD_ARGV(2)) : 512.0f;
+
+		int iCount = 0;
+		for (CBaseEntity* pEnt = UTIL_FindEntityInSphere(nullptr, pev->origin, flRadius);
+			 pEnt != nullptr;
+			 pEnt = UTIL_FindEntityInSphere(pEnt, pev->origin, flRadius))
+		{
+			if (!FClassnameIs(pEnt->pev, "env_sprite"))
+				continue;
+
+			pEnt->pev->rendermode = iMode;
+			if (iMode == kRenderTransAdd)
+				pEnt->pev->renderamt = 200;
+			++iCount;
+		}
+
+		ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs(
+			"dbg_eyemode: %d Sprite(s) auf rendermode %d gesetzt (Radius %.0f)\n",
+			iCount, iMode, flRadius));
+	}
+	else if (FStrEq(pcmd, "dbg_kata"))
+	{
+		// Debug: einen Endboss-Kataball vor dem Spieler abwerfen (Test fuer
+		// events/kataimpact.sc, Retail 0x100d2aa0 CEndBossKataball::KataTouch).
+		if (0 == g_psv_cheats->value)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "usage: dbg_kata (needs sv_cheats 1)\n");
+			return;
+		}
+
+		UTIL_MakeVectors(pev->v_angle);
+
+		// Variante "self": direkt am Spieler erzeugen, damit der Ball ihn sofort
+		// beruehrt (Zweig "lebendes Ziel" -> katahitplayer-Kette der Karte).
+		const bool bSelf = (CMD_ARGC() >= 2 && FStrEq(CMD_ARGV(1), "self"));
+		const Vector vecSrc = bSelf
+			? pev->origin + pev->view_ofs * 0.5f
+			: pev->origin + pev->view_ofs + gpGlobals->v_forward * 32.0f;
+
+		CBaseEntity* pBall = CBaseEntity::Create("endboss_kataball", vecSrc, pev->angles, pEntity);
+		if (!pBall)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "dbg_kata: could not create endboss_kataball\n");
+			return;
+		}
+
+		pBall->pev->velocity = bSelf ? g_vecZero : gpGlobals->v_forward * 900.0f;
+
+		ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs(
+			"dbg_kata: spawned at (%.0f %.0f %.0f), velocity (%.0f %.0f %.0f)\n",
+			vecSrc.x, vecSrc.y, vecSrc.z,
+			pBall->pev->velocity.x, pBall->pev->velocity.y, pBall->pev->velocity.z));
+		DBG_LOG("[dbg] kataball spawned at %.1f %.1f %.1f",
+			vecSrc.x, vecSrc.y, vecSrc.z);
+	}
+	else if (FStrEq(pcmd, "dbg_pos"))
+	{
+		// Debug: aktuelle Position als fertige Teleport-Zeile ausgeben
+		// (gleiche Form wie die [pos]-Zeilen aus dbg_poslog).
+		const Vector vOrigin = pev->origin;
+		const char* pszMap = STRING(gpGlobals->mapname);
+		ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs(
+			"[pos] map=%s %.1f %.1f %.1f yaw=%.1f pitch=%.1f\n"
+			"tp %.0f %.0f %.0f %.0f %.0f\n",
+			pszMap, vOrigin.x, vOrigin.y, vOrigin.z, pev->v_angle.y, pev->v_angle.x,
+			vOrigin.x, vOrigin.y, vOrigin.z, pev->v_angle.y, pev->v_angle.x));
+		DBG_LOG("[pos] map=%s %.1f %.1f %.1f yaw=%.1f pitch=%.1f (dbg_pos)",
+			pszMap, vOrigin.x, vOrigin.y, vOrigin.z, pev->v_angle.y, pev->v_angle.x);
 	}
 	else if (FStrEq(pcmd, "dbg_route") || FStrEq(pcmd, "dbg_route_expanded"))
 	{
@@ -684,7 +1420,7 @@ void ClientCommand(edict_t* pEntity)
 		// and graph fallback from whatever schedule the selected monster runs.
 		if (0 == g_psv_cheats->value || CMD_ARGC() < 5)
 		{
-			ClientPrint(pev, HUD_PRINTCONSOLE, "usage: dbg_route[_expanded] <classname> <x> <y> <z> (needs sv_cheats 1)\n");
+			ClientPrint(pev, HUD_PRINTCONSOLE, "usage: dbg_route[_expanded] <classname> <x> <y> <z> [target-classname] (needs sv_cheats 1)\n");
 			return;
 		}
 
@@ -709,8 +1445,26 @@ void ClientCommand(edict_t* pEntity)
 		}
 
 		const Vector goal(atof(CMD_ARGV(2)), atof(CMD_ARGV(3)), atof(CMD_ARGV(4)));
+		CBaseEntity* pProbeTarget = pMonster->m_hEnemy;
+		if (CMD_ARGC() >= 6)
+		{
+			pProbeTarget = nullptr;
+			float nearestDistance = 128.0f * 128.0f;
+			for (CBaseEntity* pCandidate = UTIL_FindEntityInSphere(nullptr, goal, 128.0f);
+				pCandidate; pCandidate = UTIL_FindEntityInSphere(pCandidate, goal, 128.0f))
+			{
+				if (!FStrEq(STRING(pCandidate->pev->classname), CMD_ARGV(5)))
+					continue;
+				const float candidateDistance = (pCandidate->pev->origin - goal).LengthSquared();
+				if (candidateDistance < nearestDistance)
+				{
+					nearestDistance = candidateDistance;
+					pProbeTarget = pCandidate;
+				}
+			}
+		}
 		float distanceToBlock = 0.0f;
-		const int localMove = pMonster->CheckLocalMove(pMonster->pev->origin, goal, nullptr, &distanceToBlock);
+		const int localMove = pMonster->CheckLocalMove(pMonster->pev->origin, goal, pProbeTarget, &distanceToBlock);
 		Vector apex = g_vecZero;
 		const int routeIndex = pMonster->m_iRouteIndex;
 		if (routeIndex < 0 || routeIndex >= ROUTE_SIZE)
@@ -723,13 +1477,14 @@ void ClientCommand(edict_t* pEntity)
 		g_bDbgRouteProbe = true;
 		g_bDbgRouteExpandedOnly = FStrEq(pcmd, "dbg_route_expanded");
 		const bool triangulated = localMove != LOCALMOVE_VALID && localMove != LOCALMOVE_INVALID_DONT_TRIANGULATE &&
-			pMonster->FTriangulate(pMonster->pev->origin, goal, distanceToBlock, nullptr, &apex);
+			pMonster->FTriangulate(pMonster->pev->origin, goal, distanceToBlock, pProbeTarget, &apex);
 		g_bDbgRouteExpandedOnly = false;
 		g_bDbgRouteProbe = false;
 		pMonster->m_Route[routeIndex].vecLocation = oldFarSide;
 		ClientPrint(pev, HUD_PRINTCONSOLE,
-			UTIL_VarArgs("%s local=%d dist=%.0f triangulated=%d apex=(%.0f %.0f %.0f)\n",
-				pcmd, localMove, distanceToBlock, triangulated, apex.x, apex.y, apex.z));
+			UTIL_VarArgs("%s local=%d dist=%.0f target=%s triangulated=%d apex=(%.0f %.0f %.0f)\n",
+				pcmd, localMove, distanceToBlock, pProbeTarget ? STRING(pProbeTarget->pev->classname) : "none",
+				triangulated, apex.x, apex.y, apex.z));
 	}
 	else if (FStrEq(pcmd, "dbg_monsters"))
 	{
@@ -769,6 +1524,26 @@ void ClientCommand(edict_t* pEntity)
 					pMonster->m_iRouteIndex >= 0 && pMonster->m_iRouteIndex < ROUTE_SIZE ? pMonster->m_Route[pMonster->m_iRouteIndex].vecLocation.x : 0.0f,
 					pMonster->m_iRouteIndex >= 0 && pMonster->m_iRouteIndex < ROUTE_SIZE ? pMonster->m_Route[pMonster->m_iRouteIndex].vecLocation.y : 0.0f,
 					pMonster->m_iRouteIndex >= 0 && pMonster->m_iRouteIndex < ROUTE_SIZE ? pMonster->m_Route[pMonster->m_iRouteIndex].vecLocation.z : 0.0f));
+			if (FClassnameIs(pMonster->pev, "monster_rustbit"))
+			{
+				edict_t* pTargetEdict = INDEXENT(1);
+				for (int targetIndex = 1; targetIndex < gpGlobals->maxEntities; ++targetIndex, ++pTargetEdict)
+				{
+					if (pTargetEdict->free || !FClassnameIs(&pTargetEdict->v, "monster_xenome"))
+						continue;
+
+					CBaseEntity* pTarget = CBaseEntity::Instance(pTargetEdict);
+					if (!pTarget)
+						continue;
+
+					ClientPrint(pev, HUD_PRINTCONSOLE,
+						UTIL_VarArgs("dbg_monsters pair rustbit#%d xenome#%d relation=%d in_view=%d visible=%d distance=%.0f yaw=%.0f fov=%.2f\n",
+							ENTINDEX(pMonster->edict()), ENTINDEX(pTarget->edict()), pMonster->IRelationship(pTarget),
+							pMonster->FInViewCone(pTarget), pMonster->FVisible(pTarget),
+							(pTarget->pev->origin - pMonster->pev->origin).Length(), pMonster->pev->angles.y,
+							pMonster->m_flFieldOfView));
+				}
+			}
 			++count;
 		}
 		ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs("dbg_monsters: %d monster(s)\n", count));
