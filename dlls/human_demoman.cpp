@@ -76,13 +76,10 @@
 //     trailing flame-sprite child,
 //     plays weapons/rocket1.wav, sends two temp-entity sprite
 //     messages for muzzle flash/glow, then switches Think to
-//     AccelerateThink), AccelerateThink @0x100ac390 - a full
-//     nearby-target homing/steering algorithm (scans entities within
-//     a ~1024-unit radius, steers velocity toward the nearest valid
-//     enemy, clamps speed between 1200-1400 units/s). The current
-//     reconstruction preserves the verified cadence, range and speed
-//     interval, using a conservative nearest-live-target steering
-//     approximation; its retail target-validity predicate remains open.
+//     AccelerateThink @0x100ac390 scans hittable living entities
+//     within 1024 units, combines their direction vectors, decays its
+//     turn strength by 0.95 per tick, adds 50 units/s acceleration,
+//     and applies Retail's 1200/1500 -> 1200/1400 speed thresholds.
 //=========================================================
 
 #include "extdll.h"
@@ -150,8 +147,8 @@ void CDemomanMine::Spawn()
 void CDemomanMine::Precache()
 {
 	PrecacheModel("models/demomine.mdl");
-	PrecacheModel("sprites/camled.spr");
-	PrecacheSound("weapons/dml_lock.wav");
+	PrecacheModel("sprites/flame.spr");
+	PrecacheSound("weapons/rocket1.wav");
 }
 
 void CDemomanMine::WaitToExplode()
@@ -243,6 +240,11 @@ public:
 
 private:
 	CSprite* m_pFlame = nullptr;
+	int m_iTrail = 0; // Sprite-Modellindex fuer TE_BEAMFOLLOW (Flammenschweif)
+	// Retail +0x27c; Anfangswert 0.7 (Double 0x100ec130 = 0.7), Abklingen
+	// 0.95 je Think (Double 0x100f5730 = 0.95) — beide Konstanten aus der
+	// Binary gelesen (M-Rest, 2026-11-07).
+	float m_flSteering = 0.7f;
 };
 LINK_ENTITY_TO_CLASS(demoman_rocket, CDemomanRocket);
 
@@ -265,9 +267,7 @@ void CDemomanRocket::Spawn()
 	pev->solid = SOLID_BBOX;
 	pev->dmg = gSkillData.demomanRocketDamage;
 	SetTouch(&CDemomanRocket::RocketExplodeTouch);
-
-	UTIL_MakeVectors(pev->angles);
-	pev->velocity = gpGlobals->v_forward * 1200; // fixed speed, see file header (homing not reproduced)
+	m_flSteering = 0.7f;
 
 	// Retail Spawn arms IgniteThink after 0.1 s; the sound, trail and
 	// guided flight do not begin at entity creation.
@@ -279,7 +279,7 @@ void CDemomanRocket::Precache()
 {
 	PrecacheModel("models/dmlrocket.mdl");
 	PrecacheSound("weapons/rocket1.wav");
-	PrecacheModel("sprites/flame.spr");
+	m_iTrail = PrecacheModel("sprites/flame.spr");
 }
 
 void CDemomanRocket::RocketExplodeTouch(CBaseEntity* pOther)
@@ -300,8 +300,32 @@ void CDemomanRocket::IgniteThink()
 	if (m_pFlame)
 	{
 		m_pFlame->SetTransparency(kRenderGlow, 255, 255, 255, 255, kRenderFxNone);
-		m_pFlame->SetAttachment(edict(), 0);
+		// models/dmlrocket.mdl hat KEINE Attachment-Punkte (mdl_inspect: 0).
+		// SetAttachment(edict(), 0) setzt body=0/skin=entindex und laesst den
+		// Sprite am Abschusspunkt stehen -> kein Flammen-/Rauchschweif.
+		// Reines Folgen der Rakete (MOVETYPE_FOLLOW ohne Attachment-Index)
+		// haengt den Sprite an Origin/Winkel der Rakete.
+		m_pFlame->pev->aiment = edict();
+		m_pFlame->pev->body = 0;
+		m_pFlame->pev->skin = 0;
+		m_pFlame->pev->movetype = MOVETYPE_FOLLOW;
+		m_pFlame->pev->solid = SOLID_NOT;
 	}
+
+	// Der flame-Sprite folgt der Rakete nicht sichtbar (kein Attachment im
+	// Modell; MOVETYPE_FOLLOW zeigt hier nichts). Zusaetzlich der bewaehrte
+	// Engine-Schweif wie bei CApacheHVR (apache.cpp:1063): TE_BEAMFOLLOW.
+	MESSAGE_BEGIN(MSG_BROADCAST, SVC_TEMPENTITY);
+	WRITE_BYTE(TE_BEAMFOLLOW);
+	WRITE_SHORT(entindex());
+	WRITE_SHORT(m_iTrail);
+	WRITE_BYTE(15);  // life
+	WRITE_BYTE(6);   // width
+	WRITE_BYTE(224); // r
+	WRITE_BYTE(224); // g
+	WRITE_BYTE(255); // b
+	WRITE_BYTE(200); // brightness
+	MESSAGE_END();
 
 	EMIT_SOUND_DYN(ENT(pev), CHAN_WEAPON, "weapons/rocket1.wav", 0.5f, 0.5f, 0, 100);
 	SetThink(&CDemomanRocket::AccelerateThink);
@@ -310,7 +334,9 @@ void CDemomanRocket::IgniteThink()
 
 void CDemomanRocket::AccelerateThink()
 {
-	if (!IsInWorld())
+	if (pev->origin.x < -4096.0f || pev->origin.x > 4096.0f ||
+		pev->origin.y < -4096.0f || pev->origin.y > 4096.0f ||
+		pev->origin.z < -4096.0f || pev->origin.z > 4096.0f)
 	{
 		if (m_pFlame)
 			UTIL_Remove(m_pFlame);
@@ -319,32 +345,72 @@ void CDemomanRocket::AccelerateThink()
 		return;
 	}
 
-	CBaseEntity* pTarget = nullptr;
-	float flBestDistance = 1024.0f;
+	// Nur auf Feinde des Abschuss-Owners lenken. Vorher summierte der Code die
+	// Richtungen zu *allen* lebenden Entitaeten im 1024er-Radius auf - dadurch
+	// kurvten die Raketen auf die neben dem Demoman stehenden Banditen zu
+	// (Spielerbeobachtung 2026-11-07) und trafen den eigenen Trupp.
+	CBaseEntity* pOwner = pev->owner ? CBaseEntity::Instance(pev->owner) : nullptr;
+	CBaseMonster* pOwnerMonster = dynamic_cast<CBaseMonster*>(pOwner);
+
+	Vector vecSteering(0, 0, 0);
 	for (CBaseEntity* pCandidate = nullptr;
 		(pCandidate = UTIL_FindEntityInSphere(pCandidate, pev->origin, 1024.0f)) != nullptr;)
 	{
-		if (pCandidate == this || pCandidate->edict() == pev->owner || !pCandidate->IsAlive())
+		if (pCandidate == this || pCandidate->pev->takedamage == DAMAGE_NO ||
+			!pCandidate->IsAlive() || pCandidate->pev->pContainingEntity == pev->owner)
 			continue;
-		const float flDistance = (pCandidate->Center() - pev->origin).Length();
-		if (flDistance < flBestDistance)
-		{
-			pTarget = pCandidate;
-			flBestDistance = flDistance;
-		}
+
+		// Verbündete nicht anvisieren (R_AL = eigener Trupp). Feinde und
+		// Neutrale bleiben als Lenkziel erhalten, damit die Rakete wie im
+		// Retail dem Ziel folgt.
+		if (pOwnerMonster != nullptr &&
+			pOwnerMonster->IRelationship(pCandidate) == R_AL)
+			continue;
+
+		Vector vecToCandidate = pCandidate->pev->origin - pev->origin;
+		if (vecToCandidate.Length() == 0.0f)
+			vecToCandidate = Vector(0, 0, 1);
+		else
+			vecToCandidate = vecToCandidate.Normalize();
+
+		Vector vecCombined = vecSteering + vecToCandidate;
+		if (vecCombined.Length() == 0.0f)
+			vecCombined = Vector(0, 0, 1);
+		else
+			vecCombined = vecCombined.Normalize();
+
+		// Retail damps horizontal components in the accumulated target vector.
+		vecSteering = Vector(vecCombined.x * 0.7f, vecCombined.y * 0.7f, vecCombined.z);
 	}
 
-	if (pTarget)
+	m_flSteering *= 0.95f;
+	if (vecSteering != Vector(0, 0, 0))
 	{
-		const Vector vecDesired = (pTarget->Center() - pev->origin).Normalize();
-		pev->velocity = (pev->velocity.Normalize() * 0.9f + vecDesired * 0.1f).Normalize() * pev->velocity.Length();
+		vecSteering = vecSteering.Normalize();
+		Vector vecVelocityDirection = pev->velocity;
+		if (vecVelocityDirection.Length() == 0.0f)
+			vecVelocityDirection = Vector(0, 0, 1);
+		else
+			vecVelocityDirection = vecVelocityDirection.Normalize();
+		pev->velocity = vecVelocityDirection + vecSteering * m_flSteering;
 	}
+
+	Vector vecVelocityDirection = pev->velocity;
+	if (vecVelocityDirection.Length() == 0.0f)
+		vecVelocityDirection = Vector(0, 0, 1);
+	else
+		vecVelocityDirection = vecVelocityDirection.Normalize();
+	pev->velocity = pev->velocity + vecVelocityDirection * 50.0f;
 
 	const float flSpeed = pev->velocity.Length();
-	if (flSpeed > 1400.0f)
+	if (flSpeed > 1500.0f)
 		pev->velocity = pev->velocity.Normalize() * 1400.0f;
 	else if (flSpeed < 1200.0f)
 		pev->velocity = pev->velocity.Normalize() * 1200.0f;
+
+	ALERT(at_aiconsole, "[rocket] org=(%.0f %.0f %.0f) vel=(%.0f %.0f %.0f) steer=%.2f\n",
+		pev->origin.x, pev->origin.y, pev->origin.z,
+		pev->velocity.x, pev->velocity.y, pev->velocity.z, m_flSteering);
 
 	pev->angles = UTIL_VecToAngles(pev->velocity);
 	pev->nextthink = gpGlobals->time + 0.1f;
@@ -664,6 +730,9 @@ void CDemoman::Precache()
 
 void CDemoman::HandleAnimEvent(MonsterEvent_t* pEvent)
 {
+	ALERT(at_aiconsole, "[demoev] event=%d anim=%d activity=%d\n",
+		pEvent->event, pev->sequence, m_Activity);
+
 	switch (pEvent->event)
 	{
 	case DEMOMAN_AE_ROCKET:
@@ -692,7 +761,52 @@ void CDemoman::LaunchRocket()
 		return;
 
 	EMIT_SOUND(ENT(pev), CHAN_WEAPON, "demoman/demo_launchrocket.wav", 1.0, ATTN_NORM);
-	CBaseEntity::Create("demoman_rocket", vecOrigin, vecAngles, edict());
+
+	// Retail 0x100ad550 sendet vor dem Erzeugen der Rakete eine Rauchwolke am
+	// Muendungspunkt: MESSAGE_BEGIN(MSG_PAS, SVC_TEMPENTITY, origin), WriteByte 5
+	// (TE_SMOKE), drei WriteCoord, WriteShort(smoke-Modell), WriteByte 0xd
+	// (Scale 13/10), WriteByte 0xc (Framerate 12), MessageEnd.
+	MESSAGE_BEGIN(MSG_PAS, SVC_TEMPENTITY, vecOrigin);
+	WRITE_BYTE(TE_SMOKE);
+	WRITE_COORD(vecOrigin.x);
+	WRITE_COORD(vecOrigin.y);
+	WRITE_COORD(vecOrigin.z);
+	WRITE_SHORT(g_sModelIndexSmoke);
+	WRITE_BYTE(13); // Scale * 10
+	WRITE_BYTE(12); // Framerate
+	MESSAGE_END();
+
+	CBaseEntity* pRocket = CBaseEntity::Create("demoman_rocket", vecOrigin, vecAngles, edict());
+	if (pRocket)
+	{
+		// Startrichtung auf den Gegner, nicht entlang der Modellachse: die
+		// Attachment-Winkel koennen deutlich neben der Ziellinie liegen
+		// (Spielerbeobachtung 2026-11-07: Rakete flog zuerst den nebenstehenden
+		// Banditen an). Ohne Gegner bleibt es bei der Muendungsrichtung.
+		Vector vecDir;
+		if (m_hEnemy != nullptr)
+		{
+			vecDir = (m_hEnemy->BodyTarget(vecOrigin) - vecOrigin);
+			if (vecDir.Length() == 0.0f)
+			{
+				UTIL_MakeVectors(vecAngles);
+				vecDir = gpGlobals->v_forward;
+			}
+			vecDir = vecDir.Normalize();
+		}
+		else
+		{
+			UTIL_MakeVectors(vecAngles);
+			vecDir = gpGlobals->v_forward;
+		}
+
+		ALERT(at_aiconsole, "[demo] rocket enemy=%s dir=%.2f %.2f %.2f muzzle=(%.0f %.0f %.0f)\n",
+			m_hEnemy ? STRING(m_hEnemy->pev->classname) : "none",
+			vecDir.x, vecDir.y, vecDir.z, vecOrigin.x, vecOrigin.y, vecOrigin.z);
+
+		pRocket->pev->velocity = vecDir * 100.0f;
+		pRocket->pev->angles = UTIL_VecToAngles(vecDir);
+	}
 }
 
 void CDemoman::DropMine()

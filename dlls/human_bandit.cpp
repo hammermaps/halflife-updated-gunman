@@ -139,8 +139,15 @@ private:
 	bool PrepareShot(Vector& vecSrc, Vector& vecDir, float flSpread, int attachment);
 	void FinishShot();
 	unsigned short m_usSniperShot = 0;
+	// Retail: +0x304 = events/monstermechagun.sc (einziger Event-Index, den
+	// CBanditGrunt::Precache 0x100b1b20 ablegt).
+	unsigned short m_usMechaGun = 0;
 	void MechaVolley();
 	void Melee();
+	// Testtreiber (nur mit Keyvalue gm_testfire 1): loest die Mecha-Salve
+	// ohne Animation aus, damit der Event-Pfad headless pruefbar ist.
+	void TestFireThink();
+	bool m_bTestFire = false;
 
 	int m_iBody = 0;		 // "body" keyvalue (FGD title "Head") - 0=Random, 1-4 = fixed head variants
 	int m_iStartDrawn = 1; // "StartDrawn" keyvalue - 1=Yes (default), 2=No
@@ -177,6 +184,13 @@ bool CBanditGrunt::KeyValue(KeyValueData* pkvd)
 	{
 		if (atoi(pkvd->szValue) != 0)
 			m_iGunState = 0x80;
+		return true;
+	}
+	// Debug-Keyvalue (nicht Retail): loest die Mecha-Salve periodisch aus,
+	// damit EV_MonsterMechagun ohne Spielereingabe nachweisbar ist.
+	else if (FStrEq(pkvd->szKeyName, "gm_testfire"))
+	{
+		m_bTestFire = atoi(pkvd->szValue) != 0;
 		return true;
 	}
 
@@ -222,6 +236,34 @@ void CBanditGrunt::Spawn()
 	{
 		SetBodygroup(1, m_iStartDrawn != 1 ? 1 : 0);
 	}
+
+	// Debug-Treiber: Keyvalue `gm_testfire 1` (nicht Retail) laesst den
+	// Mecha-Banditen alle 0,5 s eine Salve abgeben, damit EV_MonsterMechagun
+	// ohne Spielereingabe im Log nachweisbar ist. Ohne den Key verhaelt sich
+	// die Klasse wie Retail.
+	if (m_iGunState == 0x80 && m_bTestFire)
+	{
+		SetThink(&CBanditGrunt::TestFireThink);
+		pev->nextthink = gpGlobals->time + 1.0f;
+	}
+}
+
+void CBanditGrunt::TestFireThink()
+{
+	if (!m_hEnemy)
+	{
+		CBaseEntity* pPlayer = UTIL_PlayerByIndex(1);
+
+		if (pPlayer)
+			m_hEnemy = pPlayer;
+	}
+
+	DBG_LOG("BANDIT %d testfire enemy=%d ev=%d", ENTINDEX(edict()), m_hEnemy != 0, (int)m_usMechaGun);
+
+	if (m_hEnemy)
+		MechaVolley();
+
+	pev->nextthink = gpGlobals->time + 0.5f;
 }
 
 void CBanditGrunt::Precache()
@@ -241,8 +283,14 @@ void CBanditGrunt::Precache()
 	PrecacheModel("sprites/gaussbeam2.spr");
 	PrecacheModel("sprites/gaussring.spr");
 	PrecacheModel("sprites/gausspoof.spr");
-	PrecacheEvent(1, "events/monstermechagun.sc");
+	m_usMechaGun = PrecacheEvent(1, "events/monstermechagun.sc");
+	// monstershotgun.sc kommt in Retail NICHT aus dieser Klasse, sondern aus
+	// der gemeinsamen Menschen-Precache FUN_100aa1d0 (-> Feld +0x2f0); der
+	// Bandit selbst spielt es nie. Der Port hat diese gemeinsame Basis nicht,
+	// deshalb wird der Index hier weiter mitregistriert (sonst fehlt der
+	// Event-Slot, den z. B. human_gunman per eigenem Precache anlegt).
 	PrecacheEvent(1, "events/monstershotgun.sc");
+
 
 	PrecacheSound("weapons/gauss_fire1.wav");
 	PrecacheSound("weapons/gauss_fire2.wav");
@@ -510,9 +558,10 @@ bool CBanditGrunt::PrepareShot(Vector& vecSrc, Vector& vecDir, float flSpread, i
 	if (!m_hEnemy)
 		return false;
 
-	// Retail event 1 (@0x100b1105) takes its shot origin from attachment 0 (weapon hand), not from
-	// the monster's center or head: GetGunPosition() put the shots at head height. Attachment 1 is
-	// used by retail event 2 (not yet mapped to SHOOT2/SHOOT4 here, see TODO in findings/entities).
+	// Retail events 1/2 use attachments 0/1 for the beam shots; events 5/6 use
+	// attachments 0/1 for bolt shots (HandleAnimEvent @0x100b10e0). These are
+	// weapon-hand origins, not GetGunPosition() at head height; see
+	// findings/entities/bandit_event_mapping_2026-11-01.md.
 	Vector vecAttachment, vecAttachAngles;
 	GetAttachment(attachment, vecAttachment, vecAttachAngles);
 	vecSrc = vecAttachment;
@@ -603,6 +652,19 @@ void CBanditGrunt::MechaVolley()
 	GetAttachment(0, vecShootOrigin, vecShootAngles);
 	Vector vecShootDir = ShootAtEnemy(vecShootOrigin);
 	DBG_LOG("BANDIT %d MechaVolley src=(%.1f %.1f %.1f) dir=(%.3f %.3f %.3f)", ENTINDEX(edict()), vecShootOrigin.x, vecShootOrigin.y, vecShootOrigin.z, vecShootDir.x, vecShootDir.y, vecShootDir.z);
+
+	// Retail 0x100b1299..0x100b12c5 (HandleAnimEvent Fall 8): zwölf Pushes vor
+	// `call *0x1013250c` (g_engfuncs.pfnPlaybackEvent), von hinten gelesen:
+	//   flags = 2, invoker = *(pev+0x208) (Spieler-Edict), eventindex =
+	//   16-Bit-Feld +0x304 (= monstermechagun.sc), delay = 0,
+	//   origin/angles = zwei lokale Vektoren, danach sechs Nullen.
+	// Die beiden lokalen Vektoren baut Retail aus dem Muendungspunkt
+	// (FUN_100b0800) und der Zielrichtung (FUN_1002d200); welche Komponenten
+	// dort kopiert werden, ist im Decompilat nicht vollstaendig lesbar.
+	// Der Port sendet deshalb Attachment-Ursprung und -Winkel.
+	PLAYBACK_EVENT_FULL(2, edict(), m_usMechaGun, 0.0f,
+		vecShootOrigin, vecShootAngles, 0.0f, 0.0f, 0, 0, 0, 0);
+
 	FireBullets(6, vecShootOrigin, vecShootDir, Vector(0.02618, 0.02618, 0.02618), 4096, BULLET_PLAYER_9MM, 4, (int)gSkillData.banditMechDamage);
 	m_cAmmoLoaded--;
 	EMIT_SOUND_DYN(ENT(pev), CHAN_WEAPON, RANDOM_LONG(0, 1) ? "weapons/hks2.wav" : "weapons/hks1.wav", 0.5f, 0.6f, 0, 100);

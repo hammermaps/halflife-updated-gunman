@@ -23,7 +23,9 @@
 // confirmed for CSentry::Shoot() in the stock SDK base.
 //
 // Simplified relative to the original: HuntThink's full waypoint/banking
-// solver (FUN_1006b560) and its exact yaw/pitch firing gate remain open.
+// solver (FUN_1006b560) is ported. AimAndFire uses the retail yaw/pitch
+// slew gate (18 degrees per think, firing only when both axes arrive).
+// The pre-shot indirect call through DAT_1013250c is still unresolved.
 // The previous independent CircleThink and missing crash state were replaced
 // by retail-backed target, impact and falling lifecycle behavior.
 //=========================================================
@@ -50,6 +52,7 @@ public:
 	void Precache() override;
 	int Classify() override { return CLASS_ALIEN_MILITARY; }
 	int BloodColor() override { return DONT_BLEED; }
+	void TraceAttack(entvars_t* pevAttacker, float flDamage, Vector vecDir, TraceResult* ptr, int bitsDamageType) override;
 	void Killed(entvars_t* pevAttacker, int iGib) override;
 	void GibMonster() override;
 	void EXPORT HuntThink();
@@ -92,6 +95,9 @@ private:
 	float m_flFirstSeen = 0.0f;	   // +0x2c0
 	int m_iRotorState = 0;		   // +0x2d0
 	int m_iSmokeCounter = 0;	   // +0x2d4
+	// Retail: 16-Bit-Event-Index bei +0x2d8 = events/chopperfire.sc
+	// (Precache 0x1006a4e7 speichert `ax` dort).
+	unsigned short m_usChopperFire = 0;
 };
 LINK_ENTITY_TO_CLASS(monster_human_chopper, CChopper);
 LINK_ENTITY_TO_CLASS(monster_apache, CChopper); // Retail: gleiche Vtable 0x100f7388
@@ -154,7 +160,7 @@ void CChopper::Precache()
 	PrecacheSound("apache/ap_rotor2.wav");
 	PrecacheSound("weapons/explode5.wav");
 	PrecacheSound("weapons/hks2.wav");
-	PrecacheEvent(1, "events/chopperfire.sc");
+	m_usChopperFire = PrecacheEvent(1, "events/chopperfire.sc");
 }
 
 void CChopper::SetGoal(CBaseEntity* pGoal)
@@ -165,6 +171,16 @@ void CChopper::SetGoal(CBaseEntity* pGoal)
 	m_vecGoal = pGoal->pev->origin;
 	UTIL_MakeVectors(pGoal->pev->angles);
 	m_vecGoalDir = gpGlobals->v_forward;
+}
+
+// Retail vtable slot 10 (0x1006c380): retain the incoming multidamage and
+// occasionally queue smoke proportional to the hit damage. The direction and
+// trace are intentionally unused by the mechanical chopper implementation.
+void CChopper::TraceAttack(entvars_t* pevAttacker, float flDamage, Vector vecDir, TraceResult* ptr, int bitsDamageType)
+{
+	AddMultiDamage(pevAttacker, this, flDamage, bitsDamageType);
+	if (RANDOM_LONG(0, 99) < 10)
+		m_iSmokeCounter = static_cast<int>(std::nearbyint(flDamage * 0.2f + 3.0f));
 }
 
 // Retail FUN_1006c270: damaged-chopper smoke puff (TE_SMOKE) when a random
@@ -345,6 +361,14 @@ bool CChopper::AimAndFire()
 
 	if (!bYaw || !bPitch)
 		return false;
+
+	// Retail FUN_1006be80 (0x1006c190..0x1006c1c5): vor dem Schuss
+	// `PlaybackEvent(flags 2, Invoker = Spieler-Edict, Index = +0x2d8,
+	//  delay 0, origin/angles = zwei lokale Vektoren, Rest 0)`. Die Vektoren
+	// baut Retail im selben Frame wie den Schuss; der Port nimmt Attachment-
+	// Ursprung und -Winkel des Turms.
+	PLAYBACK_EVENT_FULL(2, edict(), m_usChopperFire, 0.0f,
+		vecSrc, vecAng, 0.0f, 0.0f, 0, 0, 0, 0);
 
 	FireBullets(1, vecSrc, vecDir, Vector(0.06976, 0.06976, 0.06976), 8192, BULLET_MONSTER_MP5, 0);
 	m_iSalvoShots--;
