@@ -75,7 +75,7 @@ public:
 #define GLOCK_WEIGHT 10
 #define PYTHON_WEIGHT 15
 #define MP5_WEIGHT 15
-#define SHOTGUN_WEIGHT 15
+#define SHOTGUN_WEIGHT -1 // Retail CShotgun::GetItemInfo setzt ItemInfo +0x28 = -1
 #define CROSSBOW_WEIGHT 10
 #define RPG_WEIGHT 20
 #define GAUSS_WEIGHT 20

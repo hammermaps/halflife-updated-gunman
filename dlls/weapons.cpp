@@ -268,11 +268,14 @@ void W_Precache()
 	// custom items...
 
 	// common world objects
-	UTIL_PrecacheOther("item_suit");
+	// Retail gunman.dll registriert nur item_airtank, item_armor, item_battery,
+	// item_gascan, item_gastank, item_healthkit und item_sodacan (Stringinventar
+	// der DLL). item_suit/item_antidote/item_security/item_longjump fehlen dort,
+	// ihre Weltmodelle fehlen auch im Retail-Tree - die Precaches erzeugten im
+	// Smoke-Lauf vier "PrecacheModel: missing models/w_*.mdl"-Fehler. Die
+	// Retail-Items werden von ihren Spawn-Pfaden selbst precacht; hier bleibt
+	// nur das Item, das Retail ebenfalls weltweit vorhaelt.
 	UTIL_PrecacheOther("item_battery");
-	UTIL_PrecacheOther("item_antidote");
-	UTIL_PrecacheOther("item_security");
-	UTIL_PrecacheOther("item_longjump");
 
 	// Gunman player weapons. The stock Half-Life arsenal must not be
 	// registered here: its IDs overlap the retail Gunman weapon table.

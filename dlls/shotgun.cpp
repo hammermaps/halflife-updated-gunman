@@ -47,6 +47,13 @@ void CShotgun::Spawn()
 
 void CShotgun::Precache()
 {
+	// Retail-Beleg: gunman.dll FUN_10096100 (CShotgun::Precache) precacht genau
+	// models/v_shotgun.mdl, models/w_shotgun.mdl, models/p_shotgun.mdl,
+	// models/shotgunshell.mdl (-> 0xa8 = m_iShell), die Sounds items/9mmclip1.wav,
+	// weapons/sbarrel1.wav, weapons/shotgun_cock_heavy.wav, weapons/357_cock1.wav
+	// und das Event events/gw_shotgun.sc (-> 0xcc = m_usFire).
+	// Die frueheren Stock-HL-Sounds (dbarrel1, reload1, reload3, scock1) existieren in
+	// Gunman nicht und werden deshalb nicht mehr precacht.
 	PrecacheModel("models/v_shotgun.mdl");
 	PrecacheModel("models/w_shotgun.mdl");
 	PrecacheModel("models/p_shotgun.mdl");
@@ -55,17 +62,9 @@ void CShotgun::Precache()
 
 	PrecacheSound("items/9mmclip1.wav");
 
-	PrecacheSound("weapons/dbarrel1.wav"); //shotgun
-	PrecacheSound("weapons/sbarrel1.wav"); //shotgun
-
-	PrecacheSound("weapons/reload1.wav"); // shotgun reload
-	PrecacheSound("weapons/reload3.wav"); // shotgun reload
-
-	//	PRECACHE_SOUND ("weapons/sshell1.wav");	// shotgun reload - played on client
-	//	PRECACHE_SOUND ("weapons/sshell3.wav");	// shotgun reload - played on client
-
-	PrecacheSound("weapons/357_cock1.wav"); // gun empty sound
-	PrecacheSound("weapons/scock1.wav");	 // cock gun
+	PrecacheSound("weapons/sbarrel1.wav");			// shotgun fire
+	PrecacheSound("weapons/shotgun_cock_heavy.wav");	// shotgun pump
+	PrecacheSound("weapons/357_cock1.wav");			// gun empty sound
 
 	m_usFire = PrecacheEvent(1, "events/gw_shotgun.sc");
 }
@@ -210,8 +209,15 @@ void CShotgun::PrimaryAttack()
 	Vector vecSrc = m_pPlayer->GetGunPosition();
 	Vector vecAiming = m_pPlayer->GetAutoaimVector(AUTOAIM_5DEGREES);
 
+	// Retail (0x10096933-0x10096974): FireBullets bekommt den Schaden explizit, nicht
+	// ueber die Bullet-Typ-Tabelle. Basis 8.0 (0x41000000), im Mehrspieler 9.8
+	// (0x411ccccd); skill-skaliert ueber 0x100d9378 - die Skill-Datei fuehrt
+	// sk_buckshot1..3 = 8, daher 8 in Einzelspieler.
+	const float flRetailDamage = g_pGameRules->IsMultiplayer() ? 9.8f : gSkillData.gunmanBuckshotDamage;
+	const int iRetailDamage = (int)flRetailDamage;
+
 	m_pPlayer->FireBulletsPlayer(iPellets, vecSrc, vecAiming, m_vecSpread,
-		2048, BULLET_PLAYER_BUCKSHOT, 0, 0, m_pPlayer->pev,
+		2048, BULLET_PLAYER_BUCKSHOT, 0, iRetailDamage, m_pPlayer->pev,
 		m_pPlayer->random_seed);
 
 	PLAYBACK_EVENT_FULL(flags, m_pPlayer->edict(), m_usFire, 0.0,
@@ -221,12 +227,21 @@ void CShotgun::PrimaryAttack()
 		// HEV suit - indicate out of ammo condition
 		m_pPlayer->SetSuitUpdate("!HEV_AMO0", false, 0);
 
-	//if (m_iClip != 0)
-	m_flPumpTime = UTIL_WeaponTimeBase();
+	// Schuss-Sequenz des Modells ist 3 ("shoot"), nicht der SDK-Enum-Wert
+	// (findings/weapons/anim_index_abgleich_2026-11-01.md: 0 draw, 1 idle,
+	// 2 idleinspect, 3 shoot, 4 shoot2, 5 shoot3, 6 shoot4, 7 customize).
+	// Bisher sendete PrimaryAttack gar keine Animation - daher "keine
+	// Schuss-Animation".
+	SendWeaponAnim(3);
 
-	m_flNextPrimaryAttack = UTIL_WeaponTimeBase();
-	m_flNextSecondaryAttack = UTIL_WeaponTimeBase();
-	m_flTimeWeaponIdle = UTIL_WeaponTimeBase();
+	// Stock-HL-Zeiten (shotgun.cpp): Nachladen der Kammer 0.5 s, Feuertakt
+	// 0.75 s. Mit UTIL_WeaponTimeBase() ohne Zuschlag feuerte die Flinte in
+	// jedem Frame - daher der "Maschinengewehr"-Effekt.
+	m_flPumpTime = UTIL_WeaponTimeBase() + 0.5f;
+
+	m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + 0.75f;
+	m_flNextSecondaryAttack = UTIL_WeaponTimeBase() + 0.75f;
+	m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 2.5f;
 }
 
 
@@ -255,8 +270,11 @@ void CShotgun::ItemPostFrame()
 {
 	if (0 != m_flPumpTime && m_flPumpTime < gpGlobals->time)
 	{
-		// play pumping sound
-		EMIT_SOUND_DYN(ENT(m_pPlayer->pev), CHAN_ITEM, "weapons/scock1.wav", 1, ATTN_NORM, 0, 95 + RANDOM_LONG(0, 0x1f));
+		// Retail (CShotgun::Precache, FUN_10096100) precacht
+		// weapons/shotgun_cock_heavy.wav als Pump-Sound; der frueher hier
+		// benutzte Stock-HL-Sound weapons/scock1.wav existiert in Gunman nicht
+		// (Smoke-Log: "Could not load sound sound/weapons/scock1.wav").
+		EMIT_SOUND_DYN(ENT(m_pPlayer->pev), CHAN_ITEM, "weapons/shotgun_cock_heavy.wav", 1, ATTN_NORM, 0, 95 + RANDOM_LONG(0, 0x1f));
 		m_flPumpTime = 0;
 	}
 

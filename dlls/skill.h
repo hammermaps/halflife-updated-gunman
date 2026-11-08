@@ -200,6 +200,7 @@ struct skilldata_t
 	float plrDmgM203Grenade;
 	float plrDmgBuckshot;
 	float gunmanBuckshotDamage;
+	float gunman9mmARDamage; // Retail: Bullet-Typ 2 nutzt sk_9mmAR_bullet (FireBullets 0x1000f7f8)
 	float plrDmgCrossbowClient;
 	float plrDmgCrossbowMonster;
 	float plrDmgRPG;

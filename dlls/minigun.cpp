@@ -105,6 +105,10 @@ private:
 	float m_flNextTempDrop = 0;
 	bool m_bWaterCooled = false;
 	int m_iLastHudHeat = -1;
+
+	// Retail: +0xe4 = gw_minigun.sc, +0xe6 = gw_minigunHeat.sc (16-Bit-Indizes).
+	unsigned short m_usFire = 0;
+	unsigned short m_usFireHeat = 0;
 };
 LINK_ENTITY_TO_CLASS(weapon_minigun, CMinigun);
 LINK_ENTITY_TO_CLASS(weapon_mechagun, CMinigun);
@@ -147,20 +151,20 @@ void CMinigun::Precache()
 	PrecacheSound("weapons/hks3.wav");
 	PrecacheSound("weapons/MechaSpinUp.wav");
 	PrecacheSound("weapons/MechaSpinDown.wav");
-	PrecacheEvent(1, "events/gw_minigun.sc");
-	PrecacheEvent(1, "events/gw_minigunHeat.sc");
+	m_usFire = PrecacheEvent(1, "events/gw_minigun.sc");
+	m_usFireHeat = PrecacheEvent(1, "events/gw_minigunHeat.sc");
 }
 
 bool CMinigun::GetItemInfo(ItemInfo* p)
 {
 	p->pszName = STRING(pev->classname);
 	p->pszAmmo1 = "9mm";
-	p->iMaxAmmo1 = _9MM_MAX_CARRY;
+	p->iMaxAmmo1 = 200; // Retail GetItemInfo schreibt hier die Konstante 0xc8 = 200.
 	p->pszAmmo2 = nullptr;
 	p->iMaxAmmo2 = -1;
-	p->iMaxClip = 200;
-	p->iSlot = 4;
-	p->iPosition = 1;
+	p->iMaxClip = WEAPON_NOCLIP; // Retail: ItemInfo +0x1c = -1.
+	p->iSlot = 3;      // Retail: ItemInfo +0x00 = 3.
+	p->iPosition = 0;  // Retail: ItemInfo +0x04 = 0.
 	p->iId = m_iId = WEAPON_MINIGUN;
 	p->iFlags = 0;
 	p->iWeight = -10;
@@ -215,6 +219,15 @@ void CMinigun::PrimaryAttack()
 		PlayEmptySound();
 		m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + 0.2;
 		SpinDown();
+
+		// Retail 0x1009501e..0x1009503a: im No-Ammo-Zweig
+		// PlaybackEvent(0, player, m_usFireHeat(+0xe6), 0.0, g_vecZero,
+		//   g_vecZero, 0,0,0,0, bparam1 = 1, 0) — Heat-Anzeige aus.
+		{
+			float flZero[3] = {0.0f, 0.0f, 0.0f};
+			PLAYBACK_EVENT_FULL(0, m_pPlayer->edict(), m_usFireHeat, 0.0,
+				flZero, flZero, 0.0f, 0.0f, 0, 0, 1, 0);
+		}
 		return;
 	}
 
@@ -238,24 +251,68 @@ void CMinigun::PrimaryAttack()
 			m_iTemp = MINIGUN_HEAT_MAX;
 			m_iOverheating = 1;
 			m_flTimeStartOverheating = flNow;
+
+			// Retail (Ueberhitzungszweig, 0x100952a5-Nachbar): Heat-Event mit
+			// bparam1 = 1, sonst Nullen — gleiche Form wie im No-Ammo-Zweig.
+			{
+				float flZero[3] = {0.0f, 0.0f, 0.0f};
+				PLAYBACK_EVENT_FULL(0, m_pPlayer->edict(), m_usFireHeat, 0.0,
+					flZero, flZero, 0.0f, 0.0f, 0, 0, 1, 0);
+			}
 		}
 		AmmoHudUpdate();
+	}
+
+	// Retail spielt das Feuer-Event VOR dem Trefferpfad ab
+	// (0x1009501e..0x10095055, `g_engfuncs.pfnPlaybackEvent` = 0x1013250c):
+	//   PlaybackEvent(0, player, m_usFire(+0xe4), 0.0, g_vecZero, g_vecZero,
+	//                 fparam1 = this+0xcc, fparam2 = gpGlobals->time,
+	//                 iparam1 = Spreizfall, iparam2 = Spin-Zustand,
+	//                 bparam1 = player+0x114, bparam2 = 0)
+	// Belegt: Indexfeld +0xe4, g_vecZero als origin/angles (0x101322f0 ist
+	// 12 Byte Null in .data), iparam1-Werte 1/2/3/4 aus der Verzweigung
+	// (0.08716 / 0.02618 / 0.17365 / 0.05234), iparam2 = param_1[0x28].
+	// NICHT belegt: Bedeutung von Feld +0xcc (fparam1) und von
+	// player+0x114 (bparam1) — hier 0.0 bzw. 0; der Client nutzt fparam1 nur
+	// fuer die Animationswahl (fparam1 < fparam2) und bparam1 als Body.
+	{
+		int iSpreadCase = 2; // Normalmodus
+		float flZero[3] = {0.0f, 0.0f, 0.0f}; // Retail nutzt g_vecZero (0x101322f0)
+
+		if (m_iOverheating != 0)
+			iSpreadCase = 3;
+		else if (m_iSpinState == 1)
+			iSpreadCase = m_bWaterCooled ? 4 : 1;
+
+		PLAYBACK_EVENT_FULL(0, m_pPlayer->edict(), m_usFire, 0.0,
+			flZero, flZero, 0.0f, gpGlobals->time,
+			iSpreadCase, m_iSpinState, 0, 0);
 	}
 
 	Vector vecSrc = m_pPlayer->GetGunPosition();
 	Vector vecAiming = m_pPlayer->GetAutoaimVector(AUTOAIM_5DEGREES);
 
-	FireBullets(1, vecSrc, vecAiming, VECTOR_CONE_3DEGREES, 2048, BULLET_PLAYER_9MM);
+	// Retail (0x100953df-0x10095455): FireBullets bekommt Streuung 0x3db27eb6 = 0.08716
+	// (+-5 Grad, VECTOR_CONE_10DEGREES) und Distanz 0x46000000 = 8192. Kugeltyp ist dort 2
+	// (Enum-Wert, Zuordnung zu BULLET_PLAYER_9MM nicht belegt -> unveraendert).
+	// Retail reicht als Schaden den Skill-Wert fuer Kugeltyp 2 weiter, und Typ 2 laedt im
+	// Retail aus sk_9mmAR_bullet (0x10136fb4, gesetzt aus Cvar 0x1011a440 "sk_9mmAR_bullet").
+	FireBullets(1, vecSrc, vecAiming, VECTOR_CONE_10DEGREES, 8192, BULLET_PLAYER_9MM, 4,
+		(int)gSkillData.gunman9mmARDamage);
 
-	const char* fireSounds[] = {"weapons/hks1.wav", "weapons/hks2.wav", "weapons/hks3.wav"};
-	EMIT_SOUND_DYN(m_pPlayer->edict(), CHAN_WEAPON, fireSounds[RANDOM_LONG(0, 2)], 1.0, ATTN_NORM, 0, RANDOM_LONG(94, 106));
-
+	// Sound und Viewmodel-Animation kommen aus dem Event-Handler
+	// (EV_MinigunFire: weapons/hks1..3.wav + EV_WeaponAnimation(2/4));
+	// die frueheren Server-Aufrufe hier erzeugten beides doppelt.
 	pev->effects |= EF_MUZZLEFLASH;
-	SendWeaponAnim(0);
 
 	m_pPlayer->pev->punchangle.x -= 1;
 
-	m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + MINIGUN_FIRE_DELAY;
+	// Retail setzt den Angriffs-Timer direkt nach dem Event auf `time + 0.1`
+	// (0x100952ec, Feld 0x80). Gegenprobe: die Gauss-Pistole prueft in ihrer
+	// Angriffssperre genau dasselbe Feld 0x80 gegen gpGlobals->time (0x100918d9),
+	// damit ist 0x80 der "naechster Primaerangriff"-Timer. MINIGUN_FIRE_DELAY (0.2)
+	// bleibt nur fuer die Hitzeschritt-Logik erhalten.
+	m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + 0.1f;
 	m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + MINIGUN_FIRE_DELAY;
 
 	if (m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType] <= 0)

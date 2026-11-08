@@ -131,6 +131,78 @@ private:
 };
 LINK_ENTITY_TO_CLASS(gauss_bolt, CBoltShot);
 
+//=========================================================
+// gauss_glow - Schwebeglut der Gauss-Pistole (Charge-/Sniper-Effekt).
+// Retail-Beleg (gunman.dll): Spawn @0x1008f920, Think @0x1008fa20, SetType @0x1008fa70,
+// Precache @0x1008fa00. Precache: sprites/gausssmall.spr + sprites/gaussbig.spr.
+// Spawn setzt rendermode 3 (kRenderGlow), renderfx 0x0e (kRenderFxGlowShell),
+// renderamt 255, scale 0, framerate 0.5, Think und nextthink = time + 0.1.
+// Think: scale += 1.0; bei scale > Grenzwert (0x274) UTIL_Remove; nextthink = time + 0.15.
+// SetType(1): Modell gausssmall.spr, Grenzwert 7; sonst gaussbig.spr, Grenzwert 12.
+//=========================================================
+class CGaussGlow : public CBaseEntity
+{
+public:
+	void Spawn() override;
+	void Precache() override;
+
+	void SetType(int iType);
+	void EXPORT GlowThink();
+
+	int m_iMaxScale = 12;
+};
+LINK_ENTITY_TO_CLASS(gauss_glow, CGaussGlow);
+
+void CGaussGlow::Precache()
+{
+	PRECACHE_MODEL("sprites/gausssmall.spr");
+	PRECACHE_MODEL("sprites/gaussbig.spr");
+}
+
+void CGaussGlow::SetType(int iType)
+{
+	if (iType == 1)
+	{
+		SET_MODEL(ENT(pev), "sprites/gausssmall.spr");
+		m_iMaxScale = 7;
+	}
+	else
+	{
+		SET_MODEL(ENT(pev), "sprites/gaussbig.spr");
+		m_iMaxScale = 12;
+	}
+}
+
+void CGaussGlow::Spawn()
+{
+	Precache();
+
+	pev->movetype = MOVETYPE_NONE;
+	pev->solid = SOLID_NOT;
+	pev->rendermode = kRenderGlow;
+	pev->renderfx = kRenderFxGlowShell;
+	pev->renderamt = 255;
+	pev->scale = 0.0f;
+	pev->framerate = 0.5f;
+
+	SetType(2);
+	SetThink(&CGaussGlow::GlowThink);
+	pev->nextthink = gpGlobals->time + 0.1f;
+}
+
+void CGaussGlow::GlowThink()
+{
+	pev->scale += 1.0f;
+
+	if (pev->scale > m_iMaxScale)
+	{
+		UTIL_Remove(this);
+		return;
+	}
+
+	pev->nextthink = gpGlobals->time + 0.15f;
+}
+
 void CBoltShot::Precache()
 {
 	PRECACHE_MODEL("sprites/gausswomp.spr");
@@ -258,6 +330,7 @@ public:
 
 	void PrimaryAttack() override;
 	void SecondaryAttack() override;
+	void Reload() override;
 	void WeaponIdle() override;
 	bool ShouldWeaponIdle() override { return true; }
 	void ApplyCustomSetting(char option, int value) override;
@@ -330,6 +403,11 @@ void CGaussPistol::Precache()
 	PRECACHE_SOUND("items/9mmclip1.wav");
 	UTIL_PrecacheOther("gauss_charged");
 	UTIL_PrecacheOther("gauss_bolt");
+	// Retail precacht hier zusaetzlich "guass_bolt" (Tippfehler, Klasse existiert nicht)
+	// und "gauss_glow"; der Tippfehler wird bewusst nicht nachgebaut, gauss_glow fehlt
+	// im SDK noch als eigene Klasse (siehe findings/server_weapon_abgleich_2026-11-04.md).
+	UTIL_PrecacheOther("gauss_glow");
+	UTIL_PrecacheOther("entity_null");
 	PRECACHE_SOUND("weapons/gauss_charge.wav");
 	PRECACHE_SOUND("weapons/gauss_fire1.wav");
 	PRECACHE_SOUND("weapons/gauss_fire2.wav");
@@ -691,6 +769,27 @@ void CGaussPistol::SniperShot()
 }
 
 // Retail @0x100916c0
+// v_guasspistol.mdl hat 13 Sequenzen (idle, idlerestless, singleshot,
+// rapidfire, chargefire, draw, holster, sniperidle/idlerestless/idlefidget,
+// snipershoot, sniperdraw, sniperholster) - **keine** Reload-Sequenz.
+// Clip-Groesse ist 1, also wird ohne Animation sofort nachgefuellt.
+void CGaussPistol::Reload()
+{
+	if (m_iClip >= 1)
+		return;
+
+	if (m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType] <= 0)
+		return;
+
+	m_iClip = 1;
+	m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType]--;
+	m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + 0.4f;
+	m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 0.6f;
+	// Es gibt kein gauss_reload.wav im Retail-Bestand - Ladegeraeusch ist
+	// gauss_charge.wav (vorhanden: gauss_charge/fire1-4/spritebig/spritesmall).
+	EMIT_SOUND(m_pPlayer->edict(), CHAN_ITEM, "weapons/gauss_charge.wav", 0.6, ATTN_NORM);
+}
+
 void CGaussPistol::WeaponIdle()
 {
 	if (!m_fAnimStarted)

@@ -128,6 +128,7 @@ public:
 	void AddToPlayer(CBasePlayer* pPlayer) override;
 	void Holster() override;
 	void PrimaryAttack() override;
+	void ItemPostFrame() override;
 	bool Save(CSave& save) override;
 	bool Restore(CRestore& restore) override;
 	static TYPEDESCRIPTION m_SaveData[];
@@ -143,6 +144,13 @@ public:
 private:
 	int m_iSwing;
 	TraceResult m_trHit;
+
+	// Retail +0xf8 / +0xe8 / +0xec..+0xf4 (CWeaponFists::ItemPostFrame,
+	// FUN_1008e0e0): Wasser-Ripple-Event, letzter Ausloesezeitpunkt und
+	// letzte Spielerposition.
+	unsigned short m_usWaterRipple;
+	float m_flLastRipple;
+	Vector m_vecLastRipple;
 };
 LINK_ENTITY_TO_CLASS(weapon_fists, CFists);
 
@@ -150,6 +158,8 @@ TYPEDESCRIPTION CFists::m_SaveData[] =
 {
 	DEFINE_FIELD(CFists, m_iMode, FIELD_INTEGER),
 	DEFINE_FIELD(CFists, m_iSwing, FIELD_INTEGER),
+	DEFINE_FIELD(CFists, m_flLastRipple, FIELD_TIME),
+	DEFINE_FIELD(CFists, m_vecLastRipple, FIELD_VECTOR),
 };
 
 IMPLEMENT_SAVERESTORE(CFists, CBasePlayerWeapon);
@@ -163,6 +173,9 @@ void CFists::Spawn()
 	m_iMode = 1;
 	SET_MODEL(ENT(pev), "models/w_knife.mdl");
 	m_iClip = WEAPON_NOCLIP;
+
+	m_flLastRipple = 0.0f;
+	m_vecLastRipple = g_vecZero;
 
 	// BUG FIX (2026-09-05, live gameplay report): v_hands.mdl has TWO
 	// bodyparts, not one as the reconstructed .qc suggested -
@@ -210,6 +223,9 @@ void CFists::Precache()
 	// Precached in retail but not referenced from the swing logic
 	// decompiled this session; kept for parity, not wired up further.
 	PrecacheModel("sprites/waterripple.spr");
+	// Retail legt den Rueckgabewert in +0xf8 ab (0x1008d58a); ohne das Feld
+	// gibt es keine Wiedergabe.
+	m_usWaterRipple = (unsigned short)PrecacheEvent(1, "events/waterripple.sc");
 }
 
 bool CFists::GetItemInfo(ItemInfo* p)
@@ -223,7 +239,9 @@ bool CFists::GetItemInfo(ItemInfo* p)
 	p->iSlot = 0;
 	p->iPosition = 0;
 	p->iId = WEAPON_FISTS;
-	p->iWeight = 0;
+	// Retail (GetItemInfo @0x1008d58x): ItemInfo +0x28 = -10, id (+0x20) = 1, slot und
+	// position 0, maxClip -1, keine Munition. +0x24 (flags) wird dort nicht beschrieben.
+	p->iWeight = -10;
 	return true;
 }
 
@@ -239,6 +257,50 @@ void CFists::Holster()
 {
 	m_pPlayer->m_flNextAttack = UTIL_WeaponTimeBase() + 0.5;
 	SendWeaponAnim(m_iMode == 1 ? FISTS_KNIFEHOLSTER : FISTS_HOLSTER, m_iMode);
+}
+
+// Retail FUN_1008e0e0 (CWeaponFists::ItemPostFrame): ruft zuerst den
+// Basis-ItemPostFrame auf und prueft danach, ob der Spieler im Wasser steht.
+// Wasserhoehe ueber UTIL_WaterLevel(origin, origin.z - 36, origin.z + 38);
+// liegt sie ueberhaupt vor (Ergebnis != 0), wird das Ripple-Event mit
+// fparam1 = Wasserhoehe - (origin.z - 36) abgespielt — hoechstens alle 0,5 s
+// bei unveraenderter Position, sonst alle 0,18 s.
+void CFists::ItemPostFrame()
+{
+	CBasePlayerWeapon::ItemPostFrame();
+
+	if (!m_pPlayer)
+		return;
+
+	const Vector vecOrigin = m_pPlayer->pev->origin;
+	const float flMinZ = vecOrigin.z - 36.0f;
+	const float flWaterZ = UTIL_WaterLevel(vecOrigin, flMinZ, flMinZ + 74.0f);
+
+	if (flWaterZ == 0.0f)
+		return;
+
+	// Diagnose (nur -dev): bestaetigt im Lauf, dass Wasser erkannt wird.
+	{
+		static float s_flNextLog = 0.0f;
+		if (gpGlobals->time > s_flNextLog)
+		{
+			ALERT(at_console, "[fists] water z=%.1f offset=%.1f\n", flWaterZ, flWaterZ - flMinZ);
+			s_flNextLog = gpGlobals->time + 1.0f;
+		}
+	}
+
+	const bool bSamePos = (m_vecLastRipple.x == vecOrigin.x &&
+		m_vecLastRipple.y == vecOrigin.y &&
+		m_vecLastRipple.z == vecOrigin.z);
+
+	if (gpGlobals->time - m_flLastRipple < (bSamePos ? 0.5f : 0.18f))
+		return;
+
+	PLAYBACK_EVENT_FULL(0, m_pPlayer->edict(), m_usWaterRipple, 0,
+		g_vecZero, g_vecZero, flWaterZ - flMinZ, 0, 0, 0, 0, 0);
+
+	m_flLastRipple = gpGlobals->time;
+	m_vecLastRipple = vecOrigin;
 }
 
 void CFists::PrimaryAttack()
@@ -377,7 +439,15 @@ bool CFists::Swing(bool fFirst)
 			m_pPlayer->m_iWeaponVolume = FISTS_BODYHIT_VOLUME;
 		}
 
-		if (pEntity && !pEntity->IsAlive())
+		// Wand-Treffer: CBaseEntity::IsAlive() ist im Port
+		// `deadflag == DEAD_NO && health > 0` — die Welt (Wand) hat health 0
+		// und galt damit als "tot", wodurch Smack (und das Decal) nie
+		// geplant wurde. Im HL-SDK lautet die Pruefung nur
+		// `deadflag != DEAD_DEAD`, die Welt ist dort "lebendig".
+		// Deshalb hier die Welt (Edict 0) ausnehmen.
+		const bool bWorldHit = (tr.pHit != nullptr && ENTINDEX(tr.pHit) == 0);
+
+		if (!bWorldHit && pEntity && !pEntity->IsAlive())
 			return true;
 
 		m_trHit = tr;
