@@ -17,6 +17,7 @@
 #include "extdll.h"
 #include "util.h"
 #include "cbase.h"
+#include "studio.h"
 #include "flightsteer.h"
 #include "gunman_sphere_explosion.h"
 #include "gamerules.h"
@@ -103,8 +104,9 @@ void CTargSpeaker::Use(CBaseEntity* pActivator, CBaseEntity* pCaller, USE_TYPE u
 // The eye-beam entities and per-AI-frame update follow the retail
 // FUN_100b87d0/FUN_100b8400 path using the SDK CBeam/CSprite classes.
 // Retail's separate dynamic-light motion remains a visual approximation.
-// Event 1 melee uses the confirmed 128-unit traceline with skill damage;
-// attack sparks use one-shot temp entities to avoid persistent shower buildup.
+// Event 1 melee uses the confirmed 128-unit traceline with skill damage.
+// Rustbot spark visuals are intentionally suppressed: even one-shot bursts
+// accumulated visibly during repeated attacks in Xash3D.
 //=========================================================
 
 #define RUSTBOT_AE_MELEE 1
@@ -250,19 +252,6 @@ static Schedule_t slRustbotFail =
 	tlRustbotFail, ARRAYSIZE(tlRustbotFail), 0xc00, 0, "Rustbot Fail",
 };
 
-static void CreateRustbotSparkFlash(const Vector& vecOrigin)
-{
-	// Use a one-shot temp entity instead of spark_shower: CShower emits every
-	// 0.1 s for up to 1.5 s and its independent lifetime lets repeated attacks
-	// overlap into a fireworks effect after the Rustbot has stopped attacking.
-	MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, vecOrigin);
-	WRITE_BYTE(TE_SPARKS);
-	WRITE_COORD(vecOrigin.x);
-	WRITE_COORD(vecOrigin.y);
-	WRITE_COORD(vecOrigin.z);
-	MESSAGE_END();
-}
-
 static void AdvanceRustbotSentenceCooldown()
 {
 	// Retail's sentence helper advances its shared deadline before checking the
@@ -316,6 +305,12 @@ public:
 	}
 	void HandleAnimEvent(MonsterEvent_t* pEvent) override;
 	void Killed(entvars_t* pevAttacker, int iGib) override;
+	// Retail 0x100b9980 (vtable-Slot 11, `ret 0x10`): bei DMG_ENERGYBEAM wird
+	// der Schaden mit der .rdata-Konstante 0x100e9388 (= 0.5) halbiert, danach
+	// CBaseMonster::TakeDamage.
+	bool TakeDamage(entvars_t* pevInflictor, entvars_t* pevAttacker, float flDamage, int bitsDamageType) override;
+	// Eigene Gibs (models/rustbotgibs.mdl im Retail-Stringbestand und in models-src).
+	const char* CustomGibModel() override { return "models/rustbotgibs.mdl"; }
 
 	bool Save(CSave& save) override;
 	bool Restore(CRestore& restore) override;
@@ -326,6 +321,7 @@ private:
 	void BeamOn();
 	void BeamOff();
 	void EXPORT BeamThink();
+	void UpdateHeadTurn(const Vector& target);
 
 	CBeam* m_pBeam = nullptr;
 	CBeam* m_pBeamGlow = nullptr;
@@ -334,20 +330,23 @@ private:
 	float m_flLastEnemyVisible = 0;
 	float m_flFrustration = 0; // Retail m_fFrustration; drives beam-charge effects.
 	float m_flChangeFrustration = 0; // Retail m_tChangeFrustration; initialized to gpGlobals->time.
+	float m_flIntel = 0; // Retail m_fIntel; saved as FIELD_TIME, behavior not yet identified.
 	int m_iHeadTurn = 0; // Retail descriptor +0x2cc; Spawn initializes to zero.
+	bool m_bHeadTurnEngaged = false; // Retail +0x2e4; per-tick target-cone flag.
+	float m_flMeleeAttackSpeedSeed = 0; // Retail +0x2d8; random 0..1 scale for ACT_MELEE_ATTACK1.
 };
 LINK_ENTITY_TO_CLASS(monster_rustbot, CRustbot);
 
 TYPEDESCRIPTION CRustbot::m_SaveData[] =
 	{
 		DEFINE_FIELD(CRustbot, m_pBeam, FIELD_CLASSPTR),
-	DEFINE_FIELD(CRustbot, m_pBeamGlow, FIELD_CLASSPTR),
-	DEFINE_FIELD(CRustbot, m_pBeamEnd, FIELD_CLASSPTR),
-		DEFINE_FIELD(CRustbot, m_bBorg, FIELD_BOOLEAN),
-		DEFINE_FIELD(CRustbot, m_flLastEnemyVisible, FIELD_TIME),
+		DEFINE_FIELD(CRustbot, m_pBeamGlow, FIELD_CLASSPTR),
+		DEFINE_FIELD(CRustbot, m_pBeamEnd, FIELD_CLASSPTR),
 		DEFINE_FIELD(CRustbot, m_flFrustration, FIELD_FLOAT),
 		DEFINE_FIELD(CRustbot, m_flChangeFrustration, FIELD_TIME),
 		DEFINE_FIELD(CRustbot, m_iHeadTurn, FIELD_INTEGER),
+		DEFINE_FIELD(CRustbot, m_bBorg, FIELD_BOOLEAN),
+		DEFINE_FIELD(CRustbot, m_flIntel, FIELD_TIME),
 };
 
 IMPLEMENT_SAVERESTORE(CRustbot, CBaseMonster);
@@ -498,7 +497,8 @@ Schedule_t* CRustbot::GetSchedule()
 void CRustbot::PrescheduleThink()
 {
 	// Retail slot 117 updates +0x29c while an enemy is visible and advances the
-	// +0x2d0 m_fFrustration beam-charge effect while it is active.
+	// +0x2d0 m_fFrustration beam-charge effect while it is active. Slot 62
+	// separately drains one charge point every two seconds after enemy loss.
 	if (m_hEnemy && HasConditions(bits_COND_SEE_ENEMY))
 		m_flLastEnemyVisible = gpGlobals->time;
 	if (m_flFrustration < 0)
@@ -515,7 +515,7 @@ void CRustbot::PrescheduleThink()
 		// Do not emit recurring spark_shower entities here. They can outlive
 		// the firing animation and stack up across repeated attacks, producing
 		// a continuous fireworks effect. Keep the charge represented by the
-		// beam and its single start flash instead.
+		// beam; this visual approximation intentionally emits no sparks.
 	}
 
 	CBaseMonster::PrescheduleThink();
@@ -527,12 +527,14 @@ void CRustbot::RunAI()
 
 	if (!IsAlive())
 		return;
+	// Retail clears +0x2e4 on every RunAI tick before its head-turn helper.
+	m_bHeadTurnEngaged = false;
 
-	// An enemy-death schedule can replace the firing sequence before its
-	// beam-off animation event runs. Never keep the persistent beam attached
-	// to a dead or removed target while the Rustbot changes schedules.
+	// An interrupt can replace the firing sequence before its beam-off
+	// animation event runs (for example, a living target moves into melee
+	// range). Do not leave the beam and endpoint behind when firing stops.
 	if ((m_pBeam || m_pBeamGlow || m_pBeamEnd) &&
-		(!m_hEnemy || !m_hEnemy->IsAlive()))
+		(m_Activity != ACT_RANGE_ATTACK1 || !m_hEnemy || !m_hEnemy->IsAlive()))
 		BeamOff();
 
 	// Retail slot 62 (FUN_100b9450) runs the base AI first, then calls the
@@ -548,12 +550,64 @@ void CRustbot::RunAI()
 	{
 		pev->framerate = 1.6f;
 	}
+	else if (m_Activity == ACT_MELEE_ATTACK1)
+	{
+		pev->framerate = m_flMeleeAttackSpeedSeed * 0.5f + 1.3f;
+	}
 	else if (static_cast<int>(m_Activity) != 0x1e)
 	{
 		pev->framerate = 1.0f;
 	}
-	// Retail activity 0x1e scales framerate from +0x2d8. That field is not
-	// identified yet; keep its formula in the TODO rather than guessing.
+	if (m_MonsterState == MONSTERSTATE_COMBAT)
+		UpdateHeadTurn(m_vecEnemyLKP);
+
+	// Retail slot 62 drains one charge point every two seconds once the enemy
+	// EHANDLE no longer resolves. The charge field itself is clamped by
+	// PrescheduleThink on the next AI pass, matching the retail update order.
+	if (!m_hEnemy && m_flChangeFrustration < gpGlobals->time)
+	{
+		m_flFrustration -= 1.0f;
+		m_flChangeFrustration = gpGlobals->time + 2.0f;
+	}
+
+}
+
+void CRustbot::UpdateHeadTurn(const Vector& target)
+{
+	// Retail FUN_100b9aa0 is called from RunAI while in combat. It turns the
+	// head-blender toward the supplied point and clamps its yaw to +/-75 deg.
+	// The accepted target cone depends on activity and difficulty. Retail's
+	// +0x2e4 flag is set inside the cone and cleared if the yaw clamp engages;
+	// RunAI resets it at the start of each tick.
+	const float flTargetYaw = UTIL_VecToYaw(target - pev->origin);
+	const float flCurrentYaw = pev->angles.y + static_cast<float>(m_iHeadTurn);
+	const float flYawDelta = UTIL_AngleDiff(flTargetYaw, flCurrentYaw);
+	float flTargetCone = 10.0f;
+	if (m_Activity == ACT_RANGE_ATTACK1 || static_cast<int>(m_Activity) == 0x21 ||
+		static_cast<int>(m_Activity) == 0x22)
+	{
+		if (g_iSkillLevel == SKILL_MEDIUM)
+			flTargetCone = 7.0f;
+		else if (g_iSkillLevel != SKILL_HARD)
+			flTargetCone = 5.0f;
+	}
+	if (fabsf(flYawDelta) < flTargetCone)
+		m_bHeadTurnEngaged = true;
+
+	const int iYawStep = static_cast<int>(std::lrint(flYawDelta));
+	m_iHeadTurn += iYawStep;
+	if (m_iHeadTurn < -75)
+	{
+		m_iHeadTurn = -75;
+		m_bHeadTurnEngaged = false;
+	}
+	else if (m_iHeadTurn > 75)
+	{
+		m_iHeadTurn = 75;
+		m_bHeadTurnEngaged = false;
+	}
+
+	SetBlending(2, static_cast<float>(m_iHeadTurn));
 }
 
 void CRustbot::Spawn()
@@ -570,6 +624,11 @@ void CRustbot::Spawn()
 	pev->view_ofs = Vector(0, 0, 40);
 	m_bBorg = true;
 	m_flChangeFrustration = gpGlobals->time;
+	// Retail uses one random sample for both +0x2d8 (melee framerate seed)
+	// and +0x2dc (saved m_fIntel complement). The latter's other consumers
+	// remain unidentified.
+	m_flMeleeAttackSpeedSeed = RANDOM_FLOAT(0.0f, 1.0f);
+	m_flIntel = 1.0f - m_flMeleeAttackSpeedSeed;
 	m_iHeadTurn = 0; // Retail initializes this saved yaw offset to zero.
 
 	MonsterInit();
@@ -581,12 +640,27 @@ void CRustbot::Spawn()
 
 void CRustbot::Precache()
 {
+	// Retail Precache (gunman.dll 0x100b8010) - Reihenfolge der push-Strings:
+	// sprites/xbeam1.spr, sprites/rustbeam_end.spr, models/rustbot.mdl,
+	// rustbot/pain2, pain1, die2, die1, idle2, attack2, alert2, alert1, p-up.
 	PrecacheModel("models/rustbot.mdl");
+	// Gib-Modell: String im Retail-Bestand (0x1011a5a8), Precache im Gib-Pfad.
+	PrecacheModel("models/rustbotgibs.mdl");
 	PrecacheModel("sprites/xbeam1.spr");
 	PrecacheModel("sprites/rustbeam_end.spr");
-	PRECACHE_SOUND("rustbot/P-up.wav");
+
+	PRECACHE_SOUND("rustbot/pain1.wav");
+	PRECACHE_SOUND("rustbot/pain2.wav");
+	PRECACHE_SOUND("rustbot/die1.wav");
+	PRECACHE_SOUND("rustbot/die2.wav");
+	PRECACHE_SOUND("rustbot/idle2.wav");
+	PRECACHE_SOUND("rustbot/attack2.wav");
+	PRECACHE_SOUND("rustbot/alert1.wav");
+	PRECACHE_SOUND("rustbot/alert2.wav");
+	PRECACHE_SOUND("rustbot/p-up.wav");
+	// Retail precacht Plasma1 nicht (Late-Precache-Warnung im Log); der Port
+	// laedt es vorab, weil TASK_RUSTBOT_PLASMA es sicher abspielt.
 	PRECACHE_SOUND("rustbot/Plasma1.wav");
-	PRECACHE_SOUND("rustbot_attack1.wav");
 }
 
 void CRustbot::AttackSound()
@@ -594,7 +668,7 @@ void CRustbot::AttackSound()
 	// Retail FUN_100b8380 (AttackSound, vtable slot 131) inserts this danger
 	// sound before playing the arm-strike cue.
 	CSoundEnt::InsertSound(bits_SOUND_DANGER, pev->origin, 512, 0.2f);
-	EMIT_SOUND_DYN(ENT(pev), CHAN_WEAPON, "rustbot_attack1.wav", 0.6f, 0.8f, 0, PITCH_NORM);
+	EMIT_SOUND_DYN(ENT(pev), CHAN_WEAPON, "rustbot/attack1.wav", 0.6f, 0.8f, 0, PITCH_NORM);
 }
 
 void CRustbot::StartTask(Task_t* pTask)
@@ -653,13 +727,6 @@ void CRustbot::HandleAnimEvent(MonsterEvent_t* pEvent)
 	switch (pEvent->event)
 	{
 	case RUSTBOT_AE_MELEE:
-		if (m_flFrustration >= 6)
-		{
-			Vector vecAttachment;
-			Vector vecAttachmentAngles;
-			GetAttachment(0, vecAttachment, vecAttachmentAngles);
-			CreateRustbotSparkFlash(vecAttachment);
-		}
 		AttackSound();
 		Melee();
 		break;
@@ -691,10 +758,13 @@ void CRustbot::BeamOn()
 	BeamOff();
 	m_flFrustration += 2;
 	Vector vecBeamStart = RustbotEyePosition(pev);
-	CreateRustbotSparkFlash(vecBeamStart);
 
-	m_pBeam = CBeam::BeamCreate("sprites/xbeam1.spr", 5);
-	m_pBeamGlow = CBeam::BeamCreate("sprites/xbeam1.spr", 5);
+	// Retail BeamOn (0x100b87d0) legt zwei xbeam1-Beams an (Objektfelder
+	// +0x2bc/+0x2c0; BeamThink prueft beide) und schreibt danach in das
+	// Skalenfeld (+0x144, in diesem Build = pev->scale = BeamWidth) den Wert
+	// 10.0. Der SDK-Wert 5 war halb so dick - sichtbarer Unterschied.
+	m_pBeam = CBeam::BeamCreate("sprites/xbeam1.spr", 10);
+	m_pBeamGlow = CBeam::BeamCreate("sprites/xbeam1.spr", 10);
 	// Start all three visuals at the head attachment. BeamThink moves the
 	// endpoint to the trace hit on the next AI tick; starting it at pev->origin
 	// briefly made the blue glow appear at the Rustbot's feet/rear.
@@ -708,8 +778,11 @@ void CRustbot::BeamOn()
 	// Retail builds two point beams and a glowing impact sprite. The second
 	// beam overlays the first. Do not set SF_BEAM_SPARKSTART here: CBeam calls
 	// DoSparks on every beam update, which turns this persistent beam into a
-	// continuous shower. The one-shot start flash above represents the attack
-	// event without accumulating sparks while the beam is active.
+	// continuous shower.
+	// Clear all beam flags before PointsInit so neither initialization nor a
+	// later engine update can inherit spark behavior from stale entity state.
+	m_pBeam->pev->spawnflags = 0;
+	m_pBeamGlow->pev->spawnflags = 0;
 	m_pBeam->PointsInit(vecBeamStart, vecBeamStart);
 	m_pBeam->SetColor(80, 120, 255);
 	m_pBeam->SetBrightness(255);
@@ -730,16 +803,22 @@ void CRustbot::BeamOff()
 {
 	if (m_pBeamEnd)
 	{
-		m_pBeamEnd->Expand(10.0f, 500.0f);
+		// UTIL_Remove defers entity deletion until the next engine cleanup pass.
+		// Hide the animated endpoint immediately so repeated attacks or an
+		// interrupted sequence cannot leave visible impact frames behind.
+		m_pBeamEnd->pev->effects |= EF_NODRAW;
+		UTIL_Remove(m_pBeamEnd);
 		m_pBeamEnd = nullptr;
 	}
 	if (m_pBeam)
 	{
+		m_pBeam->pev->effects |= EF_NODRAW;
 		UTIL_Remove(m_pBeam);
 		m_pBeam = nullptr;
 	}
 	if (m_pBeamGlow)
 	{
+		m_pBeamGlow->pev->effects |= EF_NODRAW;
 		UTIL_Remove(m_pBeamGlow);
 		m_pBeamGlow = nullptr;
 	}
@@ -794,6 +873,10 @@ void CRustbot::BeamThink()
 
 	TraceResult tr;
 	UTIL_TraceLine(vecSrc, vecEnd, dont_ignore_monsters, ENT(pev), &tr);
+	// Reassert this on every tick: CBeam::DoSparks emits at both endpoints
+	// whenever these flags are nonzero, and this Rustbot beam never needs them.
+	m_pBeam->pev->spawnflags = 0;
+	m_pBeamGlow->pev->spawnflags = 0;
 	m_pBeam->SetStartPos(vecSrc);
 	m_pBeam->SetEndPos(tr.vecEndPos);
 	m_pBeamGlow->SetStartPos(vecSrc);
@@ -816,6 +899,14 @@ void CRustbot::BeamThink()
 
 		EMIT_SOUND_DYN(ENT(pev), CHAN_WEAPON, "buttons/spark6.wav", 0.5, ATTN_NORM, 0, 100);
 	}
+}
+
+bool CRustbot::TakeDamage(entvars_t* pevInflictor, entvars_t* pevAttacker, float flDamage, int bitsDamageType)
+{
+	if (bitsDamageType == DMG_ENERGYBEAM)
+		flDamage *= 0.5f;
+
+	return CBaseMonster::TakeDamage(pevInflictor, pevAttacker, flDamage, bitsDamageType);
 }
 
 void CRustbot::Killed(entvars_t* pevAttacker, int iGib)
@@ -845,9 +936,9 @@ LINK_ENTITY_TO_CLASS(monster_rustbot_friendly, CRustbotFriendly);
 // lightning_bug - CLightningBug. Homing sub-projectile spawned
 // periodically by ball_lightning's own MoveThink (see the
 // ball_lightning section below for the full decompile evidence).
-// Reuses this project's established CDmlRocket::TrackTarget-style
-// simplified homing rather than the original's exact charge-tier
-// damage table (see file header note below).
+// Retail lifetime, skill damage, impact event, beam trail, and collision
+// handling are ported below. The remaining turn-vector basis is still an
+// approximation; see findings/entities/lightning_bug_abgleich_2026-11-05.md.
 //=========================================================
 class CLightningBug : public CGrenade
 {
@@ -856,6 +947,14 @@ public:
 	void Precache() override;
 	void EXPORT TrackTargetBug();
 	void EXPORT DieTouchBug(CBaseEntity* pOther);
+	void EXPORT LightningBugDie();
+
+	unsigned short m_usImpactEvent = 0;
+	int m_iBeamSprite = 0;
+	float m_flExpireTime = 0;
+	float m_flTurnPower = 1.0f;
+	float m_flTurnSpeed = 300;
+	float m_flNextDangerSound = 0;
 };
 LINK_ENTITY_TO_CLASS(lightning_bug, CLightningBug);
 
@@ -865,8 +964,8 @@ void CLightningBug::Precache()
 	// beam sprite and client event; it does not reuse ball_lightning's
 	// flyball sprite.
 	PrecacheModel("sprites/ballspark.spr");
-	PrecacheModel("sprites/zbeam5.spr");
-	PrecacheEvent(1, "events/balllightning.sc");
+	m_iBeamSprite = PrecacheModel("sprites/zbeam5.spr");
+	m_usImpactEvent = PrecacheEvent(1, "events/balllightning.sc");
 }
 
 void CLightningBug::Spawn()
@@ -880,72 +979,168 @@ void CLightningBug::Spawn()
 	pev->scale = 1.0;
 	SET_MODEL(ENT(pev), "sprites/ballspark.spr");
 	UTIL_SetSize(pev, g_vecZero, g_vecZero);
+	pev->frame = 1.0f;
+	m_flFieldOfView = -1.0f;
 
 	// Retail Spawn (0x10080740): multiplayer has its own 130-damage
-	// branch; single-player uses 25/75/100 for easy/medium/hard and
-	// increases only hard-mode flight speed.
+	// branch and 1.7-second lifetime; single-player uses 25/75/100
+	// damage for easy/medium/hard and a four-second lifetime.
 	if (g_pGameRules && g_pGameRules->IsMultiplayer())
 	{
 		pev->dmg = 130.0f;
 		pev->speed = 300.0f;
+		m_flExpireTime = gpGlobals->time + 1.7f;
+		m_flTurnPower = RANDOM_FLOAT(0.7f, 1.6f);
 	}
 	else if (g_iSkillLevel == SKILL_HARD)
 	{
 		pev->dmg = 100.0f;
 		pev->speed = 400.0f;
+		m_flExpireTime = gpGlobals->time + 4.0f;
+		m_flTurnPower = RANDOM_FLOAT(1.3f, 1.6f);
 	}
 	else if (g_iSkillLevel == SKILL_MEDIUM)
 	{
 		pev->dmg = 75.0f;
 		pev->speed = 300.0f;
+		m_flExpireTime = gpGlobals->time + 4.0f;
+		m_flTurnPower = RANDOM_FLOAT(1.0f, 1.3f);
 	}
 	else
 	{
 		pev->dmg = 25.0f;
 		pev->speed = 300.0f;
+		m_flExpireTime = gpGlobals->time + 4.0f;
+		m_flTurnPower = RANDOM_FLOAT(0.7f, 1.0f);
 	}
+	m_flTurnPower = m_flTurnPower * m_flTurnPower * m_flTurnPower + 1.0f;
+	m_flTurnSpeed = pev->speed;
 
 	SetTouch(&CLightningBug::DieTouchBug);
 	SetThink(&CLightningBug::TrackTargetBug);
 	pev->nextthink = gpGlobals->time + 0.1;
 
-	pev->dmgtime = gpGlobals->time + 4.0; // self-expiry, no original timing decompiled
 }
 
 void CLightningBug::TrackTargetBug()
 {
-	if (gpGlobals->time >= pev->dmgtime)
+	pev->frame += 1.0f;
+	if (pev->frame > 17.0f)
+		pev->frame = 0.0f;
+
+	if (gpGlobals->time > m_flExpireTime)
 	{
+		CSprite* pPop = CSprite::SpriteCreate("sprites/ballpop.spr", pev->origin, true);
+		if (pPop)
+		{
+			pPop->SetScale(10.0f);
+			pPop->SetTransparency(kRenderTransAdd, 255, 255, 255, 255, kRenderFxNoDissipation);
+			pPop->AnimateAndDie(10.0f);
+		}
 		UTIL_Remove(this);
 		return;
 	}
 	pev->nextthink = gpGlobals->time + 0.1;
 
-	if (!m_hEnemy || !m_hEnemy->IsAlive())
-		return;
+	// Retail emits a short danger sound at the projectile once every half
+	// second, even when no valid target is currently available.
+	if (gpGlobals->time > m_flNextDangerSound)
+	{
+		CSoundEnt::InsertSound(bits_SOUND_DANGER, pev->origin, 0, 0.1f);
+		// Retail TrackTargetBug calls FUN_1000e140 in the same 0.5 s
+		// interval: 40 damage with a 40-unit radius and DMG_SHOCK (0x100).
+		// The helper is the retail RadiusDamage-style trace/falloff path.
+		::RadiusDamage(pev->origin, pev,
+			pev->owner ? VARS(pev->owner) : pev,
+			40.0f, 40.0f, CLASS_NONE, DMG_SHOCK);
+		m_flNextDangerSound = gpGlobals->time + 0.5f;
+	}
 
-	Vector vecToTarget = (m_hEnemy->pev->origin - pev->origin).Normalize();
-	float flSpeed = pev->velocity.Length();
-	if (flSpeed < 1.0f)
-		flSpeed = 400.0f;
+	CBaseEntity* pBallLightning = UTIL_FindEntityByClassname(nullptr, "ball_lightning");
+	if (pBallLightning && (!g_pGameRules || !g_pGameRules->IsMultiplayer()))
+	{
+		MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, pBallLightning->pev->origin);
+		WRITE_BYTE(TE_BEAMPOINTS);
+		WRITE_COORD(pBallLightning->pev->origin.x);
+		WRITE_COORD(pBallLightning->pev->origin.y);
+		WRITE_COORD(pBallLightning->pev->origin.z);
+		WRITE_COORD(pev->origin.x);
+		WRITE_COORD(pev->origin.y);
+		WRITE_COORD(pev->origin.z);
+		WRITE_SHORT(m_iBeamSprite);
+		WRITE_BYTE(0);
+		WRITE_BYTE(10);
+		WRITE_BYTE(1);
+		WRITE_BYTE(14);
+		WRITE_BYTE(50);
+		WRITE_BYTE(255);
+		WRITE_BYTE(0);
+		WRITE_BYTE(255);
+		WRITE_BYTE(255);
+		WRITE_BYTE(0);
+		MESSAGE_END();
+	}
 
-	Vector vecNewDir = (pev->velocity.Normalize() * 0.85 + vecToTarget * 0.15).Normalize();
-	pev->velocity = vecNewDir * flSpeed;
+	if (pev->owner)
+	{
+		CBaseEntity* pOwner = CBaseEntity::Instance(pev->owner);
+		if (pOwner && !(pOwner->pev->flags & FL_CLIENT) && m_flTurnPower <= 0.0f)
+			return;
+	}
+
+	if (!m_hEnemy)
+	{
+		Look(512);
+		m_hEnemy = BestVisibleEnemy();
+	}
+	if (m_hEnemy && m_hEnemy->IsAlive())
+		m_vecEnemyLKP = m_hEnemy->BodyTarget(pev->origin);
+	else
+		m_vecEnemyLKP = m_vecEnemyLKP + pev->velocity * 0.1f;
+
+	Vector vecToTargetDelta = m_vecEnemyLKP - pev->origin;
+	Vector vecToTarget = vecToTargetDelta.Length() == 0.0f ? Vector(0, 0, 1) : vecToTargetDelta.Normalize();
+	Vector vecForward = pev->velocity.Normalize();
+	// Retail falls back to the target direction when velocity is below 0.1;
+	// without this, a newly spawned bug starts at only 25% of turn speed.
+	if (pev->velocity.Length() < 0.1f)
+		vecForward = vecToTarget;
+	float flTurnDot = DotProduct(vecToTarget, vecForward);
+	if (flTurnDot <= 0.0f)
+		flTurnDot = 0.25f;
+	m_flTurnPower += flTurnDot - 1.0f;
+	Vector vecNewDir = (vecForward + vecToTarget).Normalize();
+	pev->velocity = vecNewDir * (flTurnDot * m_flTurnSpeed);
 	pev->angles = UTIL_VecToAngles(pev->velocity);
 }
 
 void CLightningBug::DieTouchBug(CBaseEntity* pOther)
 {
-	if (pOther && pOther->pev->takedamage != DAMAGE_NO)
-		pOther->TakeDamage(pev, pev, pev->dmg, DMG_SHOCK);
+	if (!pOther || pOther->pev->owner == pev->owner || pOther->pev->team == pev->team)
+		return;
 
-	MESSAGE_BEGIN(MSG_PAS, SVC_TEMPENTITY, pev->origin);
-	WRITE_BYTE(TE_SPARKS);
-	WRITE_COORD(pev->origin.x);
-	WRITE_COORD(pev->origin.y);
-	WRITE_COORD(pev->origin.z);
-	MESSAGE_END();
+	// Retail plays its balllightning impact event, then damages through the
+	// projectile's owner. The event supplies the visual impact; there is no
+	// TE_SPARKS message in DieTouchBug.
+	PLAYBACK_EVENT_FULL(0, pev->owner, m_usImpactEvent, 0, g_vecZero, g_vecZero,
+		0, 0, 0, 0, 0, 0);
+	if (pOther->pev->framerate != 0.0f)
+	{
+		if (pOther->Classify() == CLASS_NONE)
+			pev->dmg = 130.0f;
+		CBaseEntity* pAttacker = pev->owner ? CBaseEntity::Instance(pev->owner) : this;
+		pOther->TakeDamage(pev, pAttacker->pev, pev->dmg, DMG_SHOCK);
+	}
 
+	pev->effects |= EF_NODRAW;
+	pev->solid = SOLID_NOT;
+	SetTouch(NULL);
+	SetThink(&CLightningBug::LightningBugDie);
+	pev->nextthink = gpGlobals->time + 0.3f;
+}
+
+void CLightningBug::LightningBugDie()
+{
 	UTIL_Remove(this);
 }
 
@@ -1181,7 +1376,10 @@ void CBallLightning::MoveThink()
 // deathpath, deathangle, timetillcrash, triggerondeath - and their
 // FGD-documented defaults, independently reconstructed from the
 // ctor's field-init values: shield on, targetdamage 10000, deathangle
-// (0,0,0), timetillcrash 10), TakeDamage @0x100b5270 (vtable slot 10),
+// (0,0,0), timetillcrash 10), TraceAttack @0x100b5270 (vtable slot 10),
+// TakeDamage @0x100b50f0 (vtable slot 11) - Reihenfolge per Objdump
+// belegt: 0x100b5270 endet mit `ret 0x1c` (7 Dwords = TraceAttack),
+// 0x100b50f0 mit `ret 0x10` (5 Dwords = TakeDamage).
 // FlierUse @0x100b4fe0, CrashTouch @0x100b3290, FlyTouch @0x100b31b0
 // (all confirmed byte-for-byte matching the doc's descriptions).
 //
@@ -1201,12 +1399,24 @@ void CBallLightning::MoveThink()
 // entity), not a real gameplay mechanic - reproduced faithfully
 // anyway since it's cheap to.
 //
-// HuntThink steering, target acquisition, attack gates and crash travel
-// follow the Retail implementation; CrashingThink's exact spark-particle
-// timing remains simplified (see the entity findings).
+// HuntThink steering, target acquisition, attack gates, crash travel, and the
+// TE_SMOKE puff cadence/payload in CrashingThink follow the Retail code.
+// Visual crash timing and audio still need an in-game comparison.
 //=========================================================
 
 #define SF_RUSTFLIER_START_SHIELD_OFF 1 // not FGD-documented as a spawnflag; shield state comes from startshieldstate
+
+
+// Anzahl der Attachments im aktuellen Studiomodell. models/rustflyer.mdl hat 4,
+// alle Wrack-Modelle (rustflyer_crashed/crashing/dent/landed) haben 0 - dort
+// liefert die Engine keine gueltige Attachment-Position.
+static int FlierAttachmentCount(edict_t* pEdict)
+{
+	studiohdr_t* pstudiohdr = (studiohdr_t*)GET_MODEL_PTR(pEdict);
+	if (pstudiohdr == nullptr || pstudiohdr->version != 10)
+		return 0;
+	return pstudiohdr->numattachments;
+}
 
 class CRustFlier : public CBaseMonster
 {
@@ -1217,6 +1427,11 @@ public:
 	int Classify() override { return CLASS_ALIEN_PREY; }
 	// Retail BloodColor (slot 14, @0x100b2c90) returns DONT_BLEED (-1).
 	int BloodColor() override { return DONT_BLEED; }
+	// Retail-GibMonster (vtable-Slot 121, 0x100b2ca0) ist ein leerer Stub:
+	// der Flieger gibbt nie, er geht in der Skript-Explosion auf.
+	// models/metalplategibs_green.mdl wird precacht, aber nur als
+	// Truemmerdekor in anderen Pfaden verwendet.
+	void GibMonster() override {}
 	bool TakeDamage(entvars_t* pevInflictor, entvars_t* pevAttacker, float flDamage, int bitsDamageType) override;
 	void TraceAttack(entvars_t* pevAttacker, float flDamage, Vector vecDir, TraceResult* ptr, int bitsDamageType) override;
 	void Use(CBaseEntity* pActivator, CBaseEntity* pCaller, USE_TYPE useType, float value) override;
@@ -1272,7 +1487,8 @@ private:
 	float m_flFirstSeen = 0;	   // +0x2c4
 	int m_iRotorState = 0;		   // +0x2d4
 	float m_flBoltGate = 0;		   // +0x2d8
-	EHANDLE m_hGlow;			   // +0x2dc
+	EHANDLE m_hGlow;			   // +0x2dc (Glow an Attachment 2)
+	EHANDLE m_hGlowMid;		   // Mittlerer Glow an Attachment 1
 	int m_iFlashCounter = 0;	   // +0x2e0
 	bool m_bCrashing = false;
 	Vector m_vecCrashGoal = g_vecZero;
@@ -1303,6 +1519,7 @@ TYPEDESCRIPTION CRustFlier::m_SaveData[] =
 		DEFINE_FIELD(CRustFlier, m_iRotorState, FIELD_INTEGER),
 		DEFINE_FIELD(CRustFlier, m_flBoltGate, FIELD_TIME),
 		DEFINE_FIELD(CRustFlier, m_hGlow, FIELD_EHANDLE),
+		DEFINE_FIELD(CRustFlier, m_hGlowMid, FIELD_EHANDLE),
 		DEFINE_FIELD(CRustFlier, m_iFlashCounter, FIELD_INTEGER),
 		DEFINE_FIELD(CRustFlier, m_bCrashing, FIELD_BOOLEAN),
 		DEFINE_FIELD(CRustFlier, m_vecCrashGoal, FIELD_POSITION_VECTOR),
@@ -1371,6 +1588,8 @@ void CRustFlier::Spawn()
 
 	SetThink(&CRustFlier::HuntThink);
 	SetTouch(&CRustFlier::FlyTouch);
+	// Retail setzt this+0x18 = 0x100b4fe0 (m_pfnUse = FlierUse).
+	SetUse(&CRustFlier::Use);
 	pev->nextthink = gpGlobals->time + 1.0;
 
 	// retail FUN_100b4ab0
@@ -1378,6 +1597,7 @@ void CRustFlier::Spawn()
 	m_iSalvo = 30;
 	m_flBombGate = gpGlobals->time + 2.0f;
 	m_hGlow = nullptr;
+	m_hGlowMid = nullptr;
 }
 
 void CRustFlier::Precache()
@@ -1389,6 +1609,8 @@ void CRustFlier::Precache()
 	PrecacheModel("sprites/fexplo.spr");
 	PrecacheModel("models/metalplategibs_green.mdl");
 	UTIL_PrecacheOther("ball_lightning");
+	UTIL_PrecacheOther("rustbitshot");
+	UTIL_PrecacheOther("sphere_explosion");
 
 	PrecacheSound("flier/ap_rotor2.wav");
 	PrecacheSound("flier/ap_whine1.wav");
@@ -1399,8 +1621,9 @@ void CRustFlier::Precache()
 }
 
 // Cosmetic shield reaction shared by retail TakeDamage (0x100b50f0) and
-// TraceAttack (0x100b5270): counter reset, glow-shell flash, one of three
-// field impact sounds (ambient, attenuation 0.8, pitch 80..120).
+// TraceAttack (0x100b5270, vtable-Slots 11 bzw. 10): counter reset,
+// glow-shell flash (renderfx 19, renderamt 255, rendercolor 150/0/255),
+// one of three field impact sounds (ambient, attenuation 0.8, pitch 80..120).
 void CRustFlier::ShieldHit()
 {
 	if (!m_bShieldUp)
@@ -1467,6 +1690,10 @@ void CRustFlier::StartCrash()
 	if (pGlow)
 		UTIL_Remove(pGlow);
 	m_hGlow = nullptr;
+	CBaseEntity* pGlowMid = m_hGlowMid;
+	if (pGlowMid)
+		UTIL_Remove(pGlowMid);
+	m_hGlowMid = nullptr;
 
 	pev->health = -1;
 	if (m_bShieldUp)
@@ -1551,19 +1778,51 @@ void CRustFlier::HuntThink()
 	if (m_fSequenceFinished)
 		SetSequenceByName("idle");
 
-	// glow sprite attached to attachment 2 (retail creates it on the first think)
+	// Glow-Sprites. Nur models/rustflyer.mdl hat Attachments (4); alle
+	// Absturz-/Wrack-Modelle (rustflyer_crashed/crashing/dent/landed) haben 0.
+	// Ein SetAttachment auf so ein Modell haengt den Sprite ins Nichts, deshalb
+	// werden die Sprites dann am Flieger-Ursprung gehalten.
+	const bool bHasAttachments = FlierAttachmentCount(ENT(pev)) >= 3;
+
 	if (m_hGlow == nullptr)
 	{
 		CSprite* pGlow = CSprite::SpriteCreate("sprites/flyball.spr", pev->origin, true);
 		if (pGlow)
 		{
 			pGlow->SetTransparency(kRenderTransAdd, 255, 255, 255, 255, kRenderFxNone);
-			pGlow->SetAttachment(edict(), 2);
+			// Retail setzt body/attachment = 2 (Seitenfluegel). Am Modell sind die drei Rumpf-
+			// oeffnungen [1] Mitte, [2] links, [3] rechts; Nutzerbefund: die mittlere lila Kugel
+			// fehlt. Daher zusaetzlich ein zweiter Glow an Attachment 1 - beide werden jetzt
+			// auch gespeichert und mit entfernt.
+			if (bHasAttachments)
+				pGlow->SetAttachment(edict(), 2);
 			pGlow->SetScale(2.0f);
 			pGlow->pev->framerate = 9.0f;
 			pGlow->pev->spawnflags = 0;
 			m_hGlow = pGlow;
 		}
+
+		CSprite* pGlowMid = CSprite::SpriteCreate("sprites/flyball.spr", pev->origin, true);
+		if (pGlowMid)
+		{
+			pGlowMid->SetTransparency(kRenderTransAdd, 255, 255, 255, 255, kRenderFxNone);
+			if (bHasAttachments)
+				pGlowMid->SetAttachment(edict(), 1);
+			pGlowMid->SetScale(1.0f); // Nutzerbefund: mittlere Kugel war zu gross
+			pGlowMid->pev->framerate = 9.0f;
+			pGlowMid->pev->spawnflags = 0;
+			m_hGlowMid = pGlowMid;
+		}
+	}
+	else if (!bHasAttachments)
+	{
+		// Modell ohne Attachments (Wrack): Sprites folgen dem Ursprung.
+		CSprite* pGlow = (CSprite*)(CBaseEntity*)m_hGlow;
+		if (pGlow)
+			UTIL_SetOrigin(pGlow->pev, pev->origin);
+		CSprite* pGlowMid = (CSprite*)(CBaseEntity*)m_hGlowMid;
+		if (pGlowMid)
+			UTIL_SetOrigin(pGlowMid->pev, pev->origin);
 	}
 
 	pev->nextthink = gpGlobals->time + 0.1;
@@ -1715,8 +1974,9 @@ void CRustFlier::HuntSteer()
 // attachment 1 at speed 600 and play the "attack" sequence.
 bool CRustFlier::FireMissileDown()
 {
-	Vector vecSrc, vecAng;
-	GetAttachment(1, vecSrc, vecAng);
+	Vector vecSrc = pev->origin, vecAng;
+	if (FlierAttachmentCount(ENT(pev)) > 1)
+		GetAttachment(1, vecSrc, vecAng); // Wrack-Modelle haben keine Attachments
 	if (m_hEnemy == nullptr || !m_hEnemy->IsAlive())
 		return false;
 
@@ -1743,8 +2003,9 @@ bool CRustFlier::FireMissileDown()
 // the flier faces the enemy (dot > 0.9), random cone 0.0262, speed 1000.
 bool CRustFlier::FireBolt()
 {
-	Vector vecSrc, vecAng;
-	GetAttachment(0, vecSrc, vecAng);
+	Vector vecSrc = pev->origin, vecAng;
+	if (FlierAttachmentCount(ENT(pev)) > 0)
+		GetAttachment(0, vecSrc, vecAng); // Wrack-Modelle haben keine Attachments
 	if (m_hEnemy == nullptr || !m_hEnemy->IsAlive())
 		return false;
 
@@ -1768,8 +2029,8 @@ bool CRustFlier::FireBolt()
 	return true;
 }
 
-// Retail CRustFlier::CrashingThink @ 0x100b3f50: only trails 2..4 smoke
-// puffs behind the falling flier every 0.1 s (no end state in retail).
+// Retail CRustFlier::CrashingThink @ 0x100b3f50: emits 2..4 TE_SMOKE puffs
+// every 0.1 s. Position, scale 20..29, and framerate 8..16 match Retail.
 void CRustFlier::CrashingThink()
 {
 	StudioFrameAdvance();
