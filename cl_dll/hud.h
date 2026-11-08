@@ -116,6 +116,10 @@ public:
 
 	void SlotInput(int iSlot);
 	void UserCmd_Slot1();
+	// +custom / -custom (Retail: MOUSE2) - Auswahl der Waffen-Modifikationen
+	// (Bucket 9, "cust_*"); Bestaetigung per Linksklick in Think().
+	void OpenCustomSelection();
+	void CloseCustomSelection();
 	void UserCmd_Slot2();
 	void UserCmd_Slot3();
 	void UserCmd_Slot4();
@@ -128,6 +132,7 @@ public:
 	void UserCmd_Close();
 	void UserCmd_NextWeapon();
 	void UserCmd_PrevWeapon();
+	void UserCmd_LastWeapon();
 
 public:
 	WEAPON* GetCurrentWeapon() { return m_pWeapon; }
@@ -217,6 +222,7 @@ public:
 	bool MsgFunc_Tank(const char* pszName, int iSize, void* pbuf);
 	bool MsgFunc_TankBody(const char* pszName, int iSize, void* pbuf);
 	bool MsgFunc_TurretPos(const char* pszName, int iSize, void* pbuf);
+	void UserCmd_Honk();
 
 private:
 	int m_iBodyState = 0;
@@ -232,6 +238,28 @@ private:
 	int m_iBodyHitBL = -1;
 	int m_iBodyHitBR = -1;
 	int m_iTurret = -1;
+};
+
+//
+//-----------------------------------------------------
+//
+// Gunman-DML-Zielkreuz ("DmlCross"), siehe cl_dll/dml_cross.cpp.
+class CHudDmlCross : public CHudBase
+{
+public:
+	bool Init() override;
+	bool VidInit() override;
+	bool Draw(float flTime) override;
+	void Reset() override;
+	bool MsgFunc_DmlCross(const char* pszName, int iSize, void* pbuf);
+
+private:
+	int m_iMode = 0;
+	int m_iRed = 255;
+	int m_iGreen = 255;
+	int m_iBlue = 255;
+	float m_flExpire = 0.0f;
+	HSPRITE m_hSprite = 0;
 };
 
 //
@@ -549,6 +577,13 @@ private:
 //
 
 
+// Clientseitige Erschuetterung. Der Engine eigene Shake greift nur im freien Blick; fuer
+// Kamera-Ansichten (trigger_camera) wendet der Client diese Werte selbst an.
+extern float g_flClientShakeStart;
+extern float g_flClientShakeAmplitude;
+extern float g_flClientShakeDuration;
+extern float g_flClientShakeFrequency;
+
 class CHud
 {
 private:
@@ -636,6 +671,7 @@ public:
 	CHudBattery m_Battery;
 	CHudTrain m_Train;
 	CHudTankControl m_Tank;
+	CHudDmlCross m_DmlCross;
 	CHudFlashlight m_Flash;
 	CHudMessage m_Message;
 	CHudStatusBar m_StatusBar;
@@ -665,6 +701,8 @@ public:
 	void MsgFunc_ViewMode(const char* pszName, int iSize, void* pbuf);
 	bool MsgFunc_SetFOV(const char* pszName, int iSize, void* pbuf);
 	bool MsgFunc_Concuss(const char* pszName, int iSize, void* pbuf);
+	bool MsgFunc_CameraShake(const char* pszName, int iSize, void* pbuf);
+	bool MsgFunc_RockGib(const char* pszName, int iSize, void* pbuf);
 	bool MsgFunc_Weapons(const char* pszName, int iSize, void* pbuf);
 
 	// Screen information

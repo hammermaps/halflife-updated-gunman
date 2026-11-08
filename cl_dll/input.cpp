@@ -469,7 +469,13 @@ void IN_Attack2Up() { KeyUp(&in_attack2); }
 void IN_CustomDown()
 {
 	KeyDown(&in_custom);
-	gEngfuncs.pfnClientCmd("custupdate\n");
+
+	// Retail: +custom oeffnet fuer die aktive Waffe die Auswahl der
+	// Modifikationen (cust_* in Bucket 9) im HUD; Linksklick bestaetigt und
+	// schaltet um (CHudAmmo::Think wertet IN_ATTACK aus). Gibt es fuer die
+	// Waffe keine Modifikation, faellt der Aufruf auf den alten
+	// "custupdate"-Serverbefehl zurueck.
+	gHUD.m_Ammo.OpenCustomSelection();
 }
 void IN_CustomUp() { KeyUp(&in_custom); }
 

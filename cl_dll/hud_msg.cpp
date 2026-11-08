@@ -22,6 +22,8 @@
 #include "r_efx.h"
 
 #include "particleman.h"
+#include "pmtrace.h"
+#include "ev_hldm.h"
 extern IParticleMan* g_pParticleMan;
 
 extern BEAM* pBeam;
@@ -29,6 +31,54 @@ extern BEAM* pBeam2;
 
 
 /// USER-DEFINED SERVER MESSAGE HANDLERS
+
+float g_flClientShakeStart = -1000.0f;
+float g_flClientShakeAmplitude = 0.0f;
+float g_flClientShakeDuration = 0.0f;
+float g_flClientShakeFrequency = 0.0f;
+
+bool CHud::MsgFunc_RockGib(const char* pszName, int iSize, void* pbuf)
+{
+	BEGIN_READ(pbuf, iSize);
+
+	// Nutzdaten des Servers: Origin, Anzahl, Geschwindigkeit, Scale (x50), Skin.
+	const float flX = READ_COORD();
+	const float flY = READ_COORD();
+	const float flZ = READ_COORD();
+	const int iCount = READ_BYTE();
+	const int iSpeed = READ_SHORT();
+	const float flScale = static_cast<float>(READ_BYTE()) / 50.0f;
+	const int iSkin = READ_BYTE();
+
+	static bool s_bProbe = false;
+	if (!s_bProbe)
+	{
+		s_bProbe = true;
+		gEngfuncs.Con_Printf("PARTLIMIT max_particles=%.0f cl_maxparticles=%.0f r_maxparticles=%.0f\n",
+			CVAR_GET_FLOAT("max_particles"), CVAR_GET_FLOAT("cl_maxparticles"),
+			CVAR_GET_FLOAT("r_maxparticles"));
+	}
+
+	EV_RetailRockShards(Vector(flX, flY, flZ), static_cast<float>(iSpeed), flScale, iCount, iSkin,
+		FTENT_SMOKETRAIL | FTENT_ROTATE);
+	return true;
+}
+
+bool CHud::MsgFunc_CameraShake(const char* pszName, int iSize, void* pbuf)
+{
+	BEGIN_READ(pbuf, iSize);
+
+	// Protokoll wie UTIL_ScreenShake: Amplitude und Dauer in 4.12-Fixkomma, Frequenz in 8.8.
+	const float flAmplitude = static_cast<float>(READ_SHORT()) / 4096.0f;
+	const float flDuration = static_cast<float>(READ_SHORT()) / 4096.0f;
+	const float flFrequency = static_cast<float>(READ_SHORT()) / 256.0f;
+
+	g_flClientShakeStart = gEngfuncs.GetClientTime();
+	g_flClientShakeAmplitude = flAmplitude;
+	g_flClientShakeDuration = flDuration;
+	g_flClientShakeFrequency = flFrequency;
+	return true;
+}
 
 bool CHud::MsgFunc_ResetHUD(const char* pszName, int iSize, void* pbuf)
 {

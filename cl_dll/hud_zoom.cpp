@@ -83,6 +83,10 @@ bool CHudZoom::MsgFunc_Zoom(const char* pszName, int iSize, void* pbuf)
 		m_iFrame = 0;
 		m_flNextFrame = 0;
 		m_iTargetFov = ZOOM_TARGET_FOV;
+		// Ohne dieses Flag laeuft die FOV-Animation nie an: Draw() prueft
+		// m_bAnimating in Zeile 121, gesetzt wurde es bisher nur auf false
+		// (iMode 2). Deshalb kam beim Sniper kein Zoom.
+		m_bAnimating = true;
 		m_bDrawFlag = true;
 		m_iFlags |= HUD_ACTIVE;
 		m_bReverse = false;

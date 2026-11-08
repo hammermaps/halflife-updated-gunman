@@ -121,6 +121,16 @@ int __MsgFunc_ResetHUD(const char* pszName, int iSize, void* pbuf)
 	return static_cast<int>(gHUD.MsgFunc_ResetHUD(pszName, iSize, pbuf));
 }
 
+int __MsgFunc_CameraShake(const char* pszName, int iSize, void* pbuf)
+{
+	return static_cast<int>(gHUD.MsgFunc_CameraShake(pszName, iSize, pbuf));
+}
+
+int __MsgFunc_RockGib(const char* pszName, int iSize, void* pbuf)
+{
+	return static_cast<int>(gHUD.MsgFunc_RockGib(pszName, iSize, pbuf));
+}
+
 int __MsgFunc_InitHUD(const char* pszName, int iSize, void* pbuf)
 {
 	gHUD.MsgFunc_InitHUD(pszName, iSize, pbuf);
@@ -311,6 +321,8 @@ void CHud::Init()
 	HOOK_MESSAGE(ViewMode);
 	HOOK_MESSAGE(SetFOV);
 	HOOK_MESSAGE(Concuss);
+	HOOK_MESSAGE(CameraShake);
+	HOOK_MESSAGE(RockGib);
 	HOOK_MESSAGE(Weapons);
 
 	// TFFree CommandMenu
@@ -347,13 +359,25 @@ void CHud::Init()
 	// in findings/client/client_dll_kickoff.md Nachtrag 8 - not a stock SDK cvar.
 	CVAR_CREATE("hud_smallhud", "0", FCVAR_ARCHIVE);
 
+	// Retail-CHudAmmo::Init (client.dll FUN_10022730) registriert diese Cvars;
+	// Defaults stammen aus den .data-Stringliteralen (0x10077b68 = "0"),
+	// Flags = 1 (FCVAR_ARCHIVE). hud_reverseweapons wird in
+	// cl_dll/ammo.cpp registriert, weil dort die invnext/invprev-Handler sitzen.
+	// violence_germany wird serverseitig in dlls/combat.cpp gelesen
+	// (CVAR_GET_FLOAT) und war im SDK bisher nirgends registriert.
+	// hud_customwrap hat auch in Retail keinen Client-Verbraucher (nur HUD_Init).
+	CVAR_CREATE("hud_customwrap", "0", FCVAR_ARCHIVE);
+	CVAR_CREATE("violence_germany", "0", FCVAR_ARCHIVE);
+
 
 	m_iLogo = 0;
 	m_iFOV = 0;
 
-	CVAR_CREATE("zoom_sensitivity_ratio", "1.2", FCVAR_ARCHIVE);
+	// Retail gHUD.Init (client.dll FUN_1002a5e0) registriert beide ohne Flags (0) —
+	// zoom_sensitivity_ratio @0x100786d8 = "1.2", default_fov @0x100786d4 = "90".
+	CVAR_CREATE("zoom_sensitivity_ratio", "1.2", 0);
 	CVAR_CREATE("cl_autowepswitch", "1", FCVAR_ARCHIVE | FCVAR_USERINFO);
-	default_fov = CVAR_CREATE("default_fov", "90", FCVAR_ARCHIVE);
+	default_fov = CVAR_CREATE("default_fov", "90", 0);
 	m_pCvarStealMouse = CVAR_CREATE("hud_capturemouse", "1", FCVAR_ARCHIVE);
 	m_pCvarDraw = CVAR_CREATE("hud_draw", "1", FCVAR_ARCHIVE);
 	cl_lw = gEngfuncs.pfnGetCvarPointer("cl_lw");
@@ -389,6 +413,7 @@ void CHud::Init()
 	m_Geiger.Init();
 	m_Train.Init();
 	m_Tank.Init();
+	m_DmlCross.Init();
 	m_Battery.Init();
 	m_Flash.Init();
 	m_Message.Init();

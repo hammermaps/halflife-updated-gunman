@@ -31,6 +31,8 @@
 #include "ammohistory.h"
 #include "vgui_TeamFortressViewport.h"
 
+static const char* CustomCommandForEntry(const char* pszName, char* pszOut, int iOutSize);
+
 WEAPON* gpActiveSel; // NULL means off, 1 means just the menu bar, otherwise
 					 // this points to the active weapon menu item
 WEAPON* gpLastSel;	 // Last weapon menu selection
@@ -254,6 +256,7 @@ DECLARE_COMMAND(m_Ammo, Slot7);
 DECLARE_COMMAND(m_Ammo, Slot8);
 DECLARE_COMMAND(m_Ammo, Slot9);
 DECLARE_COMMAND(m_Ammo, Slot10);
+DECLARE_COMMAND(m_Ammo, LastWeapon);
 DECLARE_COMMAND(m_Ammo, Close);
 DECLARE_COMMAND(m_Ammo, NextWeapon);
 DECLARE_COMMAND(m_Ammo, PrevWeapon);
@@ -263,6 +266,25 @@ DECLARE_COMMAND(m_Ammo, PrevWeapon);
 #define AMMO_LARGE_WIDTH 20
 
 #define HISTORY_DRAW_TIME "5"
+
+// Retail (client.dll FUN_100244a0 / FUN_100248d0): invnext und invprev tauschen
+// die Durchlaufrichtung, sobald hud_reverseweapons != 0 ist.
+static cvar_t* g_pCvarReverseWeapons = NULL;
+
+// Retail (client.dll FUN_10024730): bei hud_autoswitch != 0 schaltet der
+// Slot-Durchlauf sofort auf die markierte Waffe um, sonst nur markieren.
+static cvar_t* g_pCvarAutoSwitch = NULL;
+
+static bool AutoSwitchEnabled()
+{
+	return g_pCvarAutoSwitch && g_pCvarAutoSwitch->value != 0.0f;
+}
+
+// Retail CHudAmmo::UserCmd_LastWeapon (client.dll 0x10022700) springt auf den
+// gemeinsamen Slot-Selektor (0x100237e0 -> 0x10036c70); SDK hatte kein
+// lastinv-Kommando. Buchhaltung der zuletzt aktiven Waffe fuer diese Auswahl.
+static int g_iLastWeaponId = 0;
+static int g_iActiveWeaponId = 0;
 
 bool CHudAmmo::Init()
 {
@@ -289,11 +311,20 @@ bool CHudAmmo::Init()
 	HOOK_COMMAND("cancelselect", Close);
 	HOOK_COMMAND("invnext", NextWeapon);
 	HOOK_COMMAND("invprev", PrevWeapon);
+	HOOK_COMMAND("lastinv", LastWeapon);
 
 	Reset();
 
 	CVAR_CREATE("hud_drawhistory_time", HISTORY_DRAW_TIME, 0);
 	CVAR_CREATE("hud_fastswitch", "0", FCVAR_ARCHIVE); // controls whether or not weapons can be selected in one keypress
+	// Retail CHudAmmo::Init (FUN_10022730) registriert hud_autoswitch "1" mit
+	// FCVAR_ARCHIVE; FUN_10024730 schaltet damit beim Durchlaufen eines Slots
+	// sofort auf die naechste Waffe um (0 = nur markieren).
+	g_pCvarAutoSwitch = CVAR_CREATE("hud_autoswitch", "1", FCVAR_ARCHIVE);
+	// Retail CHudAmmo::Init (FUN_10022730) registriert hud_reverseweapons; die
+	// invnext/invprev-Handler (client.dll FUN_100244a0 / FUN_100248d0) tauschen
+	// bei != 0 die Richtung.
+	g_pCvarReverseWeapons = CVAR_CREATE("hud_reverseweapons", "0", FCVAR_ARCHIVE);
 
 	m_iFlags |= HUD_ACTIVE; //!!!
 
@@ -350,6 +381,34 @@ void CHudAmmo::Think()
 	if (gHUD.m_fPlayerDead)
 		return;
 
+	// Statuszeile fuer die Analyse: welche Waffe ist aktiv, mit welchem Magazin,
+	// Reservemunition, Flags und Auswahlzustand. Abschaltbar mit `gm_info 0`.
+	{
+		static float s_flNextInfo = 0.0f;
+		const float flNow = gEngfuncs.GetClientTime();
+
+		if (flNow >= s_flNextInfo)
+		{
+			s_flNextInfo = flNow + 2.0f;
+
+			static bool s_bInfoCvar = false;
+			if (!s_bInfoCvar)
+			{
+				gEngfuncs.pfnRegisterVariable("gm_info", "1", FCVAR_ARCHIVE);
+				s_bInfoCvar = true;
+			}
+
+			if (gEngfuncs.pfnGetCvarFloat("gm_info") > 0.0f && m_pWeapon)
+			{
+				gEngfuncs.Con_Printf("[info] waffe=%s id=%d mag=%d max1=%d max2=%d "
+					"flags=0x%x slot=%d out=%d\n",
+					m_pWeapon->szName, m_pWeapon->iId, m_pWeapon->iClip,
+					m_pWeapon->iMax1, m_pWeapon->iMax2, m_pWeapon->iFlags,
+					m_pWeapon->iSlot, gWR.iOldWeaponBits);
+			}
+		}
+	}
+
 	if (gHUD.m_iWeaponBits != gWR.iOldWeaponBits)
 	{
 		gWR.iOldWeaponBits = gHUD.m_iWeaponBits;
@@ -376,7 +435,8 @@ void CHudAmmo::Think()
 	{
 		if (gpActiveSel != (WEAPON*)1)
 		{
-			ServerCmd(gpActiveSel->szName);
+			char szCmd[64];
+			ServerCmd(CustomCommandForEntry(gpActiveSel->szName, szCmd, sizeof(szCmd)));
 			g_weaponselect = gpActiveSel->iId;
 		}
 
@@ -386,6 +446,33 @@ void CHudAmmo::Think()
 
 		PlaySound("common/wpn_select.wav", 1);
 	}
+}
+
+// Retail-Format des Server-Kommandos ist "cust_<Option><Wert>" (dlls/client.cpp,
+// FUN_100405b0). Die WeaponList-Eintraege tragen aber reine Anzeigenamen ohne
+// Zahl, weshalb atoi() dort immer 0 liefert. Fuer Eintraege, deren Wert sich
+// aus der Waffenlogik ableiten laesst, wird das Kommando hier numerisch
+// umgeschrieben; unbekannte Eintraege gehen unveraendert raus.
+static const char* CustomCommandForEntry(const char* pszName, char* pszOut, int iOutSize)
+{
+	static const struct { const char* pszEntry; const char* pszCommand; } s_Commands[] =
+	{
+		// CGaussPistol::ApplyCustomSetting: value 4 schaltet den Sniper-Modus frei
+		// (gausspistol.cpp:489), Option '2' ist der Sniper-Eintrag.
+		{ "cust_2GaussPistolSniper", "cust_24" },
+		{ "cust_1GaussPistolFireType", "cust_11" },
+	};
+
+	for (size_t i = 0; i < sizeof(s_Commands) / sizeof(s_Commands[0]); i++)
+	{
+		if (strcmp(s_Commands[i].pszEntry, pszName) == 0)
+		{
+			snprintf(pszOut, iOutSize, "%s", s_Commands[i].pszCommand);
+			return pszOut;
+		}
+	}
+
+	return pszName;
 }
 
 //
@@ -428,9 +515,10 @@ void WeaponsResource::SelectSlot(int iSlot, bool fAdvance, int iDirection)
 	if (gHUD.m_fPlayerDead || (gHUD.m_iHideHUDDisplay & (HIDEHUD_WEAPONS | HIDEHUD_ALL)) != 0)
 		return;
 
-	if (!gHUD.HasSuit())
-		return;
-
+	// Retail WeaponsResource::SelectSlot (client.dll 0x10023559 ff.) prueft nur
+	// m_fPlayerDead und m_iHideHUDDisplay & (HIDEHUD_WEAPONS|HIDEHUD_ALL) -
+	// keinen Suit. Gunman kennt item_suit gar nicht (0 von 86 Maps), ein
+	// HasSuit()-Gate wuerde die Waffenliste dauerhaft abschalten.
 	if (!gHUD.HasAnyWeapons())
 		return;
 
@@ -462,6 +550,14 @@ void WeaponsResource::SelectSlot(int iSlot, bool fAdvance, int iDirection)
 			p = GetNextActivePos(gpActiveSel->iSlot, gpActiveSel->iSlotPos);
 		if (!p)
 			p = GetFirstPos(iSlot);
+
+		// Retail FUN_10024730: im Slot-Durchlauf schaltet hud_autoswitch die
+		// markierte Waffe sofort um; bei 0 bleibt es bei der Markierung.
+		if (p && AutoSwitchEnabled())
+		{
+			ServerCmd(p->szName);
+			g_weaponselect = p->iId;
+		}
 	}
 
 
@@ -571,6 +667,14 @@ bool CHudAmmo::MsgFunc_CurWeapon(const char* pszName, int iSize, void* pbuf)
 	int iId = READ_CHAR();
 	int iClip = READ_CHAR();
 
+	// Rohwerte des Servers protokollieren: das ist der autoritative Stand
+	// (Waffe, Magazin, Ziel-Status), bevor die HUD-Logik ihn interpretiert.
+	if (gEngfuncs.pfnGetCvarFloat("gm_info") > 0.0f)
+	{
+		gEngfuncs.Con_Printf("[info] CurWeapon state=%d id=%d clip=%d\n",
+			iState, iId, iClip);
+	}
+
 	// detect if we're also on target
 	if (iState > 1)
 	{
@@ -609,6 +713,15 @@ bool CHudAmmo::MsgFunc_CurWeapon(const char* pszName, int iSize, void* pbuf)
 
 	if (iState == 0) // we're not the current weapon, so update no more
 		return true;
+
+	// lastinv-Buchhaltung (Retail CHudAmmo::UserCmd_LastWeapon, 0x10022700):
+	// die zuletzt aktive Waffe merken, bevor die neue gesetzt wird.
+	if (pWeapon->iId != g_iActiveWeaponId)
+	{
+		if (g_iActiveWeaponId > 0)
+			g_iLastWeaponId = g_iActiveWeaponId;
+		g_iActiveWeaponId = pWeapon->iId;
+	}
 
 	m_pWeapon = pWeapon;
 
@@ -699,54 +812,164 @@ void CHudAmmo::SlotInput(int iSlot)
 	gWR.SelectSlot(iSlot, false, 1);
 }
 
+// Kennwort der aktiven Waffe fuer den Vergleich mit den cust_*-Eintraegen.
+static const char* CustomKeywordForWeapon(const char* pszWeapon)
+{
+	struct Map { const char* pszWeapon; const char* pszKey; };
+	static const Map s_Map[] = {
+		{ "weapon_shotgun", "shotgun" },
+		{ "weapon_minigun", "minigun" },
+		{ "weapon_mechagun", "minigun" },
+		{ "weapon_beamgun", "beam" },
+		{ "weapon_polarisblade", "beam" },
+		{ "weapon_gausspistol", "gauss" },
+		{ "weapon_pistol", "gauss" },
+		{ "weapon_dml", "dml" },
+		{ "weapon_mule", "dml" },
+		{ "weapon_SPchemicalgun", "chem" },
+		{ "weapon_chemgun", "chem" },
+		{ "weapon_fists", "fists" },
+		{ "weapon_crowbar", "crowbar" },
+		{ "weapon_aicore", "aicore" },
+	};
+	for (const Map& entry : s_Map)
+	{
+		if (strcmp(pszWeapon, entry.pszWeapon) == 0)
+			return entry.pszKey;
+	}
+	return nullptr;
+}
+
+static bool CustomNameMatches(const char* pszCustomName, const char* pszKeyword)
+{
+	if (!pszCustomName || !pszKeyword || pszCustomName[0] == '\0')
+		return false;
+
+	const size_t iLen = strlen(pszKeyword);
+	const char* p = pszCustomName;
+	while (*p)
+	{
+		if (tolower((unsigned char)*p) == tolower((unsigned char)*pszKeyword)
+			&& strnicmp(p, pszKeyword, iLen) == 0)
+			return true;
+		++p;
+	}
+	return false;
+}
+
+void CHudAmmo::OpenCustomSelection()
+{
+	if (!m_pWeapon || gHUD.m_fPlayerDead)
+		return;
+
+	const char* pszKeyword = CustomKeywordForWeapon(m_pWeapon->szName);
+	if (!pszKeyword)
+		return;
+
+	// Bereits offen: zum naechsten passenden Modus weiterschalten.
+	WEAPON* pStart = nullptr;
+	int iStartPos = -1;
+	if (gpActiveSel && gpActiveSel != (WEAPON*)1)
+	{
+		pStart = gpActiveSel;
+		iStartPos = pStart->iSlotPos;
+	}
+
+	WEAPON* pFirst = nullptr;
+	WEAPON* pNext = nullptr;
+	for (int iPos = 0; iPos < MAX_WEAPON_POSITIONS; ++iPos)
+	{
+		WEAPON* p = gWR.GetWeaponSlot(9, iPos);
+		if (!p || p->iId == 0)
+			continue;
+		if (!CustomNameMatches(p->szName, pszKeyword))
+			continue;
+		if (!pFirst)
+			pFirst = p;
+		if (pStart && iPos > iStartPos)
+		{
+			pNext = p;
+			break;
+		}
+	}
+
+	WEAPON* pTarget = pNext ? pNext : pFirst;
+	if (!pTarget)
+		return;
+
+	gpActiveSel = pTarget;
+	PlaySound("common/wpn_hudon.wav", 1);
+}
+
+void CHudAmmo::CloseCustomSelection()
+{
+	// -custom schliesst die Auswahl wieder (Linksklick bleibt bestaetigend).
+	if (gpActiveSel && gpActiveSel != (WEAPON*)1)
+	{
+		gpLastSel = gpActiveSel;
+		gpActiveSel = NULL;
+		PlaySound("common/wpn_hudoff.wav", 1);
+	}
+}
+
 void CHudAmmo::UserCmd_Slot1()
 {
-	SlotInput(0);
+	// Retail-ItemInfo iSlot ist 1-basiert; Taste N waehlt Bucket N.
+	SlotInput(1);
 }
 
 void CHudAmmo::UserCmd_Slot2()
 {
-	SlotInput(1);
+	// Retail-ItemInfo iSlot ist 1-basiert; Taste N waehlt Bucket N.
+	SlotInput(2);
 }
 
 void CHudAmmo::UserCmd_Slot3()
 {
-	SlotInput(2);
+	// Retail-ItemInfo iSlot ist 1-basiert; Taste N waehlt Bucket N.
+	SlotInput(3);
 }
 
 void CHudAmmo::UserCmd_Slot4()
 {
-	SlotInput(3);
+	// Retail-ItemInfo iSlot ist 1-basiert; Taste N waehlt Bucket N.
+	SlotInput(4);
 }
 
 void CHudAmmo::UserCmd_Slot5()
 {
-	SlotInput(4);
+	// Retail-ItemInfo iSlot ist 1-basiert; Taste N waehlt Bucket N.
+	SlotInput(5);
 }
 
 void CHudAmmo::UserCmd_Slot6()
 {
-	SlotInput(5);
+	// Retail-ItemInfo iSlot ist 1-basiert; Taste N waehlt Bucket N.
+	SlotInput(6);
 }
 
 void CHudAmmo::UserCmd_Slot7()
 {
-	SlotInput(6);
+	// Retail-ItemInfo iSlot ist 1-basiert; Taste N waehlt Bucket N.
+	SlotInput(7);
 }
 
 void CHudAmmo::UserCmd_Slot8()
 {
-	SlotInput(7);
+	// Retail-ItemInfo iSlot ist 1-basiert; Taste N waehlt Bucket N.
+	SlotInput(8);
 }
 
 void CHudAmmo::UserCmd_Slot9()
 {
-	SlotInput(8);
+	// Retail-ItemInfo iSlot ist 1-basiert; Taste N waehlt Bucket N.
+	SlotInput(9);
 }
 
 void CHudAmmo::UserCmd_Slot10()
 {
-	SlotInput(9);
+	// Retail-ItemInfo iSlot ist 1-basiert; Taste N waehlt Bucket N.
+	SlotInput(10);
 }
 
 void CHudAmmo::UserCmd_Close()
@@ -765,6 +988,12 @@ void CHudAmmo::UserCmd_Close()
 // Selects the next item in the weapon menu
 void CHudAmmo::UserCmd_NextWeapon()
 {
+	if (g_pCvarReverseWeapons && g_pCvarReverseWeapons->value != 0.0f)
+	{
+		UserCmd_PrevWeapon();
+		return;
+	}
+
 	if (gHUD.m_fPlayerDead || (gHUD.m_iHideHUDDisplay & (HIDEHUD_WEAPONS | HIDEHUD_ALL)) != 0)
 		return;
 
@@ -790,6 +1019,14 @@ void CHudAmmo::UserCmd_NextWeapon()
 				if (wsp && gWR.HasAmmo(wsp))
 				{
 					gpActiveSel = wsp;
+
+					// Retail FUN_10024730 (invnext/invprev): bei
+					// hud_autoswitch != 0 sofort umschalten.
+					if (AutoSwitchEnabled())
+					{
+						ServerCmd(wsp->szName);
+						g_weaponselect = wsp->iId;
+					}
 					return;
 				}
 			}
@@ -806,6 +1043,12 @@ void CHudAmmo::UserCmd_NextWeapon()
 // Selects the previous item in the menu
 void CHudAmmo::UserCmd_PrevWeapon()
 {
+	if (g_pCvarReverseWeapons && g_pCvarReverseWeapons->value != 0.0f)
+	{
+		UserCmd_NextWeapon();
+		return;
+	}
+
 	if (gHUD.m_fPlayerDead || (gHUD.m_iHideHUDDisplay & (HIDEHUD_WEAPONS | HIDEHUD_ALL)) != 0)
 		return;
 
@@ -831,6 +1074,14 @@ void CHudAmmo::UserCmd_PrevWeapon()
 				if (wsp && gWR.HasAmmo(wsp))
 				{
 					gpActiveSel = wsp;
+
+					// Retail FUN_10024730 (invnext/invprev): bei
+					// hud_autoswitch != 0 sofort umschalten.
+					if (AutoSwitchEnabled())
+					{
+						ServerCmd(wsp->szName);
+						g_weaponselect = wsp->iId;
+					}
 					return;
 				}
 			}
@@ -844,6 +1095,31 @@ void CHudAmmo::UserCmd_PrevWeapon()
 	gpActiveSel = NULL;
 }
 
+// Waehlt die zuletzt aktive Waffe erneut (Retail "lastinv").
+void CHudAmmo::UserCmd_LastWeapon()
+{
+	if (gHUD.m_fPlayerDead || (gHUD.m_iHideHUDDisplay & (HIDEHUD_WEAPONS | HIDEHUD_ALL)) != 0)
+		return;
+
+	if (g_iLastWeaponId <= 0 || g_iLastWeaponId == g_iActiveWeaponId)
+		return;
+
+	WEAPON* wsp = gWR.GetWeapon(g_iLastWeaponId);
+
+	if (!wsp || !wsp->iId || !gWR.HasAmmo(wsp))
+		return;
+
+	gpActiveSel = wsp;
+	ServerCmd(wsp->szName);
+	g_weaponselect = wsp->iId;
+
+	// Nach dem Wechsel zeigt CurWeapon die neue aktive Waffe an; der bisherige
+	// Wert wird wieder die "letzte" Waffe (Tausch wie bei Retail).
+	int iPrev = g_iActiveWeaponId;
+	g_iActiveWeaponId = wsp->iId;
+	g_iLastWeaponId = iPrev;
+}
+
 
 
 //-------------------------------------------------------------------------
@@ -854,9 +1130,6 @@ bool CHudAmmo::Draw(float flTime)
 {
 	int a, x, y, r, g, b;
 	int AmmoWidth;
-
-	if (!gHUD.HasSuit())
-		return true;
 
 	if ((gHUD.m_iHideHUDDisplay & (HIDEHUD_WEAPONS | HIDEHUD_ALL)) != 0)
 		return true;
@@ -1055,7 +1328,7 @@ bool CHudAmmo::DrawWList(float flTime)
 
 	// Retail presents the selected slot as a vertical list at the right edge.
 	const int x = ScreenWidth < 641 ? ScreenWidth - 128 : ScreenWidth - 256;
-	int y = 0;
+	int y = 40; // nicht an der Oberkante kleben
 	for (int iPos = 0; iPos < MAX_WEAPON_POSITIONS; ++iPos)
 	{
 		WEAPON* p = gWR.GetWeaponSlot(slot, iPos);

@@ -78,23 +78,20 @@ bool CHudBattery::Draw(float flTime)
 	if ((gHUD.m_iHideHUDDisplay & HIDEHUD_HEALTH) != 0)
 		return true;
 
-	int r, g, b, x, y, a;
-	Rect rc;
+	// Retail client.dll CHudBattery::Draw (0x10027180-0x10027304) zeichnet
+	// KEINE suit_empty/suit_full-Grafik: links im Blechpanel sitzt der
+	// armor_graph-Balken (x=27, y=Bildschirmhoehe-112), die Zahl steht in
+	// Gruen (0,255,0) direkt unter der Health-Zahl (x=164 gross / 35 klein,
+	// y=Bildschirmhoehe-63). Vorbild ist der Dekompilat-Ablauf:
+	//   Balken: rect.top bleibt, rect.bottom = clamp(armor, 1, 96)
+	//   Zahl:   DrawHudNumber(x, y, DHN_3DIGITS|DHN_DRAWZERO, armor, 0,255,0)
+	// Eine Suit-Bedingung kennt Retail hier nicht (nachgewiesen im
+	// Dekompilat: der Zweig beginnt direkt mit HIDEHUD_HEALTH).
 
-	rc = *m_prc2;
+	int r = 0, g = 255, b = 0;
+	int a;
 
-	rc.top += m_iHeight * ((float)(100 - (V_min(100, m_iBat))) * 0.01); // battery can go from 0 to 100 so * 0.01 goes from 0 to 1
-
-	// Gunman's Life-Support-Gauge look: green instead of stock's yellow
-	// (RE-confirmed, findings/client/client_dll_kickoff.md Nachtrag 8).
-	r = 0;
-	g = 255;
-	b = 0;
-
-	if (!gHUD.HasSuit())
-		return true;
-
-	// Has health changed? Flash the health #
+	// Fade wie im SDK-Stock (nur Helligkeit des Zahlenwerts)
 	if (0 != m_fFade)
 	{
 		if (m_fFade > FADE_TIME)
@@ -107,8 +104,6 @@ bool CHudBattery::Draw(float flTime)
 			m_fFade = 0;
 		}
 
-		// Fade the health number back to dim
-
 		a = MIN_ALPHA + (m_fFade / FADE_TIME) * 128;
 	}
 	else
@@ -116,44 +111,34 @@ bool CHudBattery::Draw(float flTime)
 
 	ScaleColors(r, g, b, a);
 
-	int iOffset = (m_prc1->bottom - m_prc1->top) / 6;
-
-	y = ScreenHeight - gHUD.m_iFontHeight - gHUD.m_iFontHeight / 2;
-
-	int width = (m_prc1->right - m_prc1->left);
-
-	// this used to just be ScreenWidth/5 (4 on Updated) but that caused real issues at higher resolutions. Instead, base it on the width of this sprite.
-	x = 3 * width;
-
-	// make sure we have the right sprite handles
-	if (0 == m_hSprite1)
-		m_hSprite1 = gHUD.GetSprite(gHUD.GetSpriteIndex("suit_empty"));
-	if (0 == m_hSprite2)
-		m_hSprite2 = gHUD.GetSprite(gHUD.GetSpriteIndex("suit_full"));
-
-	SPR_Set(m_hSprite1, r, g, b);
-	SPR_DrawAdditive(0, x, y - iOffset, m_prc1);
-
-	if (rc.bottom > rc.top)
-	{
-		SPR_Set(m_hSprite2, r, g, b);
-		SPR_DrawAdditive(0, x, y - iOffset + (rc.top - m_prc2->top), &rc);
-	}
-
-	x += width;
-	y += (int)(gHUD.m_iFontHeight * 0.2f);
-	x = gHUD.DrawHudNumber(x, y, DHN_3DIGITS | DHN_DRAWZERO, m_iBat, r, g, b);
-
-	// Two-layout system (RE-confirmed, no stock SDK equivalent): the "large"
-	// HUD variant adds a bar-graph sprite next to the numeric readout.
 	bool bLargeHud = ScreenWidth >= 641 && (m_pCvarSmallHud == nullptr || m_pCvarSmallHud->value == 0);
-	if (bLargeHud && m_HUD_armor_graph >= 0)
+	const int x = bLargeHud ? 164 : 35;
+	const int y = ScreenHeight - 77;
+
+	// Zahl 0..100
+	gHUD.DrawHudNumber(x, y, DHN_3DIGITS | DHN_DRAWZERO, V_min(100, m_iBat), r, g, b);
+
+	// Balken direkt unter der Health-Zahl: armor.spr ist ein horizontaler
+	// Farbverlauf (rot -> gruen, linke 96x25 des 128x32-Sprites). Retail
+	// (0x100272b7-0x100272f7) kuerzt das Rechteck-Feld an +0x0c; in
+	// HL1-wrect_t ({left,right,top,bottom}) ist das der rechte Rand:
+	// right = clamp(armor, 1, 96). Der Balken waechst also von links nach
+	// rechts, die Farbe laeuft mit.
+	if (m_HUD_armor_graph >= 0)
 	{
-		int rWhite, gWhite, bWhite;
-		UnpackRGB(rWhite, gWhite, bWhite, 0x00FFFFFF);
-		ScaleColors(rWhite, gWhite, bWhite, a);
-		SPR_Set(gHUD.GetSprite(m_HUD_armor_graph), rWhite, gWhite, bWhite);
-		SPR_DrawAdditive(0, x, y - iOffset, &gHUD.GetSpriteRect(m_HUD_armor_graph));
+		Rect rc = gHUD.GetSpriteRect(m_HUD_armor_graph);
+		const int iFullWidth = rc.right - rc.left;
+		const int iArmor = V_min(100, V_max(0, m_iBat));
+
+		rc.right = rc.left + (iFullWidth * iArmor) / 100;
+		// Flacher Balken, damit er nicht in die Health-Ziffern laeuft
+		rc.bottom = rc.top + 10;
+
+		if (rc.right > rc.left)
+		{
+			SPR_Set(gHUD.GetSprite(m_HUD_armor_graph), 255, 255, 255);
+			SPR_DrawAdditive(0, x, ScreenHeight - 58, &rc);
+		}
 	}
 
 	return true;

@@ -568,13 +568,20 @@ bool CHudSpectator::GetDirectorCamera(Vector& position, Vector& angle)
 //-----------------------------------------------------------------------------
 bool CHudSpectator::VidInit()
 {
-	m_hsprPlayer = SPR_Load("sprites/iplayer.spr");
-	m_hsprPlayerBlue = SPR_Load("sprites/iplayerblue.spr");
-	m_hsprPlayerRed = SPR_Load("sprites/iplayerred.spr");
-	m_hsprPlayerDead = SPR_Load("sprites/iplayerdead.spr");
-	m_hsprUnkownMap = SPR_Load("sprites/tile.spr");
+	// Retail-Beleg: die Stock-HL-Sprites iplayer/iplayerblue/iplayerred/
+	// iplayerdead/tile/camera existieren in Gunman nicht - weder als Datei in
+	// rewolf_german/ noch als String in der Retail-client.dll. Sie wurden
+	// frueher hier geladen und erzeugten bei jedem Mapstart sechs
+	// "Could not load HUD sprite"-Fehler im Log. Die zugehoerigen Zeichenpfade
+	// bleiben mit Handle 0 wirkungslos (SPR_Set/SPR_DrawAdditive zeichnen
+	// nichts). Ersatz-Assets gibt es in Gunman nicht.
+	m_hsprPlayer = 0;
+	m_hsprPlayerBlue = 0;
+	m_hsprPlayerRed = 0;
+	m_hsprPlayerDead = 0;
+	m_hsprUnkownMap = 0;
 	m_hsprBeam = SPR_Load("sprites/laserbeam.spr");
-	m_hsprCamera = SPR_Load("sprites/camera.spr");
+	m_hsprCamera = 0;
 	m_hCrosshair = SPR_Load("sprites/crosshairs.spr");
 
 	m_lastPrimaryObject = m_lastSecondaryObject = 0;
