@@ -5,12 +5,14 @@
 DECLARE_MESSAGE(m_Tank, Tank)
 DECLARE_MESSAGE(m_Tank, TankBody)
 DECLARE_MESSAGE(m_Tank, TurretPos)
+DECLARE_COMMAND(m_Tank, Honk)
 
 bool CHudTankControl::Init()
 {
 	HOOK_MESSAGE(Tank);
 	HOOK_MESSAGE(TankBody);
 	HOOK_MESSAGE(TurretPos);
+	HOOK_COMMAND("Honk", Honk);
 	gHUD.AddHudElem(this);
 	m_iFlags = 0;
 	m_pCvarTankHud = CVAR_CREATE("hud_tankhud", "1", FCVAR_ARCHIVE);
@@ -101,4 +103,15 @@ bool CHudTankControl::Draw(float flTime)
 	DrawTankSprite(hitBottom ? m_iBodyHitBR : m_iBodyBR, x + tile, y + tile);
 	DrawTankSprite(m_iTurret, x + tile + (lowRes ? 11 : 22), y + (lowRes ? 16 : 33), m_iTurretFrame);
 	return true;
+}
+
+// Retail CHudTankControl::Honk (client.dll 0x10036c50): Hupe nur bei aktivem
+// Tank-HUD (Retail prueft das Flag an this+0x14, das die Tank-Nachricht mit
+// Zustand 1 setzt - bei uns HUD_ACTIVE) und spielt "ambience/horn1.wav".
+void CHudTankControl::UserCmd_Honk()
+{
+	if ((m_iFlags & HUD_ACTIVE) == 0)
+		return;
+
+	gEngfuncs.pfnPlaySoundByName("ambience/horn1.wav", 1.0f);
 }

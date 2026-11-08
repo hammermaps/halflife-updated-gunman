@@ -1709,6 +1709,29 @@ void DLLEXPORT V_CalcRefdef(struct ref_params_s* pparams)
 		V_CalcNormalRefdef(pparams);
 	}
 
+	// Kamera-Ansichten (trigger_camera, SET_VIEW) umgehen den Engine-Shake: der Engine wendet
+	// den ScreenShake nur im freien Blick an. Solange eine Kamera-Entity den Blick fuehrt,
+	// legen wir die Erschuetterung deshalb hier selbst auf die Sicht.
+	{
+		cl_entity_t* pLocalShake = gEngfuncs.GetLocalPlayer();
+		if (pLocalShake && pparams->viewentity != pLocalShake->index + 1 &&
+			g_flClientShakeDuration > 0.0f)
+		{
+			const float flAge = gEngfuncs.GetClientTime() - g_flClientShakeStart;
+			if (flAge >= 0.0f && flAge < g_flClientShakeDuration)
+			{
+				const float flDecay = 1.0f - (flAge / g_flClientShakeDuration);
+				const float flAmp = g_flClientShakeAmplitude * flDecay;
+				const float flPhase = flAge * g_flClientShakeFrequency * 6.2831853f;
+
+				pparams->vieworg[0] += sinf(flPhase) * flAmp * 0.5f;
+				pparams->vieworg[1] += cosf(flPhase * 1.7f) * flAmp * 0.5f;
+				pparams->viewangles[2] += sinf(flPhase * 1.3f) * flAmp * 0.35f;
+			}
+		}
+	}
+
+
 	/*
 // Example of how to overlay the whole screen with red at 50 % alpha
 #define SF_TEST

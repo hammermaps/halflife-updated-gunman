@@ -1583,7 +1583,15 @@ void CStudioModelRenderer::StudioCalcAttachments()
 	pattachment = (mstudioattachment_t*)((byte*)m_pStudioHeader + m_pStudioHeader->attachmentindex);
 	for (i = 0; i < m_pStudioHeader->numattachments; i++)
 	{
-		VectorTransform(pattachment[i].org, (*m_plighttransform)[pattachment[i].bone], m_pCurrentEntity->attachment[i]);
+		if (m_plighttransform == NULL)
+		{
+			VectorCopy(pattachment[i].org, m_pCurrentEntity->attachment[i]);
+			continue;
+		}
+		int iBone = pattachment[i].bone;
+		if (iBone < 0 || iBone >= m_pStudioHeader->numbones)
+			iBone = 0;
+		VectorTransform(pattachment[i].org, (*m_plighttransform)[iBone], m_pCurrentEntity->attachment[i]);
 	}
 }
 

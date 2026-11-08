@@ -42,7 +42,7 @@ void Game_HookEvents()
 	gEngfuncs.pfnHookEvent("events/gauss.sc", EV_GaussPistol);
 	gEngfuncs.pfnHookEvent("events/gaussspin.sc", EV_SpinGauss);
 	gEngfuncs.pfnHookEvent("events/snipershot.sc", EV_SniperShot);
-	gEngfuncs.pfnHookEvent("events/RapidImpact.sc", EV_RapidImpact);
+	gEngfuncs.pfnHookEvent("events/rapidimpact.sc", EV_RapidImpact);
 	gEngfuncs.pfnHookEvent("events/ChargedImpact.sc", EV_ChargedImpact);
 	gEngfuncs.pfnHookEvent("events/ClusterExplosion.sc", EV_ClusterExplosion);
 	gEngfuncs.pfnHookEvent("events/ChemicalSpray.sc", EV_ChemicalSpray);
@@ -57,4 +57,27 @@ void Game_HookEvents()
 	gEngfuncs.pfnHookEvent("events/firehornet.sc", EV_HornetGunFire);
 	gEngfuncs.pfnHookEvent("events/tripfire.sc", EV_TripmineFire);
 	gEngfuncs.pfnHookEvent("events/snarkfire.sc", EV_SnarkFire);
+	gEngfuncs.pfnHookEvent("events/turretbullets.sc", EV_TurretBullets);
+	gEngfuncs.pfnHookEvent("events/monstersentry.sc", EV_MonsterSentry);
+	gEngfuncs.pfnHookEvent("events/gw_minigun.sc", EV_MinigunFire);
+	gEngfuncs.pfnHookEvent("events/gw_shotgun.sc", EV_ShotgunFire);
+	gEngfuncs.pfnHookEvent("events/monstershotgun.sc", EV_MonsterShotgun);
+	gEngfuncs.pfnHookEvent("events/monstermechagun.sc", EV_MonsterMechagun);
+	gEngfuncs.pfnHookEvent("events/chopperfire.sc", EV_ChopperFire);
+	gEngfuncs.pfnHookEvent("events/RocketSmoke.sc", EV_RocketSmoke);
+	gEngfuncs.pfnHookEvent("events/cylinder.sc", EV_Cylinder);
+	gEngfuncs.pfnHookEvent("events/sphereexplode.sc", EV_SphereExplode);
+	gEngfuncs.pfnHookEvent("events/lightning.sc", EV_Lightning);
+	gEngfuncs.pfnHookEvent("events/rustbitimpact.sc", EV_RustbitImpact);
+	gEngfuncs.pfnHookEvent("events/kataimpact.sc", EV_KataImpact);
+	gEngfuncs.pfnHookEvent("events/gw_minigunHeat.sc", EV_MinigunHeat);
+	gEngfuncs.pfnHookEvent("events/cleanup.sc", EV_Cleanup);
+	gEngfuncs.pfnHookEvent("events/spurtblood.sc", EV_SpurtBlood);
+	gEngfuncs.pfnHookEvent("events/balllightning.sc", EV_BallLightning);
+	gEngfuncs.pfnHookEvent("events/batbotbeam.sc", EV_BatBotBeam);
+	gEngfuncs.pfnHookEvent("events/tankmguns.sc", EV_TankMGuns);
+	// Retail registriert fuer diese beiden Events die Sprite-Callback-Funktion
+	// CSprite::AnimateUntilDead, also keine Event-Logik (Registrar FUN_10020860).
+	gEngfuncs.pfnHookEvent("events/waterripple.sc", EV_NoOpEvent);
+	gEngfuncs.pfnHookEvent("events/volumeexplosion.sc", EV_NoOpEvent);
 }
