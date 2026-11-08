@@ -1896,7 +1896,9 @@ bool CShake::KeyValue(KeyValueData* pkvd)
 
 void CShake::Use(CBaseEntity* pActivator, CBaseEntity* pCaller, USE_TYPE useType, float value)
 {
-	UTIL_ScreenShake(pev->origin, Amplitude(), Frequency(), Duration(), Radius());
+	// bGroundOnly = false: map-getriebene Erschuetterungen (z. B. in Cutscenes, wo der Spieler
+	// fuer die Kamera eingefroren ist) sollen unabhaengig vom FL_ONGROUND-Zustand greifen.
+	UTIL_ScreenShake(pev->origin, Amplitude(), Frequency(), Duration(), Radius(), false);
 }
 
 

@@ -66,6 +66,7 @@ enum decal_e
 	DECAL_CG_YEL,
 	DECAL_CG_ORN,
 	DECAL_CG_RED,
+	DECAL_PULSE,
 };
 
 typedef struct

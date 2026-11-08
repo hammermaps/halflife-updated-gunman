@@ -777,6 +777,11 @@ void CBaseMonster::StartTask(Task_t* pTask)
 		else
 		{
 			// no coverwhatsoever.
+			// Diagnose: zeigt, ob ein Gegner, ein Knoten und welcher Radius vorliegen.
+			ALERT(at_aiconsole, "[cover] %s: kein Versteck (enemy=%s nodes=%d radius=%.0f z=%.0f)\n",
+				STRING(pev->classname),
+				m_hEnemy != NULL ? STRING(m_hEnemy->pev->classname) : "none",
+				WorldGraph.m_cNodes, CoverRadius(), pev->origin.z);
 			TaskFail();
 		}
 		break;
@@ -792,6 +797,8 @@ void CBaseMonster::StartTask(Task_t* pTask)
 		else
 		{
 			// no cover!
+			ALERT(at_aiconsole, "[cover2] %s: kein Versteck um origin (nodes=%d radius=%.0f z=%.0f)\n",
+				STRING(pev->classname), WorldGraph.m_cNodes, CoverRadius(), pev->origin.z);
 			TaskFail();
 		}
 	}

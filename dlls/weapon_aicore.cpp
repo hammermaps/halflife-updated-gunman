@@ -113,11 +113,14 @@ bool CAiCore::GetItemInfo(ItemInfo* p)
 	p->pszAmmo2 = nullptr;
 	p->iMaxAmmo2 = -1;
 	p->iMaxClip = WEAPON_NOCLIP;
-	p->iSlot = 5;
+	// Retail GetItemInfo @0x1007b360 (Vtable-Slot 61, per Vtable-Vergleich mit CShotgun
+	// gefunden): slot (+0x00) = 8, position 0, keine Munition, maxClip -1, id (+0x20) = 7,
+	// flags 0, weight (+0x28) = -1.
+	p->iSlot = 8;
 	p->iPosition = 0;
 	p->iFlags = 0;
 	p->iId = m_iId = WEAPON_AICORE;
-	p->iWeight = 0;
+	p->iWeight = -1;
 
 	return true;
 }

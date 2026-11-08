@@ -1124,8 +1124,10 @@ bool CBaseMonster::DeadTakeDamage(entvars_t* pevInflictor, entvars_t* pevAttacke
 
 #endif
 
-	// kill the corpse if enough damage was done to destroy the corpse and the damage is of a type that is allowed to destroy the corpse.
-	if ((bitsDamageType & DMG_GIB_CORPSE) != 0)
+	// Retail gunman.dll uses CRUSH | FALL | BLAST | SONIC (mask 0x261).
+	// The stock SDK mask adds CLUB; the other four bits match.
+	const int iRetailCorpseDamageMask = DMG_CRUSH | DMG_FALL | DMG_BLAST | DMG_SONIC;
+	if ((bitsDamageType & iRetailCorpseDamageMask) != 0)
 	{
 		if (pev->health <= flDamage)
 		{

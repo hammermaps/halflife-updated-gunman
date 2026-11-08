@@ -734,6 +734,17 @@ void UTIL_ScreenShake(const Vector& center, float amplitude, float frequency, fl
 			WRITE_SHORT(shake.frequency); // shake noise frequency
 
 			MESSAGE_END();
+
+			// Zusatzkanal: der Engine-eigene ScreenShake wird in Kamera-Ansichten
+			// (trigger_camera, SET_VIEW) nicht angewendet. Die Client-DLL haengt sich hier ein
+			// und legt die Erschuetterung selbst auf die Kamerasicht.
+			MESSAGE_BEGIN(MSG_ONE, gmsgCameraShake, NULL, pPlayer->edict());
+
+			WRITE_SHORT(shake.amplitude);
+			WRITE_SHORT(shake.duration);
+			WRITE_SHORT(shake.frequency);
+
+			MESSAGE_END();
 		}
 	}
 }
@@ -1310,6 +1321,10 @@ void UTIL_DecalTrace(TraceResult* pTrace, int decalNumber)
 	}
 	else
 		entityIndex = 0;
+
+	// Diagnose (nur -dev): zeigt, ob und womit ein Decal rausgeht.
+	ALERT(at_console, "[decal] n=%d idx=%d frac=%.3f ent=%d\n",
+		decalNumber, index, pTrace->flFraction, (int)entityIndex);
 
 	message = TE_DECAL;
 	if (entityIndex != 0)

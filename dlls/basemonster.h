@@ -242,7 +242,17 @@ public:
 			m_iTaskStatus = TASKSTATUS_COMPLETE;
 	}
 	void MovementComplete();
-	inline void TaskFail() { SetConditions(bits_COND_TASK_FAILED); }
+	inline void TaskFail()
+	{
+		// Diagnose (2026-11-07): welcher Task setzt TASK_FAILED wirklich?
+		// Nur mit -dev sichtbar (ALERT at_aiconsole).
+		Task_t* pDbgTask = GetTask();
+		ALERT(at_aiconsole, "[taskfail] %s sched=%s idx=%d task=%d\n",
+			STRING(pev->classname),
+			(m_pSchedule && m_pSchedule->pName) ? m_pSchedule->pName : "?",
+			m_iScheduleIndex, pDbgTask ? pDbgTask->iTask : -1);
+		SetConditions(bits_COND_TASK_FAILED);
+	}
 	inline void TaskBegin() { m_iTaskStatus = TASKSTATUS_RUNNING; }
 	bool TaskIsRunning();
 	inline bool TaskIsComplete() { return (m_iTaskStatus == TASKSTATUS_COMPLETE); }

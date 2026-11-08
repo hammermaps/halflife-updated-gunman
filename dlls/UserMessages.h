@@ -16,6 +16,8 @@
 #pragma once
 
 inline int gmsgShake = 0;
+inline int gmsgCameraShake = 0;
+inline int gmsgRockGib = 0;
 inline int gmsgFade = 0;
 inline int gmsgFlashlight = 0;
 inline int gmsgFlashBattery = 0;
@@ -60,5 +62,7 @@ inline int gmsgWeapons = 0;
 inline int gmsgTank = 0;
 inline int gmsgTankBody = 0;
 inline int gmsgTurretPos = 0;
+// Gunman-DML-Zielkreuz (Client-Element CHudDmlCross, s. cl_dll/dml_cross.cpp).
+inline int gmsgDmlCross = 0;
 
 void LinkUserMessages();

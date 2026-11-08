@@ -143,6 +143,29 @@ int LookupSequence(void* pmodel, const char* label)
 	return -1;
 }
 
+// Gunman scripted sequence labels can include an activity tag after '#', e.g.
+// "sit#lookleft". Retail CBaseMonster::SetActivity tests for that delimiter
+// before switching a scripted ACT_RESET entity to its model's "idle" sequence.
+bool SequenceHasScriptActivityTag(void* pmodel, int sequence)
+{
+	studiohdr_t* pstudiohdr = (studiohdr_t*)pmodel;
+	if (!pstudiohdr || sequence < 0 || sequence >= pstudiohdr->numseq)
+		return false;
+
+	mstudioseqdesc_t* pseqdesc = (mstudioseqdesc_t*)((byte*)pstudiohdr + pstudiohdr->seqindex);
+	return strchr(pseqdesc[sequence].label, '#') != nullptr;
+}
+
+int GetSequenceActivity(void* pmodel, int sequence)
+{
+	studiohdr_t* pstudiohdr = (studiohdr_t*)pmodel;
+	if (!pstudiohdr || sequence < 0 || sequence >= pstudiohdr->numseq)
+		return ACTIVITY_NOT_AVAILABLE;
+
+	mstudioseqdesc_t* pseqdesc = (mstudioseqdesc_t*)((byte*)pstudiohdr + pstudiohdr->seqindex);
+	return pseqdesc[sequence].activity;
+}
+
 
 bool IsSoundEvent(int eventNumber)
 {

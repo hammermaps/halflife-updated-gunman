@@ -41,32 +41,39 @@ extern void W_Precache();
 //
 // This must match the list in util.h
 //
+// Gunman-Decals: Die Namen muessen im Retail-decals.wad VORHANDEN sein - der
+// Engine-Lookup (`DECAL_INDEX` in CWorld::Precache) arbeitet namensbasiert, und
+// ein unbekannter Name liefert Index 0 (Lump 0 = "{AICORE1", ein grosses helles
+// Decal). Genau das erzeugte im Spiel durchgehend weisse, deckende Decals.
+// Retail (gunman.dll) fuehrt 79 Decal-Namen; 8 davon ({blood1..6,
+// {gargstomp, {mommablob) existieren in Gunmans decals.wad selbst nicht und
+// wurden auf vorhandene Gunman-Namen abgebildet (Kommentar je Zeile).
 DLL_DECALLIST gDecals[] = {
 	{"{shot1", 0},	   // DECAL_GUNSHOT1
 	{"{shot2", 0},	   // DECAL_GUNSHOT2
 	{"{shot3", 0},	   // DECAL_GUNSHOT3
 	{"{shot4", 0},	   // DECAL_GUNSHOT4
 	{"{shot5", 0},	   // DECAL_GUNSHOT5
-	{"{lambda01", 0},  // DECAL_LAMBDA1
-	{"{lambda02", 0},  // DECAL_LAMBDA2
-	{"{lambda03", 0},  // DECAL_LAMBDA3
-	{"{lambda04", 0},  // DECAL_LAMBDA4
-	{"{lambda05", 0},  // DECAL_LAMBDA5
-	{"{lambda06", 0},  // DECAL_LAMBDA6
+	{"{pulse", 0},	   // DECAL_LAMBDA1  (WAD kennt kein {lambda01)
+	{"{pulse2", 0},	   // DECAL_LAMBDA2
+	{"{charge", 0},	   // DECAL_LAMBDA3
+	{"{melt1", 0},	   // DECAL_LAMBDA4
+	{"{caushn1", 0},   // DECAL_LAMBDA5
+	{"{caushn2", 0},   // DECAL_LAMBDA6
 	{"{scorch1", 0},   // DECAL_SCORCH1
-	{"{scorch2", 0},   // DECAL_SCORCH2
-	{"{blood1", 0},	   // DECAL_BLOOD1
-	{"{blood2", 0},	   // DECAL_BLOOD2
-	{"{blood3", 0},	   // DECAL_BLOOD3
-	{"{blood4", 0},	   // DECAL_BLOOD4
-	{"{blood5", 0},	   // DECAL_BLOOD5
-	{"{blood6", 0},	   // DECAL_BLOOD6
-	{"{yblood1", 0},   // DECAL_YBLOOD1
-	{"{yblood2", 0},   // DECAL_YBLOOD2
-	{"{yblood3", 0},   // DECAL_YBLOOD3
-	{"{yblood4", 0},   // DECAL_YBLOOD4
-	{"{yblood5", 0},   // DECAL_YBLOOD5
-	{"{yblood6", 0},   // DECAL_YBLOOD6
+	{"{crater1", 0},   // DECAL_SCORCH2  (WAD kennt kein {scorch2)
+	{"{human1", 0},	   // DECAL_BLOOD1   (Retail nutzt {human1..6)
+	{"{human2", 0},	   // DECAL_BLOOD2
+	{"{human3", 0},	   // DECAL_BLOOD3
+	{"{human4", 0},	   // DECAL_BLOOD4
+	{"{human5", 0},	   // DECAL_BLOOD5
+	{"{human6", 0},	   // DECAL_BLOOD6
+	{"{xenome1", 0},   // DECAL_YBLOOD1
+	{"{xenome2", 0},   // DECAL_YBLOOD2
+	{"{xenome3", 0},   // DECAL_YBLOOD3
+	{"{xenome4", 0},   // DECAL_YBLOOD4
+	{"{xenome5", 0},   // DECAL_YBLOOD5
+	{"{xenome6", 0},   // DECAL_YBLOOD6
 	{"{break1", 0},	   // DECAL_GLASSBREAK1
 	{"{break2", 0},	   // DECAL_GLASSBREAK2
 	{"{break3", 0},	   // DECAL_GLASSBREAK3
@@ -75,19 +82,20 @@ DLL_DECALLIST gDecals[] = {
 	{"{bigshot3", 0},  // DECAL_BIGSHOT3
 	{"{bigshot4", 0},  // DECAL_BIGSHOT4
 	{"{bigshot5", 0},  // DECAL_BIGSHOT5
-	{"{spit1", 0},	   // DECAL_SPIT1
-	{"{spit2", 0},	   // DECAL_SPIT2
-	{"{bproof1", 0},   // DECAL_BPROOF1
-	{"{gargstomp", 0}, // DECAL_GARGSTOMP1,	// Gargantua stomp crack
-	{"{smscorch1", 0}, // DECAL_SMALLSCORCH1,	// Small scorch mark
-	{"{smscorch2", 0}, // DECAL_SMALLSCORCH2,	// Small scorch mark
-	{"{smscorch3", 0}, // DECAL_SMALLSCORCH3,	// Small scorch mark
-	{"{mommablob", 0}, // DECAL_MOMMABIRTH		// BM Birth spray
-	{"{mommablob", 0}, // DECAL_MOMMASPLAT		// BM Mortar spray?? need decal
+	{"{splarva", 0},   // DECAL_SPIT1    (WAD kennt kein {spit1)
+	{"{splatg1", 0},   // DECAL_SPIT2
+	{"{shield", 0},	   // DECAL_BPROOF1  (WAD kennt kein {bproof1)
+	{"{crater2", 0},   // DECAL_GARGSTOMP1 (WAD kennt kein {gargstomp)
+	{"{scorch1", 0},   // DECAL_SMALLSCORCH1
+	{"{maintsm", 0},   // DECAL_SMALLSCORCH2
+	{"{crater3", 0},   // DECAL_SMALLSCORCH3
+	{"{maggot", 0},	   // DECAL_MOMMABIRTH (WAD kennt kein {mommablob)
+	{"{maggot", 0},	   // DECAL_MOMMASPLAT
 	{"{cg_grn", 0},	   // DECAL_CG_GRN
 	{"{cg_yel", 0},	   // DECAL_CG_YEL
 	{"{cg_orn", 0},	   // DECAL_CG_ORN
 	{"{cg_red", 0},	   // DECAL_CG_RED
+	{"{pulse", 0},	   // DECAL_PULSE (Gunman decals.WAD)
 };
 
 /*

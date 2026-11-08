@@ -1858,6 +1858,68 @@ void CBasePlayer::UpdateStatusBar()
 
 void CBasePlayer::PreThink()
 {
+	// Statuszeile fuer die Analyse (abschaltbar mit `gm_info 0`): aktive Waffe,
+	// Magazin, Reservemunition, Ruestung und Waffen-Modifikation. Alle 2 s eine
+	// Zeile, damit Client- und Serverstand direkt vergleichbar sind.
+	{
+		static float s_flNextInfo = 0.0f;
+
+		if (gpGlobals->time >= s_flNextInfo)
+		{
+			s_flNextInfo = gpGlobals->time + 2.0f;
+
+			if (CVAR_GET_FLOAT("gm_info") > 0.0f)
+			{
+				CBasePlayerWeapon* pWeapon = (CBasePlayerWeapon*)m_pActiveItem;
+				const char* pszWeapon = pWeapon ? pWeapon->pszName() : "none";
+				const int iId = pWeapon ? pWeapon->m_iId : -1;
+				const int iClip = pWeapon ? pWeapon->m_iClip : -1;
+				int iReserve = -1;
+
+				if (pWeapon && pWeapon->m_iPrimaryAmmoType >= 0
+					&& pWeapon->m_iPrimaryAmmoType < MAX_AMMO_SLOTS)
+				{
+					iReserve = m_rgAmmo[pWeapon->m_iPrimaryAmmoType];
+				}
+
+				ALERT(at_console,
+					"[srv] waffe=%s id=%d mag=%d reserve=%d hp=%.0f armor=%.0f "
+					"cust=%d/%d bits=%d\n",
+					pszWeapon, iId, iClip, iReserve, pev->health, pev->armorvalue,
+					m_iCustomizeType, m_iCustomizeValue, m_WeaponBits);
+			}
+		}
+	}
+
+	// Positionsprotokoll fuer Teleport-Ziele (`dbg_poslog 1`): waehrend der
+	// Bewegung alle 0,5 s eine Zeile mit Koordinaten und Blickrichtung in
+	// dbg_events.log. Die Werte lassen sich direkt als `tp x y z` verwenden.
+	// Debug only (haengt wie alle DBG_LOG-Zeilen an dbg_eventlog).
+	{
+		static float s_flNextPos = 0.0f;
+		static Vector s_vecLastPos(0, 0, 0);
+
+		if (gpGlobals->time >= s_flNextPos)
+		{
+			s_flNextPos = gpGlobals->time + 0.5f;
+
+			if (CVAR_GET_FLOAT("dbg_poslog") > 0.0f)
+			{
+				const bool bMoved = (pev->origin - s_vecLastPos).Length() > 8.0f;
+				const bool bMoving = pev->velocity.Length2D() > 20.0f;
+
+				if (bMoved || bMoving)
+				{
+					DBG_LOG("[pos] map=%s %.1f %.1f %.1f yaw=%.1f pitch=%.1f speed=%.0f",
+						STRING(gpGlobals->mapname),
+						pev->origin.x, pev->origin.y, pev->origin.z,
+						pev->v_angle.y, pev->v_angle.x, pev->velocity.Length2D());
+					s_vecLastPos = pev->origin;
+				}
+			}
+		}
+	}
+
 	// Debug focus (dbg_focus): keep the view on the focused entity's center.
 	// fixangle applies the angles every frame, so mouse input does not move it.
 	if (m_hDbgFocus)
@@ -3041,8 +3103,14 @@ void CBasePlayer::Spawn()
 }
 
 
+// Event-Index fuer den Debug-Befehl `dbg_sniper` (Test der Sniper-Effektkette).
+int g_iDbgSniperEvent = 0;
+
 void CBasePlayer::Precache()
 {
+	// Sniper-Schuss-Event fuer `dbg_sniper` (Testhilfe, siehe client.cpp).
+	g_iDbgSniperEvent = PRECACHE_EVENT(1, "events/snipershot.sc");
+
 	// SOUNDS / MODELS ARE PRECACHED in ClientPrecache() (game specific)
 	// because they need to precache before any clients have connected
 
@@ -3627,7 +3695,10 @@ void CBasePlayer::CheatImpulseCommands(int iImpulse)
 
 	case 101:
 		gEvilImpulse101 = true;
-		GiveNamedItem("item_suit");
+		// Gunman kennt keinen HEV-Anzug: gunman.dll registriert item_suit
+		// nirgends (String fehlt), sondern item_armor. Das Stock-HL-Item
+		// erzeugte "late precache of models/w_suit.mdl" plus Ladefehler.
+		GiveNamedItem("item_armor");
 
 		// Gunman retail arsenal. The former SDK block spawned every stock
 		// Half-Life weapon, which is invalid now that those entities and their

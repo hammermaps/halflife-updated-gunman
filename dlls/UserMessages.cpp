@@ -59,6 +59,8 @@ void LinkUserMessages()
 	gmsgSetFOV = REG_USER_MSG("SetFOV", 1);
 	gmsgShowMenu = REG_USER_MSG("ShowMenu", -1);
 	gmsgShake = REG_USER_MSG("ScreenShake", sizeof(ScreenShake));
+	gmsgCameraShake = REG_USER_MSG("CameraShake", sizeof(ScreenShake));
+	gmsgRockGib = REG_USER_MSG("RockGib", 11); // 3 Koordinaten + Anzahl + Speed + Scale + Skin
 	gmsgFade = REG_USER_MSG("ScreenFade", sizeof(ScreenFade));
 	gmsgAmmoX = REG_USER_MSG("AmmoX", 2);
 	gmsgTempX = REG_USER_MSG("TempX", 2);
@@ -71,4 +73,5 @@ void LinkUserMessages()
 	gmsgTank = REG_USER_MSG("Tank", 2);
 	gmsgTankBody = REG_USER_MSG("TankBody", 2);
 	gmsgTurretPos = REG_USER_MSG("TurretPos", 2);
+	gmsgDmlCross = REG_USER_MSG("DmlCross", 1);
 }

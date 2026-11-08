@@ -1264,6 +1264,26 @@ bool CBaseMonster::PopEnemy()
 //=========================================================
 void CBaseMonster::SetActivity(Activity NewActivity)
 {
+	// Retail FUN_100295f0 handles scripted sequences whose current model label
+	// carries an activity tag (for example "sit#lookleft"). When a script asks
+	// for ACT_RESET, switch to the model's "idle" sequence and use that
+	// sequence's authored activity before taking the ordinary activity path.
+	if (m_MonsterState == MONSTERSTATE_SCRIPT && m_Activity == ACT_RESET &&
+		SequenceHasScriptActivityTag(GET_MODEL_PTR(ENT(pev)), pev->sequence))
+	{
+		const int iIdleSequence = LookupSequence("idle");
+		if (iIdleSequence != ACTIVITY_NOT_AVAILABLE)
+		{
+			const int iIdleActivity = GetSequenceActivity(GET_MODEL_PTR(ENT(pev)), iIdleSequence);
+			m_Activity = static_cast<Activity>(iIdleActivity);
+			m_IdealActivity = m_Activity;
+			pev->sequence = iIdleSequence;
+			ResetSequenceInfo();
+			SetYawSpeed();
+			return;
+		}
+	}
+
 	// Retail CBaseMonster::SetActivity (shared body @0x100295f0, disassembled
 	// 2026-11-01, findings/entities/setactivity_base_2026-11-01.md) compares the
 	// PREVIOUS m_Activity (this+0x130) with the new one. The former
@@ -1851,9 +1871,16 @@ bool CBaseMonster::FTriangulate(const Vector& vecStart, const Vector& vecEnd, fl
 	if (routeLength > 0.001f && routeLateral.Length2D() > 0.001f)
 	{
 		routeLateral = routeLateral.Normalize();
-		for (int depth = 0; depth < 3; ++depth)
+		// Also test apexes before the obstruction. A single apex must be
+		// reachable from the monster without crossing the blocker, then leave
+		// enough lateral clearance for the second leg to rejoin the route.
+		// Starting every candidate beyond flDist makes wide barriers impossible
+		// to skirt when the first leg already intersects their near face.
+		for (int depth = -2; depth < 3; ++depth)
 		{
 			float forwardOffset = flDist + hullWidth * (1.0f + depth * 1.5f);
+			if (forwardOffset < 0.0f)
+				forwardOffset = 0.0f;
 			const float maxForwardOffset = routeLength - hullWidth;
 			if (maxForwardOffset > 0.0f && forwardOffset > maxForwardOffset)
 				forwardOffset = maxForwardOffset;
@@ -2455,6 +2482,9 @@ bool CBaseMonster::FindCover(Vector vecThreat, Vector vecViewOffset, float flMin
 	vecLookersOffset = vecThreat + vecViewOffset; // calculate location of enemy's eyes
 
 	// we'll do a rough sample to find nodes that are relatively nearby
+	// Diagnose-Zaehler (2026-11-07): warum findet FindCover nichts?
+	int iDbgInRange = 0, iDbgBlocked = 0, iDbgPathOk = 0;
+
 	for (i = 0; i < WorldGraph.m_cNodes; i++)
 	{
 		int nodeNumber = (i + WorldGraph.m_iLastCoverSearch) % WorldGraph.m_cNodes;
@@ -2469,14 +2499,17 @@ bool CBaseMonster::FindCover(Vector vecThreat, Vector vecViewOffset, float flMin
 		// provide cover! Also make sure the node is within the mins/maxs of the search.
 		if (flDist >= flMinDist && flDist < flMaxDist)
 		{
+			++iDbgInRange;
 			UTIL_TraceLine(node.m_vecOrigin + vecViewOffset, vecLookersOffset, ignore_monsters, ignore_glass, ENT(pev), &tr);
 
 			// if this node will block the threat's line of sight to me...
 			if (tr.flFraction != 1.0)
 			{
+				++iDbgBlocked;
 				// ..and is also closer to me than the threat, or the same distance from myself and the threat the node is good.
 				if ((iMyNode == iThreatNode) || WorldGraph.PathLength(iMyNode, nodeNumber, iMyHullIndex, m_afCapability) <= WorldGraph.PathLength(iThreatNode, nodeNumber, iMyHullIndex, m_afCapability))
 				{
+					++iDbgPathOk;
 					if (FValidateCover(node.m_vecOrigin) && MoveToLocation(ACT_RUN, 0, node.m_vecOrigin))
 					{
 						/*
@@ -2494,13 +2527,16 @@ bool CBaseMonster::FindCover(Vector vecThreat, Vector vecViewOffset, float flMin
 						*/
 
 						return true;
-					}
-				}
-			}
-		}
-	}
-	return false;
-}
+						}
+						}
+						}
+						}
+						}
+						ALERT(at_aiconsole, "[cover3] %s: keine Deckung (nodes=%d inRange=%d losBlocked=%d pathOk=%d min=%.0f max=%.0f myNode=%d threatNode=%d)\n",
+						STRING(pev->classname), WorldGraph.m_cNodes, iDbgInRange, iDbgBlocked, iDbgPathOk,
+						flMinDist, flMaxDist, iMyNode, iThreatNode);
+						return false;
+						}
 
 
 //=========================================================

@@ -411,6 +411,7 @@ void CGameRules::RefreshSkillData()
 	// Shotgun buckshot
 	gSkillData.plrDmgBuckshot = GetSkillCvar("sk_plr_buckshot");
 	gSkillData.gunmanBuckshotDamage = GetSkillCvar("sk_buckshot");
+	gSkillData.gunman9mmARDamage = GetSkillCvar("sk_9mmAR_bullet");
 
 	// Crossbow
 	gSkillData.plrDmgCrossbowClient = GetSkillCvar("sk_plr_xbow_bolt_client");

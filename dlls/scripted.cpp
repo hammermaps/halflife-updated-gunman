@@ -27,6 +27,8 @@
 #include "saverestore.h"
 #include "schedule.h"
 #include "scripted.h"
+#include "studio.h"
+#include "effects.h"
 #include "defaultai.h"
 
 
@@ -1263,7 +1265,22 @@ public:
 	int Classify() override;
 	int ObjectCaps() override { return 0; }
 	void SetActivity(Activity NewActivity) override;
+private:
+	void CreateWreckGlows();
+	bool IsWreckShip() const;
+	EHANDLE m_hGlow;    // Glow an Attachment 2
+	EHANDLE m_hGlowMid; // Glow an Attachment 1
 };
+
+// Attachment-Anzahl des aktuellen Studiomodells (rustflyer.mdl hat 4,
+// rustflyercrashing/rustflyer_dent hatten 0, bis sie den Block bekamen).
+static int FurnitureAttachmentCount(edict_t* pEdict)
+{
+	studiohdr_t* pstudiohdr = (studiohdr_t*)GET_MODEL_PTR(pEdict);
+	if (pstudiohdr == nullptr || pstudiohdr->version != 10)
+		return 0;
+	return pstudiohdr->numattachments;
+}
 
 
 LINK_ENTITY_TO_CLASS(monster_furniture, CFurniture);
@@ -1274,6 +1291,17 @@ LINK_ENTITY_TO_CLASS(monster_furniture, CFurniture);
 //=========================================================
 void CFurniture::Die()
 {
+	// Wrack-Glows mit abraeumen (CBaseEntity::UpdateOnRemove ist in dieser
+	// SDK-Version nicht virtuell, deshalb hier der einzige saubere Haken).
+	CBaseEntity* pGlow = m_hGlow;
+	if (pGlow)
+		UTIL_Remove(pGlow);
+	m_hGlow = nullptr;
+	CBaseEntity* pGlowMid = m_hGlowMid;
+	if (pGlowMid)
+		UTIL_Remove(pGlowMid);
+	m_hGlowMid = nullptr;
+
 	SetThink(&CFurniture::SUB_Remove);
 	pev->nextthink = gpGlobals->time;
 }
@@ -1345,7 +1373,81 @@ void CFurniture::Spawn()
 	// (MonsterInit setzt selbst DAMAGE_AIM, das Original korrigiert das
 	// hier wieder).
 	pev->takedamage = DAMAGE_YES;
+
+	// Sonderfall Wrack-Schiffe in den Kamerasequenzen (cinematic4:
+	// rustflyercrashing.mdl an Entity "slideship", rustflyer_dent.mdl an drei
+	// Requisiten): dieselben Glow-Sprites wie CRustFlier::HuntThink.
+	CreateWreckGlows();
 }
+
+bool CFurniture::IsWreckShip() const
+{
+	if (FStringNull(pev->model))
+		return false;
+	const char* psz = STRING(pev->model);
+	return FStrEq(psz, "models/rustflyercrashing.mdl") || FStrEq(psz, "models/rustflyer_dent.mdl");
+}
+
+void CFurniture::CreateWreckGlows()
+{
+	if (!IsWreckShip() || m_hGlow != nullptr)
+		return;
+
+	// Precache hier, weil CFurniture keine eigene Precache() hat und Spawn()
+	// bereits direkt PrecacheModel aufruft.
+	PrecacheModel("sprites/flyball.spr");
+
+	const bool bAttach = FurnitureAttachmentCount(ENT(pev)) >= 3;
+
+	// Glow-Groesse pro Wrack-Modell. Die Modelle sind sehr unterschiedlich
+	// gross (Vertex-Ausdehnung: rustflyer 730, rustflyer_crashed 790,
+	// rustflyercrashing 445, rustflyer_dent 60 Einheiten - siehe
+	// findings/entities/rustflier_abgleich_2026-11-05.md); ein fester Wert
+	// passt deshalb nie zu allen Karten.
+	struct WreckGlowScale { const char* pszModel; float flMain; float flMid; };
+	static const WreckGlowScale s_Scales[] = {
+		{ "models/rustflyercrashing.mdl", 1.2f, 0.6f },
+		{ "models/rustflyer_dent.mdl", 0.175f, 0.0875f }, // -30 % (Nutzerbefund)
+	};
+	float flScaleMain = 1.0f, flScaleMid = 0.5f;
+	const char* pszModelName = STRING(pev->model);
+	for (const WreckGlowScale& entry : s_Scales)
+	{
+		if (FStrEq(pszModelName, entry.pszModel))
+		{
+			flScaleMain = entry.flMain;
+			flScaleMid = entry.flMid;
+			break;
+		}
+	}
+
+	CSprite* pGlow = CSprite::SpriteCreate("sprites/flyball.spr", pev->origin, true);
+	if (pGlow)
+	{
+		pGlow->SetTransparency(kRenderTransAdd, 255, 255, 255, 255, kRenderFxNone);
+		if (bAttach)
+			pGlow->SetAttachment(edict(), 2);
+		// Wrack-Modelle sind deutlich kleiner als der intakte Flieger; mit
+		// Flieger-Skalierung war die Kugel >90 % zu gross (Nutzerbefund).
+		pGlow->SetScale(flScaleMain);
+		pGlow->pev->framerate = 9.0f;
+		pGlow->pev->spawnflags = 0;
+		m_hGlow = pGlow;
+	}
+
+	CSprite* pGlowMid = CSprite::SpriteCreate("sprites/flyball.spr", pev->origin, true);
+	if (pGlowMid)
+	{
+		pGlowMid->SetTransparency(kRenderTransAdd, 255, 255, 255, 255, kRenderFxNone);
+		if (bAttach)
+			pGlowMid->SetAttachment(edict(), 1);
+		pGlowMid->SetScale(flScaleMid);
+		pGlowMid->pev->framerate = 9.0f;
+		pGlowMid->pev->spawnflags = 0;
+		m_hGlowMid = pGlowMid;
+	}
+}
+
 
 //=========================================================
 // ID's Furniture as neutral (noone will attack it)
