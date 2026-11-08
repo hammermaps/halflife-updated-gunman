@@ -200,7 +200,8 @@ void CBaseBird::SteerFlight()
 void CBaseBird::FlyTouch(CBaseEntity* pOther)
 {
 	// Retail CBaseBird::FlyTouch (0x10068d00), shared with decore_eagle.
-	if (pOther != nullptr && pOther->pev->movetype == MOVETYPE_FLY)
+	// Retail checks pev->solid == SOLID_BSP (pev offset +0x10c, value 4).
+	if (pOther != nullptr && pOther->pev->solid == SOLID_BSP)
 	{
 		TraceResult tr = UTIL_GetGlobalTrace();
 		pev->velocity = pev->velocity + tr.vecPlaneNormal * (pev->velocity.Length() + 200.0f);
@@ -218,7 +219,7 @@ void CBaseBird::Killed(entvars_t* pevAttacker, int iGib)
 	UTIL_SetSize(pev, Vector(-16, -16, 0), Vector(16, 16, 16));
 	pev->nextthink = gpGlobals->time + 0.1f;
 	pev->health = 0;
-	pev->max_health = 0;
+	pev->takedamage = DAMAGE_NO;
 	pev->solid = SOLID_TRIGGER;
 }
 
@@ -241,12 +242,14 @@ void CBaseBird::DyingThink()
 void CBaseBird::CrashTouch(CBaseEntity* pOther)
 {
 	SetSequenceByName("dead");
-	if (pOther && pOther->pev->movetype == MOVETYPE_FLY)
+	// Retail CBaseBird::CrashTouch @ 0x10068de0 checks SOLID_BSP, clears
+	// angles and leaves velocity untouched when the bird hits world geometry.
+	if (pOther && pOther->pev->solid == SOLID_BSP)
 	{
 		SetTouch(NULL);
 		SetThink(NULL);
 		pev->nextthink = gpGlobals->time;
-		pev->velocity = g_vecZero;
+		pev->angles = g_vecZero;
 		pev->movetype = MOVETYPE_NONE;
 		pev->solid = SOLID_TRIGGER;
 		UTIL_SetOrigin(pev, pev->origin);
