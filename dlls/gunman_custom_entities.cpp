@@ -2336,8 +2336,11 @@ bool CHologramDamage::KeyValue(KeyValueData* pkvd)
 
 bool CHologramDamage::TakeDamage(entvars_t* pevInflictor, entvars_t* pevAttacker, float flDamage, int bitsDamageType)
 {
+	// Retail compares the remaining float health against the overlapping
+	// 64-bit constant at 0x100e9384 (2^-15), not against exact zero.
+	static constexpr double kHealthEpsilon = 1.0 / 32768.0;
 	pev->health -= flDamage;
-	if (pev->health <= 0)
+	if (pev->health <= kHealthEpsilon)
 	{
 		// Retail restores one health point and starts its dissolve/reload
 		// sequence. Its target is an ordinary map target rather than a
@@ -2362,11 +2365,12 @@ bool CHologramDamage::TakeDamage(entvars_t* pevInflictor, entvars_t* pevAttacker
 	// damage cannot repeatedly fire map targets.
 	m_flNextResult = gpGlobals->time + 3.0;
 
-	int iExpectedDamageType = m_iDamageType;
-	if (iExpectedDamageType == 3)
-		iExpectedDamageType = 4; // Retail's sniper target uses the bullet fallback.
+	// Retail rewrites damagetype 3 to 4 in the entity field before comparing
+	// the hit. Keep the normalized value in the saved state as well.
+	if (m_iDamageType == 3)
+		m_iDamageType = 4;
 
-	if (DamageIndexForHit(pevInflictor, bitsDamageType) == iExpectedDamageType)
+	if (DamageIndexForHit(pevInflictor, bitsDamageType) == m_iDamageType)
 		SUB_UseTargets(this, USE_ON, 0);
 	else
 		FireFailureTarget();
@@ -2489,6 +2493,8 @@ void CDecore::DecoreTouch(CBaseEntity* pOther)
 // Retail mushroom burst (0x100cbf00 / 0x100cc1b0): a TE_SPRITE_SPRAY of the
 // gibmushroom sprite is sent to everyone in the PVS (SVC_TEMPENTITY, count 16,
 // speed 40, noise 100, velocity (0,0,1)).  Only used by the two mushrooms.
+static int g_iMushroomGibSprite = 0; // Retail DAT_10142d08, assigned by both Precache methods.
+
 static void MushroomBurst(CBaseEntity* pEnt)
 {
 	MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, pEnt->pev->origin);
@@ -2499,7 +2505,7 @@ static void MushroomBurst(CBaseEntity* pEnt)
 	WRITE_COORD(0);
 	WRITE_COORD(0);
 	WRITE_COORD(1.0f);
-	WRITE_SHORT(MODEL_INDEX("sprites/gibmushroom.spr"));
+	WRITE_SHORT(g_iMushroomGibSprite);
 	WRITE_BYTE(16);
 	WRITE_BYTE(40);
 	WRITE_BYTE(100);
@@ -3301,13 +3307,17 @@ class CDecoreLabstuff : public CDecore
 public:
 	void Spawn() override;
 	void Precache() override;
+
+private:
+	int m_iGibModelIndex = 0;
 };
 LINK_ENTITY_TO_CLASS(decore_labstuff, CDecoreLabstuff);
 
 void CDecoreLabstuff::Precache()
 {
 	PrecacheModel("models/labstuff.mdl");
-	PrecacheModel("models/decoregibs.mdl");
+	// Retail stores this second model index in its +0x28c field.
+	m_iGibModelIndex = PrecacheModel("models/decoregibs.mdl");
 }
 
 void CDecoreLabstuff::Spawn()
@@ -3336,7 +3346,7 @@ void CDecoreMushroom::Precache()
 	PrecacheSound("mushroom/mushroom_hit2.wav");
 	PrecacheSound("mushroom/mushroom_hit3.wav");
 	PrecacheSound("mushroom/mushroom_pop1.wav");
-	PrecacheModel("sprites/gibmushroom.spr");
+	g_iMushroomGibSprite = PRECACHE_MODEL("sprites/gibmushroom.spr");
 }
 
 void CDecoreMushroom::Spawn()
@@ -3370,9 +3380,9 @@ void CDecoreMushroom2::Precache()
 {
 	PrecacheModel("models/mushroom2.mdl");
 	PrecacheSound("mushroom/mushroom_hit1.wav");
-	PrecacheSound("mushroom/mushroom_hit2.wav");
 	PrecacheSound("mushroom/mushroom_pop2.wav");
-	PrecacheModel("sprites/gibmushroom.spr");
+	PrecacheSound("mushroom/mushroom_hit2.wav");
+	g_iMushroomGibSprite = PRECACHE_MODEL("sprites/gibmushroom.spr");
 }
 
 void CDecoreMushroom2::Spawn()
@@ -3577,8 +3587,9 @@ void CDecoreSittingTubeMortar::Precache()
 // Retail 0x100cd8d0 (player touch): the explosion sound on CHAN_BODY, then the
 // retail TE_EXPLOSION (scale 10, framerate 15, flags 6) of the tubeguts sprite
 // to everyone in the PAS, then the entity is removed.
-// Retail gib loop: see the comment in PlayerTouch. The gib start offset that
-// retail derives from the decore's +0x210 vector is an assumption (omitted).
+// Retail gib loop: see the comment in PlayerTouch. Retail +0x210 is
+// CBaseMonster::m_vecEnemyLKP and contributes a 25-unit offset toward that
+// last known position.
 void TubeRocketSetLifetime(CBaseEntity* pEnt, float flSeconds);
 
 void CDecoreSittingTubeMortar::PlayerTouch(CBaseEntity* pOther)
@@ -3590,9 +3601,9 @@ void CDecoreSittingTubeMortar::PlayerTouch(CBaseEntity* pOther)
 	// Velocity: 300 * v_forward of that direction. Origin: decore origin + 16 in Z,
 	// then RANDOM(-20,20) in X/Y and RANDOM(32,64) in Z. Movetype bounce, think
 	// after 0.3 s, lifetime RANDOM(0.3,0.6) s.
-	// Documented assumption: retail also adds a 25-unit offset along a direction
-	// built from the decore's vector at +0x210; that source is not resolved here,
-	// so the gibs start without it.
+	// Retail +0x210 is m_vecEnemyLKP. Each gib starts 25 units toward the last
+	// known enemy position (VectorNormalize(m_vecEnemyLKP - pev->origin) * 25).
+	const Vector vecEnemyDirection = (m_vecEnemyLKP - pev->origin).Normalize();
 	const int gibCount = RANDOM_LONG(6, 12);
 	for (int i = 0; i < gibCount; ++i)
 	{
@@ -3601,7 +3612,7 @@ void CDecoreSittingTubeMortar::PlayerTouch(CBaseEntity* pOther)
 		Vector angles = UTIL_VecToAngles(dir);
 		UTIL_MakeVectors(angles);
 
-		Vector origin = pev->origin + Vector(0, 0, 16);
+		Vector origin = pev->origin + vecEnemyDirection * 25.0f + Vector(0, 0, 16);
 		origin.x += RANDOM_FLOAT(-20, 20);
 		origin.y += RANDOM_FLOAT(-20, 20);
 		origin.z += RANDOM_FLOAT(32, 64);

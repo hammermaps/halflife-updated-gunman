@@ -35,6 +35,7 @@
 #include "effects.h"
 #include "explode.h"
 #include "shake.h"
+#include "soundent.h"
 #include "UserMessages.h"
 #include "dbg_log.h"
 
@@ -218,6 +219,7 @@ public:
 	float m_flNextRocketFire = 0;
 	float m_flNextJumpCheck = 0;
 	float m_flNextAutoCannonFire = 0;
+	unsigned short m_usTankMG = 0; // Retail: events/tankmguns.sc
 	float m_flNextBodyHud = 0;
 	int m_iLastTurretHudFrame = -1;
 };
@@ -266,6 +268,9 @@ bool CVehicleTank::KeyValue(KeyValueData* pkvd)
 void CVehicleTank::Precache()
 {
 	PrecacheModel("models/tank.mdl");
+
+	// Retail 0x1009f1f0 (Chassis-MG): spielt events/tankmguns.sc (Flags 2).
+	m_usTankMG = PRECACHE_EVENT(1, "events/tankmguns.sc");
 	PrecacheModel("models/rocket.mdl");
 	PrecacheModel("models/artillary.mdl");
 	PrecacheModel("models/dmlrocket.mdl");
@@ -354,6 +359,9 @@ void CVehicleTank::BuildVehicleThink()
 
 void CVehicleTank::Use(CBaseEntity* pActivator, CBaseEntity* pCaller, USE_TYPE useType, float value)
 {
+	ALERT(at_aiconsole, "[tank] use activator=%s type=%d driver=%d\n",
+		pActivator ? STRING(pActivator->pev->classname) : "none", (int)useType, m_pDriver != NULL);
+
 	if (!pActivator || !pActivator->IsPlayer())
 		return;
 
@@ -700,6 +708,7 @@ void CVehicleTank::SendTankBodyState(int state)
 
 void CVehicleTank::FireChassisWeapon()
 {
+	ALERT(at_aiconsole, "[tank] fire chassis\n");
 	if (m_flNextChassisFire > gpGlobals->time)
 		return;
 	m_flNextChassisFire = gpGlobals->time + 0.15;
@@ -729,6 +738,14 @@ void CVehicleTank::FireChassisWeapon()
 	// initialisiertem pev->dmg keinen Schaden an. Reproduziert hier durch
 	// ein echtes vehicle_tank_shell mit explizit auf 0 gesetztem pev->dmg.
 	UTIL_MakeVectors(m_pBarrel->pev->angles);
+
+	// Retail 0x1009f1f0: PlaybackEvent mit Flags 2 am Muendungspunkt und in
+	// Rohrachse, direkt vor dem Schuss; danach Kampfschall
+	// (FUN_10051b60 = InsertSound, Radius 2048, 0.1 s).
+	PLAYBACK_EVENT_FULL(2, edict(), m_usTankMG, 0.0f,
+		m_pBarrel->pev->origin, m_pBarrel->pev->angles, 0.0f, 0.0f, 0, 0, 0, 0);
+	CSoundEnt::InsertSound(bits_SOUND_COMBAT, m_pBarrel->pev->origin, 2048, 0.1f);
+
 	CBaseEntity* pRound = CBaseEntity::Create("vehicle_tank_shell", m_pBarrel->pev->origin, m_pBarrel->pev->angles, edict());
 	if (pRound)
 	{
@@ -1212,6 +1229,7 @@ void CVehicleTankBSP::Use(CBaseEntity* pActivator, CBaseEntity* pCaller, USE_TYP
 		auto pTank = static_cast<CVehicleTank*>(pEnt);
 		if (pTank->m_iVehicleID == m_iVehicleID)
 		{
+			ALERT(at_aiconsole, "[tank] bsp use id=%d\n", m_iVehicleID);
 			pTank->Use(pActivator, pCaller, useType, value);
 			return;
 		}

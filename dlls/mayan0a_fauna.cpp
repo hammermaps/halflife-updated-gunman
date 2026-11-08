@@ -49,18 +49,19 @@
 //     @0x10070000 -> shared init @0x10070200, CButterfly::IdleThink
 //     @0x100703b0, ::Start @0x10070410, ::FormFlock @0x10070470,
 //     ::FlockLeaderThink @0x10070dd0, ::FlockFollowerThink
-//     @0x100712e0, ::FallHack @0x10070140 (architecture identical to
-//     CDragonfly's IdleThink/Start/FlockLeaderThink/FallHack pattern -
-//     same simplification applies, see CDragonfly's entry above).
+//     @0x100712e0, ::FallHack @0x10070140. Leader/follower steering and
+//     formation and the fixed 0.1-second animation interval are ported;
+//     world-only trace filter is verified; the retail helper has one further
+//     unresolved trace endpoint. Direct-spawn FormFlock and runtime
+//     FL_ONGROUND correction remain open.
 //
 // - CPteradon and CEagle use the shared CBaseBird spawn, hunt-flight,
 //   damage and touch implementation in basebird.cpp. The port's remaining
 //   approximations and unverified retail A/B behavior are documented in
 //   findings/entities/cbasebird_huntthink_2026-10-31.md.
-// - CButterfly: same simplification as CDragonfly (wandering flight
-//   instead of true boids flock steering) - CButterflyFlock's own
-//   spawn-loop-and-scatter behavior IS reproduced faithfully, since
-//   that part is simple and fully decompiled.
+// - CButterfly: leader/follower steering and cohesion have been ported;
+//   exact trace semantics and retail frame-advance behavior remain open.
+//   CButterflyFlock's spawn-loop-and-scatter behavior is also reproduced.
 //
 // Simplified relative to the original (documented per-case):
 // - CCricket: the decompiled SquashTouch (stomp-to-death when a
@@ -1046,8 +1047,8 @@ LINK_ENTITY_TO_CLASS(decore_pteradon, CPteradon);
 
 //=========================================================
 // monster_butterfly - CButterfly. Ambient, harmless, non-damageable
-// flying fauna, spawned in bulk by decore_butterflyflock below. Follower
-// steering is ported; leader obstacle/formation steering remains open.
+// flying fauna, spawned in bulk by decore_butterflyflock below. Leader and
+// follower steering/cohesion are ported; exact trace semantics remain open.
 //=========================================================
 class CButterfly : public CBaseMonster
 {
@@ -1104,6 +1105,10 @@ void CButterfly::Spawn()
 	pev->movetype = MOVETYPE_FLY;
 	pev->takedamage = DAMAGE_NO;
 	pev->health = 1;
+	// Retail CButterfly::Spawn @ 0x10070200 explicitly writes health=1,
+	// framerate=0 and deadflag=DEAD_NO (entvars offsets +0x160/+0x16c/+0x170).
+	pev->framerate = 0;
+	pev->deadflag = DEAD_NO;
 	// Retail Spawn helper writes this+0x124 = 0.2; that member is the
 	// CBaseMonster field of view consumed by FInViewCone during flocking.
 	m_flFieldOfView = 0.2f;
@@ -1186,7 +1191,10 @@ void CButterfly::UpdateFlightAnimation()
 		pev->framerate = 1.9f;
 	pev->avelocity.x = -(pev->framerate * 5.0f + pev->angles.x);
 	pev->avelocity.y = -(pev->avelocity.z + pev->angles.z);
-	float flInterval = StudioFrameAdvance();
+	// Retail FUN_10070300 calls FUN_10001a30 with a fixed 0.1-second
+	// interval; keep frame and animation-event timing independent of scheduler
+	// jitter in these 0.1-second flock Think callbacks.
+	float flInterval = StudioFrameAdvance(0.1f);
 	DispatchAnimEvents(flInterval);
 }
 
@@ -1263,6 +1271,9 @@ void CButterfly::FlockFollowerThink()
 
 bool CButterfly::FlockPathBlocked()
 {
+	// Retail FUN_10070970 uses three world-only TraceLine calls and skips this edict.
+	// Their center, right, and left corridor segments match these probes; see
+	// findings/entities/butterfly_timing_retail_batch_2026-09-11.md.
 	if (gpGlobals->time < m_flAvoidanceUntil)
 	{
 		m_flLastBlockedTime = gpGlobals->time;
@@ -1362,7 +1373,7 @@ void CButterfly::FlockLeaderThink()
 	UTIL_TraceLine(pev->origin, pev->origin - gpGlobals->v_up * 16.0f, ignore_monsters, ENT(pev), &trDown);
 	if (trDown.flFraction != 1.0f && pev->velocity.z < 0.0f)
 		pev->velocity.z = 0.0f;
-	if (FBitSet(pev->flags, 0x200))
+	if (FBitSet(pev->flags, FL_ONGROUND))
 	{
 		UTIL_SetOrigin(pev, pev->origin + Vector(0, 0, 1));
 		pev->velocity.z = 0.0f;

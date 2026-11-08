@@ -114,6 +114,10 @@ public:
 	float m_flMaxSpin; // Max time to spin the barrel w/o a target
 	bool m_iSpin;
 
+	// Retail: +0x2f4 = events/turretbullets.sc (Precache 0x1001a9b0,
+	// Wiedergabe 0x1001c731 mit flags 2, origin/angles als Vektoren, Rest 0).
+	unsigned short m_usBullets = 0;
+
 	CSprite* m_pEyeGlow;
 	int m_eyeBrightness;
 
@@ -293,6 +297,8 @@ void CBaseTurret::Precache()
 	PrecacheSound("turret/tu_spindown.wav");
 	PrecacheSound("turret/tu_search.wav");
 	PrecacheSound("turret/tu_alert.wav");
+
+	m_usBullets = PrecacheEvent(1, "events/turretbullets.sc");
 }
 
 #define TURRET_GLOW_SPRITE "sprites/flare3.spr"
@@ -625,6 +631,8 @@ void CBaseTurret::ActiveThink()
 
 void CTurret::Shoot(Vector& vecSrc, Vector& vecDirToEnemy)
 {
+	// Retail 0x1001c731: Event vor den Kugeln, flags 2, origin/angles = Vektoren.
+	PLAYBACK_EVENT_FULL(2, edict(), m_usBullets, 0.0f, vecSrc, vecDirToEnemy, 0, 0, 0, 0, 0, 0);
 	FireBullets(1, vecSrc, vecDirToEnemy, TURRET_SPREAD, TURRET_SHOOT_RANGE, BULLET_MONSTER_12MM, 1);
 	// Gunman-Abweichung (RE-bestaetigt): kein EMIT_SOUND im Retail-Decompilat trotz
 	// weiterhin precachtem "turret/tu_fire1.wav" - monster_turret feuert lautlos.
@@ -634,6 +642,7 @@ void CTurret::Shoot(Vector& vecSrc, Vector& vecDirToEnemy)
 
 void CMiniTurret::Shoot(Vector& vecSrc, Vector& vecDirToEnemy)
 {
+	PLAYBACK_EVENT_FULL(2, edict(), m_usBullets, 0.0f, vecSrc, vecDirToEnemy, 0, 0, 0, 0, 0, 0);
 	FireBullets(1, vecSrc, vecDirToEnemy, TURRET_SPREAD, TURRET_SHOOT_RANGE, BULLET_MONSTER_9MM, 1);
 
 	// Gunman-Abweichung (RE-bestaetigt): nur 2 statt 3 Zufallssounds erreichbar,
@@ -1165,6 +1174,9 @@ public:
 	bool TakeDamage(entvars_t* pevInflictor, entvars_t* pevAttacker, float flDamage, int bitsDamageType) override;
 	void EXPORT SentryTouch(CBaseEntity* pOther);
 	void EXPORT SentryDeath();
+
+	// Retail: +0x2ec = events/monstersentry.sc (nur CSentry).
+	unsigned short m_usSentryFire = 0;
 };
 
 LINK_ENTITY_TO_CLASS(monster_sentry, CSentry);
@@ -1175,6 +1187,11 @@ void CSentry::Precache()
 	PrecacheModel("models/sentry.mdl");
 	// Gunman-Abweichung (RE-bestaetigt): eigener Sentry-Feuersound, siehe CSentry::Shoot.
 	PrecacheSound("sentry/sentry_fire.wav");
+
+	// Retail: +0x2ec = events/monstersentry.sc (Precache 0x1005d7a6 zusammen mit
+	// sentry_die/deploy.wav, Wiedergabe 0x1005d914: flags 2, origin/angles als
+	// Vektoren, bparam1 = 1).
+	m_usSentryFire = PrecacheEvent(1, "events/monstersentry.sc");
 }
 
 void CSentry::Spawn()
@@ -1200,6 +1217,8 @@ void CSentry::Spawn()
 
 void CSentry::Shoot(Vector& vecSrc, Vector& vecDirToEnemy)
 {
+	// Retail 0x1005d914: flags 2, origin/angles = Vektoren, bparam1 = 1.
+	PLAYBACK_EVENT_FULL(2, edict(), m_usSentryFire, 0.0f, vecSrc, vecDirToEnemy, 0, 0, 0, 0, 1, 0);
 	FireBullets(1, vecSrc, vecDirToEnemy, TURRET_SPREAD, TURRET_SHOOT_RANGE, BULLET_MONSTER_MP5, 1);
 
 	// Gunman-Abweichung (RE-bestaetigt): eigener, im SDK nicht vorhandener

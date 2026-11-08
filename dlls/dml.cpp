@@ -182,6 +182,7 @@ public:
 	void Spawn() override;
 	void Precache() override;
 	void EXPORT RocketThink();
+	void EmitRocketSmoke();
 	void EXPORT TrackTarget();
 	void EXPORT RocketTouch(CBaseEntity* pOther);
 	void EXPORT TumbleThink();
@@ -219,6 +220,12 @@ private:
 	int m_iTrailSprite = 0;
 };
 LINK_ENTITY_TO_CLASS(dmlRocket, CDmlRocket);
+
+// Retail-Event fuer den Flugschweif: "events/RocketSmoke.sc" (Client-Handler
+// EV_RocketSmoke -> Effektlisteneintrag Typ 5, Sprite sprites/firebeam.spr).
+// Der Index wird in Precache() gesetzt; als Dateistatik, damit er einen
+// Save/Restore-Zyklus ueberlebt (Event-Indizes sind pro Map-Load stabil).
+static unsigned short g_usRocketSmokeEvent = 0;
 
 TYPEDESCRIPTION CDmlRocket::m_SaveData[] =
 	{
@@ -288,6 +295,7 @@ void CDmlRocket::Precache()
 	m_iTrailSprite = PrecacheModel("sprites/smoke.spr");
 	PrecacheModel("sprites/muz1.spr");
 	PrecacheModel("sprites/firebeam.spr");
+	g_usRocketSmokeEvent = (unsigned short)PrecacheEvent(1, "events/RocketSmoke.sc");
 	PrecacheModel("sprites/part1.spr");
 	PrecacheModel("sprites/part2.spr");
 	PrecacheSound("weapons/rocket1.wav");
@@ -301,9 +309,30 @@ void CDmlRocket::Precache()
 	UTIL_PrecacheOther("dml_cluster");
 }
 
+// Retail spielt fuer den Flugschweif "events/RocketSmoke.sc"; der Client haengt
+// daraus einen Typ-5-Eintrag an (Ringband aus sprites/firebeam.spr, Laenge
+// 1 + Alter*2.4*30 + 7, Alpha 255 - Alter*15*30, Handler 0x1000a660).
+// Belegstand 2026-11-08: Retail-`CDmlRocket::Precache` (0x100898c0) holt den
+// Index nach +0x304 und precacht sprites/firebeam.spr; im Disassembly liest
+// 0x100b129d `WORD [esi+0x304]` in einer PLAYBACK_EVENT-Pushfolge. Nicht
+// belegt: ob diese Aufrufstelle zur Klasse CDmlRocket gehoert (Ghidra hat dort
+// keine Funktionsgrenze, Bereich 0x100b0f50..0x100b16f0) und in welcher
+// Denkrunde sie laeuft. Die Tank-Raketen nutzen laut 0x100a1ec0/0x100a54b0
+// dagegen ein wachsendes CSprite, nicht dieses Event. Abweichung: hier wird das
+// Event in jeder 0,1-s-Denkrunde gespielt (Rate damit ungeprueft).
+void CDmlRocket::EmitRocketSmoke()
+{
+	if (g_usRocketSmokeEvent == 0)
+		return;
+
+	PLAYBACK_EVENT_FULL(FEV_RELIABLE, ENT(pev), g_usRocketSmokeEvent, 0.0,
+		(float*)&pev->origin, (float*)&pev->angles, 0.0, 0.0, 0, 0, 0, 0);
+}
+
 void CDmlRocket::RocketThink()
 {
 	pev->nextthink = gpGlobals->time + 0.1;
+	EmitRocketSmoke();
 
 	if (m_bSpiralFlightpath && m_iSide != 0)
 	{
@@ -331,6 +360,7 @@ void CDmlRocket::RocketThink()
 void CDmlRocket::TrackTarget()
 {
 	pev->nextthink = gpGlobals->time + 0.1;
+	EmitRocketSmoke();
 
 	if (!m_hEnemy || !m_hEnemy->IsAlive())
 	{
@@ -460,11 +490,26 @@ public:
 
 	void PrimaryAttack() override;
 	void SecondaryAttack() override;
+	void Reload() override;
+	void ApplyCustomSetting(char option, int value) override;
 	void WeaponIdle() override;
 	bool ShouldWeaponIdle() override { return true; }
 
 private:
 	CBaseEntity* FindLockOnTarget();
+
+	// Retail sendet dem Client die "DmlCross"-Usermessage, sobald sich der
+	// Ziel-Lock aendert (Client-Element CHudDmlCross, cl_dll/dml_cross.cpp).
+	void SendDmlCrossState(bool locked);
+	void UpdateLockOnState();
+
+	bool m_bLockOnActive = false;
+	float m_flNextLockCheck = 0.0f;
+
+	// Auswahl aus dem Custom-Menue (cust_-Kommando). -1 = noch nicht gewaehlt,
+	// dann gelten weiter die Inventar-Flags aus PrimaryAttack.
+	int m_iSelPayload = -1;
+	int m_iSelDetonate = -1;
 };
 LINK_ENTITY_TO_CLASS(weapon_dml, CDml);
 LINK_ENTITY_TO_CLASS(weapon_mule, CDml);
@@ -502,12 +547,12 @@ bool CDml::GetItemInfo(ItemInfo* p)
 	p->iMaxAmmo1 = DML_MAX_CARRY;
 	p->pszAmmo2 = nullptr;
 	p->iMaxAmmo2 = -1;
-	p->iMaxClip = 6;
-	p->iSlot = 5;
-	p->iPosition = 2;
+	p->iMaxClip = 2;   // Retail: ItemInfo +0x1c = 2.
+	p->iSlot = 5;      // Retail: ItemInfo +0x00 = 5.
+	p->iPosition = 0;  // Retail: ItemInfo +0x04 = 0.
 	p->iId = m_iId = WEAPON_DML;
-	p->iFlags = 5;
-	p->iWeight = 10;
+	p->iFlags = 0;   // Retail: ItemInfo +0x24 = 0.
+	p->iWeight = -1; // Retail: ItemInfo +0x28 = -1.
 
 	return true;
 }
@@ -529,6 +574,38 @@ bool CDml::Deploy()
 void CDml::Holster()
 {
 	m_pPlayer->m_flNextAttack = UTIL_WeaponTimeBase() + 0.5;
+
+	// Beim Wegstecken verliert der Client die Zielmarkierung.
+	if (m_bLockOnActive)
+	{
+		m_bLockOnActive = false;
+		SendDmlCrossState(false);
+	}
+}
+
+// Client-Element CHudDmlCross: Modus 1 = Ziel erfasst, 0 = kein Ziel
+// (cl_dll/dml_cross.cpp; Retail sendet die Nachricht bei Lock-Wechsel).
+void CDml::SendDmlCrossState(bool locked)
+{
+	if (!m_pPlayer)
+		return;
+
+	MESSAGE_BEGIN(MSG_ONE, gmsgDmlCross, NULL, m_pPlayer->pev);
+	WRITE_BYTE(locked ? 1 : 0);
+	MESSAGE_END();
+}
+
+void CDml::UpdateLockOnState()
+{
+	if (!m_pPlayer)
+		return;
+
+	const bool locked = FindLockOnTarget() != nullptr;
+	if (locked == m_bLockOnActive)
+		return;
+
+	m_bLockOnActive = locked;
+	SendDmlCrossState(locked);
 }
 
 // Reproduces the intent of FUN_10083b60: a crosshair traceline check
@@ -574,9 +651,14 @@ void CDml::PrimaryAttack()
 	pRocket->m_bGuided = pTarget != nullptr;
 	// Read the DML customization items' persistent flags (see
 	// dml_customization.cpp) - confirmed mechanism, see file header.
-	if (m_pPlayer->HasPlayerItemFromID(WEAPON_CUST_DMLPAYLOAD))
+	if (m_iSelPayload >= 0)
+		pRocket->m_iPayloadType = m_iSelPayload;
+	else if (m_pPlayer->HasPlayerItemFromID(WEAPON_CUST_DMLPAYLOAD))
 		pRocket->m_iPayloadType = DML_PAYLOAD_CLUSTER;
-	if (m_pPlayer->HasPlayerItemFromID(WEAPON_CUST_DMLDETONATE) && pTarget)
+
+	if (m_iSelDetonate >= 0)
+		pRocket->m_iDetonateType = m_iSelDetonate;
+	else if (m_pPlayer->HasPlayerItemFromID(WEAPON_CUST_DMLDETONATE) && pTarget)
 		pRocket->m_iDetonateType = DML_DETONATE_PROXIMITY;
 	pRocket->Spawn();
 	pRocket->pev->owner = m_pPlayer->edict();
@@ -599,6 +681,36 @@ void CDml::PrimaryAttack()
 
 	if (m_iClip == 0)
 		EMIT_SOUND(m_pPlayer->edict(), CHAN_ITEM, "weapons/dml_reload.wav", 1.0, ATTN_NORM);
+}
+
+// Empfaenger fuer "cust_<Option><Wert>" (dlls/client.cpp, Retail FUN_100405b0).
+// Ohne diese Methode blieb das Umschalten auf Granaten-Payload bzw.
+// Zeitzuender wirkungslos - die Rakete las nur die Inventar-Flags.
+void CDml::ApplyCustomSetting(char option, int value)
+{
+	if (option == '1')
+		m_iSelPayload = value;
+	else if (option == '2')
+		m_iSelDetonate = value;
+}
+
+// Retail CDml::Reload ist im Vtable-Slot 88 unter 0x100835a0 vorhanden (siehe
+// Dateikopf). Ohne eigene Implementierung blieb m_iClip dauerhaft 0, weil die
+// Basisklasse nur den Standardpfad anbietet und PrimaryAttack bei m_iClip<=0
+// sofort mit PlayEmptySound zurueckkehrt - deshalb schoss der Raketenwerfer nie.
+void CDml::Reload()
+{
+	if (m_iClip >= 2)
+		return;
+
+	if (m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType] <= 0)
+		return;
+
+	// v_dml.mdl: Sequenz 2 = reloadboth (1.64 s), 3/4 = reloadleft/right,
+	// 5 = fire, 7 = draw (Enum im SDK passt nicht zum Modell, siehe
+	// findings/weapons/anim_index_abgleich_2026-11-01.md).
+	DefaultReload(2, 2, 1.64f);
+	EMIT_SOUND(m_pPlayer->edict(), CHAN_ITEM, "weapons/dml_reload.wav", 1.0, ATTN_NORM);
 }
 
 void CDml::SecondaryAttack()
@@ -652,6 +764,13 @@ void CDml::SecondaryAttack()
 
 void CDml::WeaponIdle()
 {
+	// Lock-Zustand regelmaessig pruefen (Client zeigt das DmlCross-Reticle).
+	if (UTIL_WeaponTimeBase() >= m_flNextLockCheck)
+	{
+		m_flNextLockCheck = UTIL_WeaponTimeBase() + 0.1f;
+		UpdateLockOnState();
+	}
+
 	if (m_flTimeWeaponIdle > UTIL_WeaponTimeBase())
 		return;
 

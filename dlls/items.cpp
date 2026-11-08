@@ -55,19 +55,16 @@ void CWorldItem::Spawn()
 {
 	CBaseEntity* pEntity = NULL;
 
+	// Retail world_items (FUN_10023e40) kennt genau EINEN Typ:
+	// `if (*(int *)(param_1 + 0x20) == 0x2c)` - 0x2c = 44 = ITEM_BATTERY.
+	// Alle anderen Typen laufen in "unable to create world_item %d".
+	// Stock-HL-Faelle (42 Antidote, 43 Security, 45 Suit) existieren in Gunman
+	// nicht: gunman.dll enthaelt weder item_antidote/item_security/item_suit
+	// als Strings noch models/w_suit.mdl.
 	switch (m_iType)
 	{
 	case 44: // ITEM_BATTERY:
 		pEntity = CBaseEntity::Create("item_battery", pev->origin, pev->angles);
-		break;
-	case 42: // ITEM_ANTIDOTE:
-		pEntity = CBaseEntity::Create("item_antidote", pev->origin, pev->angles);
-		break;
-	case 43: // ITEM_SECURITY:
-		pEntity = CBaseEntity::Create("item_security", pev->origin, pev->angles);
-		break;
-	case 45: // ITEM_SUIT:
-		pEntity = CBaseEntity::Create("item_suit", pev->origin, pev->angles);
 		break;
 	}
 
@@ -205,36 +202,12 @@ void CItem::Materialize()
 	SetTouch(&CItem::ItemTouch);
 }
 
-#define SF_SUIT_SHORTLOGON 0x0001
+// Stock-HL-HEV-Anzug bewusst NICHT implementiert: gunman.dll registriert
+// kein item_suit (String fehlt), und models/w_suit.mdl existiert in keiner
+// Gunman-Installation. Ruestung laeuft ueber item_armor (CGunmanItemArmor,
+// Retail-LINK 0x10024510). Klasse und Registrierung wurden entfernt, nachdem
+// der Spieltest "late precache of models/w_suit.mdl" meldete.
 
-class CItemSuit : public CItem
-{
-	void Spawn() override
-	{
-		Precache();
-		SET_MODEL(ENT(pev), "models/w_suit.mdl");
-		CItem::Spawn();
-	}
-	void Precache() override
-	{
-		PrecacheModel("models/w_suit.mdl");
-	}
-	bool MyTouch(CBasePlayer* pPlayer) override
-	{
-		if (pPlayer->HasSuit())
-			return false;
-
-		if ((pev->spawnflags & SF_SUIT_SHORTLOGON) != 0)
-			EMIT_SOUND_SUIT(pPlayer->edict(), "!HEV_A0"); // short version of suit logon,
-		else
-			EMIT_SOUND_SUIT(pPlayer->edict(), "!HEV_AAx"); // long version of suit logon
-
-		pPlayer->SetHasSuit(true);
-		return true;
-	}
-};
-
-LINK_ENTITY_TO_CLASS(item_suit, CItemSuit);
 
 
 

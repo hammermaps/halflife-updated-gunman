@@ -217,6 +217,10 @@ private:
 	float m_flNextHeatCool = 0; // Retail +0xf8: inventory-update cooling deadline.
 	float m_flOverheatStart = 0; // Retail +0xf4.
 	bool m_bOverheated = false; // Retail +0xf0.
+	// Retail +0x144: Event-Handle fuer events/gw_minigunHeat.sc (CBeamGun::Precache,
+	// 0x1007c189 im Umfeld; Feld belegt ueber 0x1007eaab/0x1007ec13/0x1007c338).
+	unsigned short m_usHeat = 0;
+	bool m_bHeatGlow = false; // Client-Glow aktuell an (nur fuer den Umschaltpunkt).
 	float m_flNextTracerVolley = 0;
 };
 LINK_ENTITY_TO_CLASS(weapon_beamgun, CBeamGun);
@@ -267,8 +271,17 @@ void CBeamGun::Precache()
 	PrecacheModel(BEAMGUN_FLARE_SPRITE);
 	PrecacheModel("sprites/gorebot.spr");
 
+	// Retail-Beleg (gunman.dll, CBeamGun::Precache): zusaetzlich lightning_bug,
+	// sprites/xbeam1.spr + sprites/XSpark1.spr (oben als BEAMGUN_BEAM_SPRITE/
+	// BEAMGUN_FLARE_SPRITE) und die Events gw_minigunHeat.sc sowie lightning.sc.
 	UTIL_PrecacheOther("ball_lightning");
 	UTIL_PrecacheOther("tracer");
+	UTIL_PrecacheOther("lightning_bug");
+
+	// Retail legt den Rueckgabewert von pfnPrecacheEvent in +0x144 ab; ohne das
+	// Feld ist keine Wiedergabe moeglich.
+	m_usHeat = (unsigned short)PrecacheEvent(1, "events/gw_minigunHeat.sc");
+	PrecacheEvent(1, "events/lightning.sc");
 }
 
 bool CBeamGun::GetItemInfo(ItemInfo* p)
@@ -308,6 +321,17 @@ void CBeamGun::EndAttack()
 	}
 	STOP_SOUND(m_pPlayer->edict(), CHAN_WEAPON, "weapons/egon_run3.wav");
 	m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 2.0;
+
+	// Retail 0x1007c310 (Ende des Schusses): Heat-Glow aus —
+	// PlaybackEvent(0, player, +0x144, 0, g_vecZero, g_vecZero, 0,0,0,0,
+	//               bparam1 = 0, bparam2 = 1)  (bparam2 = 1 -> blaue Farbe)
+	if (m_bHeatGlow)
+	{
+		float flZero[3] = {0.0f, 0.0f, 0.0f};
+		PLAYBACK_EVENT_FULL(0, m_pPlayer->edict(), m_usHeat, 0.0,
+			flZero, flZero, 0.0f, 0.0f, 0, 0, 0, 1);
+		m_bHeatGlow = false;
+	}
 }
 
 void CBeamGun::SendHeatHud(CBasePlayer* pPlayer)
@@ -332,6 +356,16 @@ bool CBeamGun::UpdateClientData(CBasePlayer* pPlayer)
 		{
 			m_bOverheated = false;
 			m_flHeat = 70;
+
+			// Hitze unter die 80er-Schwelle zurueck -> Glow aus (Gegenstueck
+			// zum Einschalten in PrimaryAttack).
+			if (m_bHeatGlow)
+			{
+				float flZero[3] = {0.0f, 0.0f, 0.0f};
+				PLAYBACK_EVENT_FULL(0, pPlayer->edict(), m_usHeat, 0.0,
+					flZero, flZero, 0.0f, 0.0f, 0, 0, 0, 1);
+				m_bHeatGlow = false;
+			}
 		}
 		SendHeatHud(pPlayer);
 	}
@@ -411,6 +445,17 @@ void CBeamGun::PrimaryAttack()
 		m_flHeat = V_min(m_flHeat + 2.0f, 100.0f);
 		m_flNextHeatTick = gpGlobals->time + (g_pGameRules->IsMultiplayer() ? 0.16f : 0.1f);
 		SendHeatHud(m_pPlayer);
+
+		// Retail 0x1007ea9c: `cmpl $0x50,0xe8(%esi)` — ab Hitze 80 Glow an
+		// (PlaybackEvent mit bparam1 = 1, bparam2 = 1). Der Uebergang wird nur
+		// einmal ausgeloest, nicht pro Tick.
+		if (!m_bHeatGlow && m_flHeat >= 80.0f)
+		{
+			float flZero[3] = {0.0f, 0.0f, 0.0f};
+			PLAYBACK_EVENT_FULL(0, m_pPlayer->edict(), m_usHeat, 0.0,
+				flZero, flZero, 0.0f, 0.0f, 0, 0, 1, 1);
+			m_bHeatGlow = true;
+		}
 
 		if (m_flHeat >= 100.0f && !m_bOverheated)
 		{

@@ -35,9 +35,9 @@
 //     established random_speaker/player_speaker sentence-group
 //     idiom).
 //
-// Current limits (2026-11-03): CXenome's combat dispatch and secondary jump-
-// melee schedule are ported from Retail, but natural activation and some Touch
-// follow-up remain open. Its target-bound roar/squad branch is unresolved.
+// Current limits (2026-11-04): CXenome's retail squad base and 5% squad-leader
+// threat-display branch are ported alongside combat dispatch and secondary
+// jump-melee; natural activation, task 0x62 and some Touch follow-up remain open.
 // CAiWallPlug still uses a simplified toggle-and-fire-targets Use() pending
 // its exact sentence-group and state transition mapping.
 //=========================================================
@@ -46,6 +46,7 @@
 #include "util.h"
 #include "cbase.h"
 #include "monsters.h"
+#include "squadmonster.h"
 #include "saverestore.h"
 #include "weapons.h"
 #include "skill.h"
@@ -150,7 +151,22 @@ static Schedule_t slXenomeSecondaryJumpMelee =
 	"Beak Secondary Jump-Melee",
 };
 
-class CXenome : public CBaseMonster
+static Task_t tlXenomeSquadThreatDisplay[] =
+{
+	{TASK_STOP_MOVING, 0},
+	{0x61, 0}, // Retail Xenome threat-display task.
+	{TASK_SET_SCHEDULE, (float)SCHED_CHASE_ENEMY},
+};
+static Schedule_t slXenomeSquadThreatDisplay =
+{
+	tlXenomeSquadThreatDisplay,
+	ARRAYSIZE(tlXenomeSquadThreatDisplay),
+	0x300,
+	0,
+	"Beak Roaring",
+};
+
+class CXenome : public CSquadMonster
 {
 public:
 	int MonsterProfile() override { return 19; } // retail slot 59
@@ -160,6 +176,8 @@ public:
 	void Spawn() override;
 	void Precache() override;
 	void HandleAnimEvent(MonsterEvent_t* pEvent) override;
+	void StartTask(Task_t* pTask) override;
+	void RunTask(Task_t* pTask) override;
 	Schedule_t* GetSchedule() override;
 	Schedule_t* GetScheduleOfType(int Type) override;
 	void EXPORT LeapTouch(CBaseEntity* pOther);
@@ -213,8 +231,9 @@ public:
 private:
 	void ShootAtEnemy(int iSide);
 	void LeapAttack();
-	float m_flNextJump = 0;
 	int m_iVoicePitch = PITCH_NORM;
+	float m_flThreatDisplayTime = 0;
+	float m_flNextJump = 0;
 };
 LINK_ENTITY_TO_CLASS(monster_xenome, CXenome);
 
@@ -251,6 +270,15 @@ Schedule_t* CXenome::GetSchedule()
 
 Schedule_t* CXenome::GetScheduleOfType(int Type)
 {
+	// Retail schedule type 0x16 (SCHED_MELEE_ATTACK1) occasionally plays the
+	// Xenome's threat display for a squad leader before returning to pursuit.
+	if (Type == 0x16 && m_MonsterState == MONSTERSTATE_COMBAT && IsLeader() &&
+		RANDOM_LONG(0, 99) < 5)
+	{
+		DBG_LOG("XENOME %d selects squad threat display", ENTINDEX(edict()));
+		return &slXenomeSquadThreatDisplay;
+	}
+
 	if (Type == SCHED_MELEE_ATTACK2)
 	{
 		DBG_LOG("XENOME %d enters secondary jump-melee schedule", ENTINDEX(edict()));
@@ -263,9 +291,10 @@ Schedule_t* CXenome::GetScheduleOfType(int Type)
 TYPEDESCRIPTION CXenome::m_SaveData[] =
 {
 	DEFINE_FIELD(CXenome, m_flNextJump, FIELD_TIME),
+	DEFINE_FIELD(CXenome, m_flThreatDisplayTime, FIELD_TIME),
 };
 
-IMPLEMENT_SAVERESTORE(CXenome, CBaseMonster);
+IMPLEMENT_SAVERESTORE(CXenome, CSquadMonster);
 
 void CXenome::Spawn()
 {
@@ -300,6 +329,40 @@ void CXenome::Precache()
 	PrecacheSound("xenome/xenome_clawattack_2.wav");
 	PrecacheSound("lg_scorp/lg_scorp_attackb.wav");
 	UTIL_PrecacheOther("xenomeshot");
+}
+
+void CXenome::StartTask(Task_t* pTask)
+{
+	// Retail task 0x61: play the threat display at most once every 9 seconds.
+	if (pTask->iTask == 0x61)
+	{
+		TaskBegin();
+		if (m_flThreatDisplayTime < gpGlobals->time)
+		{
+			m_IdealActivity = ACT_THREAT_DISPLAY;
+			m_flThreatDisplayTime = gpGlobals->time + 9.0f;
+		}
+		else
+		{
+			// Retail marks this task's private completion bit in m_afConditions.
+			SetConditions(0x40000000);
+		}
+		return;
+	}
+
+	CBaseMonster::StartTask(pTask);
+}
+
+void CXenome::RunTask(Task_t* pTask)
+{
+	if (pTask->iTask == 0x61)
+	{
+		if (m_fSequenceFinished && !HasConditions(0x40000000))
+			TaskComplete();
+		return;
+	}
+
+	CBaseMonster::RunTask(pTask);
 }
 
 static void XenomeHitSound(CBaseEntity* pOther)

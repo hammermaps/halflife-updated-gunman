@@ -1,4 +1,6 @@
 //=========================================================
+#include "dbg_log.h"
+
 // MAYAN0B's remaining classes with no SDK precedent: random_trigger
 // (CRand_Trigger), monster_hatchetfish (CHatchetFish), monster_tank
 // (CScriptedTank) + its runtime-only monster_tank_rocket projectile
@@ -191,6 +193,8 @@ private:
 	float m_flProbeTime;	 // +0x290
 	float m_flNextTargetTime; // +0x294
 	float m_flNextStateTime; // +0x298
+	int m_iDbgLastWaterLevel = -1;
+	int m_iDbgLastMoveType = -1;
 };
 LINK_ENTITY_TO_CLASS(monster_hatchetfish, CHatchetFish);
 
@@ -236,6 +240,8 @@ void CHatchetFish::Spawn()
 	SetActivity(ACT_SWIM);
 	SetState(MONSTERSTATE_IDLE);
 	m_flNextStateTime = RANDOM_FLOAT(1.0, 5.0) + gpGlobals->time;
+	m_iDbgLastWaterLevel = -1;
+	m_iDbgLastMoveType = -1;
 }
 
 void CHatchetFish::Precache()
@@ -358,6 +364,14 @@ float CHatchetFish::CheckObstacle(CBaseEntity* pEnemy)
 
 void CHatchetFish::SwimThink()
 {
+	if (m_iDbgLastWaterLevel != pev->waterlevel || m_iDbgLastMoveType != pev->movetype)
+	{
+		DBG_LOG("HatchetfishWaterState fish=%d waterlevel=%d movetype=%d origin=(%.1f %.1f %.1f) velocity_z=%.1f",
+			ENTINDEX(edict()), pev->waterlevel, pev->movetype, pev->origin.x, pev->origin.y, pev->origin.z, pev->velocity.z);
+		m_iDbgLastWaterLevel = pev->waterlevel;
+		m_iDbgLastMoveType = pev->movetype;
+	}
+
 	float flTurn = 0;
 	float flSpeedTarget = 75.0f;
 	CBaseEntity* pEnemy = nullptr;
@@ -538,13 +552,29 @@ void CHatchetFish::HandleAnimEvent(MonsterEvent_t* pEvent)
 			Vector vecToEnemy = pEnemy->pev->origin - pev->origin;
 			vecToEnemy.z = 0;
 			// Retail: beide Vektoren normalisiert, Skalarprodukt > 0,9.
-			if (DotProduct(vecForward.Normalize(), vecToEnemy.Normalize()) > 0.9)
-				pEnemy->TakeDamage(pev, pev, gSkillData.hatchetFishDamage, DMG_SLASH);
+			const float flFacingDot = DotProduct(vecForward.Normalize(), vecToEnemy.Normalize());
+			if (flFacingDot > 0.9f)
+			{
+				const float flHealthBefore = pEnemy->pev->health;
+				const int iDamageResult = pEnemy->TakeDamage(pev, pev, gSkillData.hatchetFishDamage, DMG_SLASH);
+				DBG_LOG("HatchetfishBite fish=%d target=%d dot=%.3f threshold=0.900 damage=%.1f result=%d health=%.1f->%.1f water=%d/%d origin_z=%.1f/%.1f",
+					ENTINDEX(edict()), ENTINDEX(pEnemy->edict()), flFacingDot, gSkillData.hatchetFishDamage,
+					iDamageResult, flHealthBefore, pEnemy->pev->health, pev->waterlevel, pEnemy->pev->waterlevel,
+					pev->origin.z, pEnemy->pev->origin.z);
+			}
+			else
+			{
+				DBG_LOG("HatchetfishBiteMiss fish=%d target=%d dot=%.3f threshold=0.900 fish_yaw=%.1f",
+					ENTINDEX(edict()), ENTINDEX(pEnemy->edict()), flFacingDot, pev->angles.y);
+			}
 		}
+		else
+			DBG_LOG("HatchetfishBiteNoEnemy fish=%d state=%d", ENTINDEX(edict()), m_MonsterState);
 		m_flNextStateTime -= 2.0f;
 	}
 	else if (pEvent->event != 2)
 	{
+		DBG_LOG("HatchetfishAnimEvent fish=%d event=%d state=%d", ENTINDEX(edict()), pEvent->event, m_MonsterState);
 		CBaseMonster::HandleAnimEvent(pEvent);
 	}
 }

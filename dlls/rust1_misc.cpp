@@ -67,6 +67,7 @@
 #include "weapons.h"
 #include "player.h"
 #include "soundent.h"
+#include "decals.h"
 
 //=========================================================
 // ammo_dmlsingle - CDMLSingleAmmo.
@@ -107,7 +108,7 @@ LINK_ENTITY_TO_CLASS(ammo_dmlsingle, CDMLSingleAmmo);
 
 //=========================================================
 // rustbitshot - CRustbitShot. A confirmed but previously
-// unimplemented hitscan-style projectile for monster_rustbit/
+// unimplemented moving projectile for monster_rustbit/
 // monster_rustbot (findings/entities/rustbot_family.md's
 // Session-37/38 find, ShotTouch decompiled in Session 39, but its
 // real spawn/calling site was never located across multiple prior
@@ -118,14 +119,10 @@ LINK_ENTITY_TO_CLASS(ammo_dmlsingle, CDMLSingleAmmo);
 // @0x100b5af0 (already named in the binary's own symbol table).
 // Confirmed: sprite "sprites/bitboltsmall.spr", bbox
 // (-1,-1,-1)/(1,1,1), MOVETYPE_FLY, SOLID_BBOX, kRenderTransAdd,
-// renderamt=255, scale=0.5, takedamage=DAMAGE_NO. ShotTouch confirmed: ignores
-// same-team/self hits, plays a world-impact sound
-// ("RustBit_Projectile2.wav") plus a bullet-hole decal on a static
-// hit, or deals skill-scaled damage via TakeDamage on a living target
-// (playing "RustBit_Projectile1.wav" on a successful hit,
-// "_Projectile2.wav" otherwise) - standard hitscan-projectile
-// behavior, no special effects, matching the doc's own conclusion
-// exactly.
+// renderamt=255, scale=0.5, takedamage=DAMAGE_NO. ShotTouch confirms the
+// shooter/self-owned-entity filters, damage type 0, different impact sounds
+// for living/dead damageable targets, and the {pulse decal for non-damageable
+// world hits (decal-list index 0x4e; SDK mapping DECAL_PULSE).
 //
 // Where the shot is launched was re-checked against the Retail event
 // handler: events 1/3 call FUN_100b6ff0 with attachment index 0, events
@@ -201,20 +198,35 @@ void CRustbitShot::Precache()
 
 void CRustbitShot::ShotTouch(CBaseEntity* pOther)
 {
-	if (pOther->pev->owner == pev->owner)
+	// Retail compares pOther->pev->pContainingEntity with the shot owner,
+	// then compares pOther->pev->owner with that owner. This excludes both
+	// the firing Rustbit itself and entities it owns.
+	if (pOther->pev->pContainingEntity == pev->owner || pOther->pev->owner == pev->owner)
 		return;
 
-	if (0 != pOther->pev->takedamage)
+	if (pOther->pev->takedamage == DAMAGE_NO)
 	{
-		pOther->TakeDamage(pev, VARS(pev->owner), gSkillData.rustbitShotDamage, DMG_BULLET);
-		EMIT_SOUND(ENT(pev), CHAN_WEAPON, "rustbit/RustBit_Projectile1.wav", 1.0, ATTN_NORM);
+		// Retail's decal-table index 0x4e resolves to {pulse in decals.WAD.
+		TraceResult trace;
+		UTIL_TraceLine(pev->origin, pev->origin + pev->velocity * 8.0f,
+			ignore_monsters, ENT(pev), &trace);
+		UTIL_DecalTrace(&trace, DECAL_PULSE);
+		EMIT_SOUND_DYN(ENT(pev), CHAN_VOICE, "rustbit/RustBit_Projectile2.wav", 0.3, ATTN_NORM, 0, 100);
+		UTIL_Remove(this);
 	}
 	else
 	{
-		EMIT_SOUND(ENT(pev), CHAN_WEAPON, "rustbit/RustBit_Projectile2.wav", 1.0, ATTN_NORM);
-	}
+		// Retail passes the projectile as both inflictor and attacker and uses
+		// damage-type bits 0.
+		pOther->TakeDamage(pev, pev, gSkillData.rustbitShotDamage, 0);
+		if (pOther->IsAlive())
+			EMIT_SOUND_DYN(ENT(pOther->pev), CHAN_VOICE, "rustbit/RustBit_Projectile1.wav", 1.0, ATTN_NORM, 0, 130);
+		else
+			EMIT_SOUND_DYN(ENT(pev), CHAN_VOICE, "rustbit/RustBit_Projectile2.wav", 0.3, ATTN_NORM, 0, 100);
 
-	UTIL_Remove(this);
+		SetThink(&CBaseEntity::SUB_Remove);
+		pev->nextthink = gpGlobals->time + 0.1f;
+	}
 }
 
 //=========================================================
@@ -440,6 +452,9 @@ public:
 	int Classify() override { return CLASS_ALIEN_PREY; }
 	void Killed(entvars_t* pevAttacker, int iGib) override;
 	void GibMonster() override;
+	// Eigene Gibs statt der Stock-Blutgibs: models/rustbitgibs.mdl liegt im Retail-DLL-String-
+	// bestand (models/rustbitgibs.mdl) und in models-src/rustbitgibs/.
+	const char* CustomGibModel() override { return "models/rustbitgibs.mdl"; }
 	// CORRECTION (2026-09-05): missing SetYawSpeed() override, same
 	// root cause/fix as CFriendlyGunman (human_gunman.cpp) - see
 	// findings/open_items_audit_2026-09-05.md.
@@ -661,6 +676,7 @@ void CRustbit::Spawn()
 void CRustbit::Precache()
 {
 	PrecacheModel("models/rustbit.mdl");
+	PrecacheModel("models/rustbitgibs.mdl");
 	PrecacheModel("sprites/rustbitglow.spr");
 	PrecacheSound("rustbit/Rustbit_RapidFire_FirstShot_F0.wav");
 	PrecacheSound("rustbit/Rustbit_RapidFire_SecondShot_F1.wav");
@@ -881,6 +897,8 @@ class CBeak : public CBaseMonster
 {
 public:
 	int MonsterProfile() override { return 15; } // retail slot 59
+	int ISoundMask() override { return bits_SOUND_COMBAT | bits_SOUND_WORLD | bits_SOUND_PLAYER |
+		bits_SOUND_CARCASS | bits_SOUND_MEAT | bits_SOUND_DANGER | bits_SOUND_GARBAGE; }
 	void Spawn() override;
 	void Precache() override;
 	bool Save(CSave& save) override;
