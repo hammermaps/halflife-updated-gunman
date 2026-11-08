@@ -8,7 +8,7 @@
 
 Ein Rekonstruktions-SDK für **Gunman Chronicles** (Rewolf Software, 2000), einen Half-Life-Mod auf der GoldSrc-Engine. Der Code wird als saubere Neuimplementierung der Spiellogik auf Basis des Half-Life-Updated-SDK geschrieben. Die Grundlage sind belegte Befunde aus Reverse Engineering der originalen Binärdateien und Karten, nicht Vermutungen.
 
-> **Status: Alpha 1 – frühe Phase.** Grundbausteine und ein großer Teil der Monster sind vorhanden. Der Umfang ist nicht vollständig, und es gibt bekannte Fehler und offene Punkte (siehe [Bekannte Probleme](#bekannte-probleme)). Nicht alles ist durch Laufzeittests bestätigt.
+> **Status: Alpha 2 – frühe Phase.** Grundbausteine und ein großer Teil der Monster sind vorhanden. Der Umfang ist nicht vollständig, und es gibt bekannte Fehler und offene Punkte (siehe [Bekannte Probleme](#bekannte-probleme)). Nicht alles ist durch Laufzeittests bestätigt.
 
 Die Basis ist das Half-Life-SDK aus dem Projekt [Half-Life Updated](https://github.com/twhl-community/halflife-updated). Lizenz und Original-Hinweise stehen in [`README_HLSDK.md`](README_HLSDK.md).
 
