@@ -76,6 +76,8 @@
 #include "scriptevent.h"
 #include "saverestore.h"
 #include "weapons.h"
+#include "decals.h"
+#include "UserMessages.h"
 
 //=========================================================
 // The runtime-only homing-in-name-only rocket fired by CGunner's 4
@@ -96,6 +98,7 @@ public:
 
 private:
 	CSprite* m_pFlame = nullptr;
+	int m_iTrail = 0; // Sprite-Modellindex fuer TE_BEAMFOLLOW
 };
 LINK_ENTITY_TO_CLASS(anime_rocket, CAnimeRocket);
 
@@ -109,7 +112,7 @@ IMPLEMENT_SAVERESTORE(CAnimeRocket, CGrenade);
 void CAnimeRocket::Precache()
 {
 	PrecacheModel("models/rocket.mdl");
-	PrecacheModel("sprites/flame.spr");
+	m_iTrail = PrecacheModel("sprites/flame.spr");
 	PrecacheSound("weapons/rocket1.wav");
 	PrecacheSound("weapons/kaboom1.wav");
 	PrecacheSound("weapons/kaboom2.wav");
@@ -180,8 +183,28 @@ void CAnimeRocket::IgniteThink()
 	{
 		m_pFlame->SetTransparency(kRenderTransAdd, 255, 255, 255, 255, kRenderFxNone);
 		m_pFlame->SetScale(1.0);
-		m_pFlame->SetAttachment(edict(), 0);
+		// models/rocket.mdl hat keine Attachment-Punkte -> der Sprite blieb am
+		// Abschusspunkt stehen (kein Schweif). Stattdessen der Rakete folgen.
+		m_pFlame->pev->aiment = edict();
+		m_pFlame->pev->body = 0;
+		m_pFlame->pev->skin = 0;
+		m_pFlame->pev->movetype = MOVETYPE_FOLLOW;
+		m_pFlame->pev->solid = SOLID_NOT;
 	}
+
+	// Sichtbarer Schweif wie bei CApacheHVR (apache.cpp:1063): der flame-Sprite
+	// folgt der Rakete in Xash nicht sichtbar, TE_BEAMFOLLOW dagegen schon.
+	MESSAGE_BEGIN(MSG_BROADCAST, SVC_TEMPENTITY);
+	WRITE_BYTE(TE_BEAMFOLLOW);
+	WRITE_SHORT(entindex());
+	WRITE_SHORT(m_iTrail);
+	WRITE_BYTE(15);  // life
+	WRITE_BYTE(6);   // width
+	WRITE_BYTE(224); // r
+	WRITE_BYTE(224); // g
+	WRITE_BYTE(255); // b
+	WRITE_BYTE(200); // brightness
+	MESSAGE_END();
 
 	EMIT_SOUND_DYN(ENT(pev), CHAN_WEAPON, "weapons/rocket1.wav", 1.0, ATTN_NORM, 0, 100);
 	SetThink(&CAnimeRocket::AccelerateThink);
@@ -328,6 +351,11 @@ public:
 	// basemonster.h.
 	const char* CustomGibModel() override { return "models/gunnergibs.mdl"; }
 
+public:
+	// Testhilfe (`dbg_eye`): Auge dauerhaft auf Zielhelligkeit 200 zwingen.
+	void DebugForceEye() { m_eyeBrightness = 200; if (m_pEyeGlow) { m_pEyeGlow->pev->renderamt = 200; m_pEyeGlow->pev->effects &= ~EF_NODRAW; } }
+	void DebugEyeScale(float flScale) { if (m_pEyeGlow) { m_pEyeGlow->pev->scale = flScale; ALERT(at_aiconsole, "[eye] sprite entscale=%.1f origin=(%.0f %.0f %.0f) rendercolor=(%d %d %d)\n", flScale, m_pEyeGlow->pev->origin.x, m_pEyeGlow->pev->origin.y, m_pEyeGlow->pev->origin.z, (int)m_pEyeGlow->pev->rendercolor.x, (int)m_pEyeGlow->pev->rendercolor.y, (int)m_pEyeGlow->pev->rendercolor.z); } }
+
 protected:
 	void FireRocket(int iAttachment, bool bRunAISalvo = false);
 	int m_fHackPitch = 75; // Retail +0x2c0; randomized in Spawn
@@ -337,15 +365,35 @@ protected:
 	// and brightness gate but the same fade/attachment update.
 protected:
 	int m_eyeBrightness = 0; // Retail +0x2bc; target brightness, 0 or 200
+	int m_iEyeLastAmt = -1; // nur fuer die Debug-Ausgabe (Sichtbeleg)
 	CSprite* m_pEyeGlow = nullptr; // Retail +0x2c8
 	float m_flEyeTalkUntil = 0; // deliberate Rustgunner-only blue-eye deviation
 	void UpdateEyeGlow();
 private:
 	float m_iNeverRun = 0; // Retail save field +0x2d0 (meaning unresolved)
-	float m_fMeleeDistance = 0; // Retail +0x2d4: 0 until the first attack, then 500
+	float m_fMeleeDistance = 0; // Retail +0x2d4: 0 until first attack, then 500 decaying by 0.995 each RunAI tick
 	float m_fTimeSinceLastVolly = 0; // Retail +0x2d8
 	int m_iVollyCount = 4; // Retail +0x2dc
 };
+// Testhilfe fuer `dbg_eye`: schaltet bei allen Gunnern der Map das Auge ein
+// und gibt die Sprite-Position aus (Pruefung der Verankerung am Hals-Bone).
+void DbgForceGunnerEyes()
+{
+	const char* rgClasses[] = { "monster_rustgunr", "monster_gunner", "monster_rustgnr", "monster_gunner_friendly" };
+
+	for (int i = 0; i < 4; i++)
+	{
+		CBaseEntity* pEnt = NULL;
+		while ((pEnt = UTIL_FindEntityByClassname(pEnt, rgClasses[i])) != NULL)
+		{
+			CGunner* pGunner = static_cast<CGunner*>(pEnt);
+			pGunner->DebugForceEye();
+			ALERT(at_aiconsole, "[eye] %s origin=(%.0f %.0f %.0f)\n",
+				rgClasses[i], pEnt->pev->origin.x, pEnt->pev->origin.y, pEnt->pev->origin.z);
+		}
+	}
+}
+
 LINK_ENTITY_TO_CLASS(monster_rustgunr, CGunner);
 LINK_ENTITY_TO_CLASS(monster_gunner, CGunner);
 LINK_ENTITY_TO_CLASS(monster_rustgnr, CGunner);
@@ -429,12 +477,21 @@ void CGunnerFriendly::Spawn()
 		m_pEyeGlow = nullptr;
 	}
 	m_eyeBrightness = 0;
-	m_pEyeGlow = CSprite::SpriteCreate("sprites/cameye.spr", pev->origin, false);
+	// Wie CGunner: animiertes Auge (sonst Frame 1, Meldung 2026-11-07).
+	m_pEyeGlow = CSprite::SpriteCreate("sprites/cameye.spr", pev->origin, true);
 	if (m_pEyeGlow)
 	{
-		m_pEyeGlow->SetTransparency(kRenderGlow, 255, 255, 255, 0, kRenderFxNoDissipation);
-		m_pEyeGlow->SetAttachment(edict(), 1);
-		m_pEyeGlow->SetScale(0.2f);
+		// kRenderTransAdd statt kRenderGlow (kein Durchscheinen durchs Modell,
+		// Meldung 2026-11-07).
+		// Freundlicher Gunner = "normaler" Gunner: rotes Auge
+		// (Spielerangabe 2026-11-07: monster_gunner rot, rust blau).
+		m_pEyeGlow->SetTransparency(kRenderTransAdd, 255, 0, 0, 200, kRenderFxNoDissipation);
+		// Kein SetAttachment: der gestagte aigunner.mdl hat keinen Kopf-Attachment
+		// (nur Spine/Unterarme), dadurch lag das Sprite im Koerper und schien
+		// durch das Modell. Position wird in UpdateEyeGlow am Kopf gesetzt.
+		m_pEyeGlow->pev->framerate = 9.0f;
+		m_pEyeGlow->SetScale(0.25f);
+		m_pEyeGlow->TurnOn();
 	}
 
 	SET_MODEL(ENT(pev), "models/aigunner.mdl");
@@ -634,15 +691,27 @@ void CGunner::Spawn()
 	m_eyeBrightness = 0;
 	m_flEyeTalkUntil = 0;
 	const bool bRustgunner = FStrEq(STRING(pev->classname), "monster_rustgunr");
-	m_pEyeGlow = CSprite::SpriteCreate(bRustgunner ? "sprites/cameye.spr" : "sprites/gunr_eye.spr",
-		pev->origin, false);
+	// `true` = sofort animieren (CSprite::TurnOn startet AnimateThink). Ohne
+	// das blieb das Auge in Frame 1 stehen (Spielermeldung 2026-11-07).
+	// Rust-Gunner: identisches Auge, aber in Blau (cameye.spr + (0,0,255)).
+	// Retail CGunner::Spawn (0x100bec80) erzeugt "sprites/gunr_eye.spr".
+	// Farbe je Klasse (Spielerangabe 2026-11-07): monster_gunner rot,
+	// monster_rustgunr blau.
+	m_pEyeGlow = CSprite::SpriteCreate("sprites/gunr_eye.spr", pev->origin, true);
 	if (m_pEyeGlow)
 	{
-		m_pEyeGlow->SetTransparency(kRenderGlow, bRustgunner ? 0 : 255, bRustgunner ? 0 : 255,
-			255, 0, kRenderFxNoDissipation);
-		m_pEyeGlow->SetAttachment(edict(), 1);
-		if (bRustgunner)
-			m_pEyeGlow->SetScale(0.2f);
+		// kRenderTransAdd statt kRenderGlow: der Glow-Modus rendert ohne
+		// Tiefentest und schien durch das Gunner-Modell (Meldung 2026-11-07).
+		const int iRed = bRustgunner ? 0 : 255;
+		const int iBlue = bRustgunner ? 255 : 0;
+		m_pEyeGlow->SetTransparency(kRenderTransAdd, iRed, 0, iBlue,
+			200, kRenderFxNoDissipation);
+		// Kein SetAttachment (siehe CGunnerFriendly): Position setzt UpdateEyeGlow.
+		m_pEyeGlow->pev->framerate = 10.0f;
+		// Skalierung: gunr_eye.spr ist 32x32 und deckt bei Scale 1 fast das
+		// ganze Gesicht ab (Spielermeldung 2026-11-07: "viel zu gross").
+		m_pEyeGlow->SetScale(0.25f);
+		m_pEyeGlow->TurnOn();
 	}
 
 	MonsterInit();
@@ -833,6 +902,8 @@ Schedule_t* CGunner::GetSchedule()
 void CGunner::RunAI()
 {
 	pev->framerate = 1.5f;
+	// Retail slot 62 multiplies +0x2d4 (m_fMeleeDistance) by 0.995 before base RunAI.
+	m_fMeleeDistance *= 0.995;
 	CBaseMonster::RunAI();
 
 	// Retail slot 62 tail: while idle, walking or running with an enemy, a rocket is launched from the
@@ -855,10 +926,12 @@ void CGunner::PrescheduleThink()
 	// eye brightness 200; otherwise it targets 0. Brightness approaches
 	// the target by 26 per AI update, the dark sprite is hidden, and its
 	// attachment origin is refreshed.
-	if (FStrEq(STRING(pev->classname), "monster_rustgunr"))
-		m_eyeBrightness = gpGlobals->time < m_flEyeTalkUntil ? 200 : 0;
-	else
-		m_eyeBrightness = HasConditions(bits_COND_HEAR_SOUND) ? 200 : 0;
+	// Retail-Slot 117: bits_COND_HEAR_SOUND -> 200, sonst 0. Zusaetzlich
+	// (Abweichung auf Spielerwunsch, 2026-11-07): solange der Gunner ein Ziel
+	// hat, bleibt das Auge an - sonst waere es im Spiel praktisch nie zu sehen
+	// ("keiner der gunner hat eins"). Die Sprachzeile bleibt weiterer Ausloeser.
+	m_eyeBrightness = (HasConditions(bits_COND_HEAR_SOUND) || m_hEnemy != nullptr ||
+		gpGlobals->time < m_flEyeTalkUntil) ? 200 : 0;
 	UpdateEyeGlow();
 
 	// The same retail slot occasionally dispatches virtual slot 135 while
@@ -867,17 +940,41 @@ void CGunner::PrescheduleThink()
 		IdleSound();
 }
 
+// Hals-Bone beider Gunner-Modelle (Bones 0..15, kein Kopf-Bone).
+#define GUNNER_NECK_BONE 9
+
 void CGunner::UpdateEyeGlow()
 {
 	if (!m_pEyeGlow)
 		return;
 
 	m_pEyeGlow->pev->renderamt = UTIL_Approach(m_eyeBrightness, m_pEyeGlow->pev->renderamt, 26);
+	if ((int)m_pEyeGlow->pev->renderamt != m_iEyeLastAmt)
+	{
+		m_iEyeLastAmt = (int)m_pEyeGlow->pev->renderamt;
+		ALERT(at_aiconsole, "[eye] %s amt=%d target=%d hear=%d\n",
+			STRING(pev->classname), m_iEyeLastAmt, m_eyeBrightness,
+			HasConditions(bits_COND_HEAR_SOUND) ? 1 : 0);
+	}
 	if (m_pEyeGlow->pev->renderamt == 0)
 		m_pEyeGlow->pev->effects |= EF_NODRAW;
 	else
 		m_pEyeGlow->pev->effects &= ~EF_NODRAW;
-	UTIL_SetOrigin(m_pEyeGlow->pev, pev->origin);
+	// Auge am Kopf. Die Modelle (gunner.mdl/aigunner.mdl) haben KEINEN
+	// Kopf-Attachment-Punkt (nur Spine 0/1 und die beiden Unterarme 2/3) und
+	// auch keinen Head-Bone: der "Kopf" ist Teil des Torsos. Deshalb wird das
+	// Auge ueber den Hals-Bone (Index 9, "Bip01 Neck") verankert und von dort
+	// leicht nach vorn geschoben; origin + view_ofs traf nur die Brust und
+	// liess das Sprite neben dem Koerper schweben (Sichtpruefung 2026-11-07).
+	Vector vecForward;
+	AngleVectors(pev->angles, &vecForward, nullptr, nullptr);
+
+	float vecBoneOrigin[3];
+	float vecBoneAngles[3];
+	g_engfuncs.pfnGetBonePosition(ENT(pev), GUNNER_NECK_BONE, vecBoneOrigin, vecBoneAngles);
+
+	Vector vecEye = Vector(vecBoneOrigin) + vecForward * 6.0f;
+	UTIL_SetOrigin(m_pEyeGlow->pev, vecEye);
 }
 
 void CGunner::Use(CBaseEntity* pActivator, CBaseEntity* pCaller, USE_TYPE useType, float value)
@@ -1057,6 +1154,180 @@ void CGunner::FireRocket(int iAttachment, bool bRunAISalvo)
 	CAnimeRocket::CreateForGunner(this, m_hEnemy, vecSrc);
 }
 
+// Erschuetterung mit linearer Entfernungsabnahme. UTIL_ScreenShake liefert nur innerhalb
+// eines harten Radius einen konstanten Ausschlag; die Meteoreinschlaege liegen 4000-8000
+// Einheiten entfernt, deshalb mit weitem Radius und Abfall.
+// Bekannte Grenze: waehrend einer Kamera-Animation (SET_VIEW auf trigger_camera) erreicht die
+// Erschuetterung die Kamera nicht, weil die Anwendung clientseitig in HUD_CalcRefdef passiert.
+static void MeteorScreenShake(const Vector& vecCenter, float flAmplitude, float flRadius)
+{
+	for (int i = 1; i <= gpGlobals->maxClients; ++i)
+	{
+		CBaseEntity* pPlayer = UTIL_PlayerByIndex(i);
+		if (!pPlayer)
+			continue;
+
+		const float flDist = (pPlayer->pev->origin - vecCenter).Length();
+		if (flDist >= flRadius)
+			continue;
+
+		const float flLocal = flAmplitude * (1.0f - flDist / flRadius);
+		if (flLocal < 0.3f)
+			continue;
+
+		// Der Engine-eigene ScreenShake wirkt nur im freien Blick, die eigene MeteorShake-
+		// Nachricht wird vom Client nur in Kamera-Ansichten angewendet - beide senden.
+		MESSAGE_BEGIN(MSG_ONE, gmsgShake, NULL, pPlayer->edict());
+		WRITE_SHORT(static_cast<unsigned short>(flLocal * 4096.0f));
+		WRITE_SHORT(static_cast<unsigned short>(1.5f * 4096.0f));
+		WRITE_SHORT(static_cast<unsigned short>(4.0f * 256.0f));
+		MESSAGE_END();
+
+		MESSAGE_BEGIN(MSG_ONE, gmsgCameraShake, NULL, pPlayer->edict());
+		WRITE_SHORT(static_cast<unsigned short>(flLocal * 4096.0f));
+		WRITE_SHORT(static_cast<unsigned short>(1.5f * 4096.0f));
+		WRITE_SHORT(static_cast<unsigned short>(4.0f * 256.0f));
+		MESSAGE_END();
+	}
+}
+
+// Partikel-Budget: die Engine (GoldSrc/Xash3D) hat einen festen Partikelpool; Xash3D meldet
+// "Particle overflow" bei 4096 gleichzeitigen Partikeln (Laufzeitbeleg:
+// out/run/xash4d/... siehe findings/meteor_effect_suppression_2026-11-05.md).
+// Wir beanspruchen hoechstens 55 % davon und verteilen das als Sekundenkontingent, damit
+// gleichzeitige Einschlaege den Pool nicht mehr ueberlaufen.
+#define METEOR_ENGINE_PARTICLE_LIMIT 4096
+#define METEOR_PARTICLE_SHARE 0.45f
+// Fensterlaenge: Rauchsprites leben rund 1-2 s, deshalb wird das Kontingent ueber ein
+// laengeres Fenster vergeben (nicht pro Sekunde).
+#define METEOR_PARTICLE_WINDOW 2.5f
+
+static float s_flParticleQuotaReset = 0.0f;
+static int s_iParticleQuotaUsed = 0;
+
+static int MeteorParticleQuotaTotal()
+{
+	return static_cast<int>(METEOR_ENGINE_PARTICLE_LIMIT * METEOR_PARTICLE_SHARE);
+}
+
+// Fordert iWanted Partikel an; gibt die tatsaechlich freigegebene Anzahl zurueck (0 = nichts).
+static int MeteorParticleBudget(int iWanted)
+{
+	if (iWanted <= 0)
+		return 0;
+
+	if (gpGlobals->time >= s_flParticleQuotaReset)
+	{
+		s_flParticleQuotaReset = gpGlobals->time + METEOR_PARTICLE_WINDOW;
+		s_iParticleQuotaUsed = 0;
+	}
+
+	const int iFree = MeteorParticleQuotaTotal() - s_iParticleQuotaUsed;
+	if (iFree <= 0)
+		return 0;
+
+	const int iGranted = iWanted < iFree ? iWanted : iFree;
+	s_iParticleQuotaUsed += iGranted;
+	return iGranted;
+}
+
+//=========================================================
+// Kurzlebiger Rauch-Emitter fuer den Meteoreinschlag. Temp-Sprites (TE_SPRITE) nutzen die
+// Alpha-Kanaele der SPR-Textur korrekt, CSprite-Entities rendern in diesem Build deckende
+// Quads. Damit die Fahne stehen bleibt, wird ueber ~2,5 s nachgespuckt.
+//=========================================================
+class CMeteorSmoke : public CPointEntity
+{
+public:
+	void Spawn() override { Precache(); SetThink(&CMeteorSmoke::SmokeThink); pev->nextthink = gpGlobals->time; }
+	void Precache() override
+	{
+		m_iSmokeSprite = PrecacheModel("sprites/smoke.spr");
+		m_iPuffSprite = PrecacheModel("sprites/smokepuff.spr");
+		m_iFireSprite = PrecacheModel("sprites/fire.spr");
+	}
+	void EXPORT SmokeThink();
+
+	Vector m_vecCenter = g_vecZero;
+	float m_flEndTime = 0.0f;
+	float m_flStartTime = 0.0f;
+	int m_iSmokeSprite = 0;
+	int m_iPuffSprite = 0;
+	int m_iFireSprite = 0;
+};
+
+LINK_ENTITY_TO_CLASS(meteor_smoke, CMeteorSmoke);
+
+void CMeteorSmoke::SmokeThink()
+{
+	const float flAge = gpGlobals->time - m_flStartTime;
+
+	// Rauch in drei Groessenklassen, damit die Fahne unregelmaessig und dicht wirkt.
+	const int iCount = flAge < 0.5f ? 2 : 1;
+	for (int i = 0; i < iCount; ++i)
+	{
+		const Vector vecPos = m_vecCenter + Vector(RANDOM_FLOAT(-56.0f, 56.0f),
+												RANDOM_FLOAT(-56.0f, 56.0f),
+												flAge * 45.0f + RANDOM_FLOAT(0.0f, 36.0f));
+		if (MeteorParticleBudget(1) == 0)
+			break;
+
+		const int iSize = RANDOM_LONG(0, 2);
+		const int iScale = iSize == 0 ? RANDOM_LONG(50, 110) : (iSize == 1 ? RANDOM_LONG(110, 190) : RANDOM_LONG(190, 255));
+		MESSAGE_BEGIN(MSG_PAS, SVC_TEMPENTITY, vecPos);
+		WRITE_BYTE((i % 3) ? TE_SMOKE : TE_SPRITE);
+		WRITE_COORD(vecPos.x);
+		WRITE_COORD(vecPos.y);
+		WRITE_COORD(vecPos.z);
+		WRITE_SHORT((i % 3) ? m_iSmokeSprite : m_iPuffSprite);
+		WRITE_BYTE(iScale);
+		WRITE_BYTE(RANDOM_LONG(7, 13));
+		MESSAGE_END();
+	}
+
+	// Flackerndes Feuerlicht an der Brandstelle (kleine, unruhige dynamische Lichtquelle).
+	static int s_iLightTick = 0;
+	++s_iLightTick;
+	if ((s_iLightTick % 3) == 0)
+	{
+		MESSAGE_BEGIN(MSG_PAS, SVC_TEMPENTITY, m_vecCenter);
+		WRITE_BYTE(TE_DLIGHT);
+		WRITE_COORD(m_vecCenter.x + RANDOM_FLOAT(-16.0f, 16.0f));
+		WRITE_COORD(m_vecCenter.y + RANDOM_FLOAT(-16.0f, 16.0f));
+		WRITE_COORD(m_vecCenter.z + RANDOM_FLOAT(4.0f, 28.0f));
+		WRITE_BYTE(RANDOM_LONG(12, 28)); // Radius in Zehntel-Einheiten
+		WRITE_BYTE(255);
+		WRITE_BYTE(RANDOM_LONG(130, 200));
+		WRITE_BYTE(RANDOM_LONG(50, 110));
+		WRITE_BYTE(RANDOM_LONG(3, 6)); // Lebensdauer
+		WRITE_BYTE(RANDOM_LONG(6, 10));
+		MESSAGE_END();
+	}
+
+	// Nachwuchsflammen: halten das Feuer an der Einschlagstelle am Leben.
+	if (RANDOM_LONG(0, 1) != 0)
+	{
+		const Vector vecFlame = m_vecCenter + Vector(RANDOM_FLOAT(-48.0f, 48.0f),
+											  RANDOM_FLOAT(-48.0f, 48.0f), RANDOM_FLOAT(0.0f, 8.0f));
+		MESSAGE_BEGIN(MSG_PAS, SVC_TEMPENTITY, vecFlame);
+		WRITE_BYTE(TE_SPRITE);
+		WRITE_COORD(vecFlame.x);
+		WRITE_COORD(vecFlame.y);
+		WRITE_COORD(vecFlame.z);
+		WRITE_SHORT(m_iFireSprite);
+		WRITE_BYTE(RANDOM_LONG(110, 240));
+		WRITE_BYTE(RANDOM_LONG(6, 10));
+		MESSAGE_END();
+	}
+
+	if (gpGlobals->time >= m_flEndTime)
+	{
+		UTIL_Remove(this);
+		return;
+	}
+	pev->nextthink = gpGlobals->time + 0.35f;
+}
+
 //=========================================================
 // The runtime-only meteor chunk spawned by meteor_god.
 //=========================================================
@@ -1067,6 +1338,7 @@ public:
 	void Precache() override;
 	void EXPORT ChunkTouch(CBaseEntity* pOther);
 	void EXPORT SmokeThink();
+	void EXPORT StreakerThink();
 	void Configure(int iMeteorType, bool bDebris);
 
 	bool Save(CSave& save) override;
@@ -1075,14 +1347,18 @@ public:
 
 private:
 	void EmitSmokeSprite(int iScale, float flHeight, int iSpread);
+	void EmitChunkLight(int iRadius, int iLife);
 	Vector GetImpactOrigin() const;
 	void EmitRetailDebris(const Vector& vecImpact);
 	void EmitEnhancedImpactEffects(const Vector& vecImpact, float flRadius);
+	void EmitImpactFireAndSmoke(const Vector& vecImpact, float flRadius);
 
 	int m_iMeteorType = 0;
 	bool m_bDebris = false;
 	float m_flRemoveTime = 0;
 	int m_iSmokeSprite = 0;
+	int m_iSmokePuffSprite = 0;
+	int m_iBeamWidth = 0;
 	int m_iImpactSprite = 0;
 	int m_iDebrisModel = 0;
 	int m_iSmallDebrisModel = 0;
@@ -1095,6 +1371,8 @@ TYPEDESCRIPTION CMeteorChunk::m_SaveData[] =
 		DEFINE_FIELD(CMeteorChunk, m_bDebris, FIELD_BOOLEAN),
 		DEFINE_FIELD(CMeteorChunk, m_flRemoveTime, FIELD_TIME),
 		DEFINE_FIELD(CMeteorChunk, m_iSmokeSprite, FIELD_INTEGER),
+		DEFINE_FIELD(CMeteorChunk, m_iSmokePuffSprite, FIELD_INTEGER),
+		DEFINE_FIELD(CMeteorChunk, m_iBeamWidth, FIELD_INTEGER),
 		DEFINE_FIELD(CMeteorChunk, m_iImpactSprite, FIELD_INTEGER),
 		DEFINE_FIELD(CMeteorChunk, m_iDebrisModel, FIELD_INTEGER),
 		DEFINE_FIELD(CMeteorChunk, m_iSmallDebrisModel, FIELD_INTEGER),
@@ -1112,6 +1390,9 @@ void CMeteorChunk::Precache()
 	PrecacheSound("meteor/meteor_hit3.wav");
 	m_iImpactSprite = PrecacheModel("sprites/impact.spr");
 	m_iSmokeSprite = PrecacheModel("sprites/smoke.spr");
+	PrecacheModel("sprites/fire.spr");
+	PrecacheModel("models/w_gibs_all.mdl"); // Steinbrocken (aus Hermes-Projekt w_gibs_all)
+	m_iSmokePuffSprite = PrecacheModel("sprites/smokepuff.spr");
 }
 
 void CMeteorChunk::Spawn()
@@ -1120,8 +1401,15 @@ void CMeteorChunk::Spawn()
 	pev->classname = MAKE_STRING("meteor_god_chunk");
 	SET_MODEL(ENT(pev), "models/asteroid.mdl");
 	UTIL_SetSize(pev, Vector(-8, -8, -8), Vector(8, 8, 8));
-	pev->solid = SOLID_BBOX;
-	pev->movetype = MOVETYPE_TOSS;
+	// Retail CMeteor::Spawn (0x100a6600): movetype (+0x108) = 9 (MOVETYPE_FLYMISSILE),
+	// solid (+0x10c) = 1 (SOLID_TRIGGER) - der Meteor fliegt also als Trigger-Entitaet und
+	// meldet den Aufprall ueber Touch, statt wie ein TOSS-Body an der Wand haengen zu bleiben.
+	pev->solid = SOLID_TRIGGER;
+	pev->movetype = MOVETYPE_FLYMISSILE;
+	// Retail setzt zusaetzlich eine Zufalls-Drehung: avelocity (+0x5c..+0x64) je Achse
+	// RANDOM_FLOAT(-150, 150) (0x100a6600).
+	pev->avelocity = Vector(RANDOM_FLOAT(-150.0f, 150.0f), RANDOM_FLOAT(-150.0f, 150.0f),
+		RANDOM_FLOAT(-150.0f, 150.0f));
 	SetTouch(&CMeteorChunk::ChunkTouch);
 
 	m_flRemoveTime = gpGlobals->time + 8.0f;
@@ -1137,6 +1425,9 @@ void CMeteorChunk::Configure(int iMeteorType, bool bDebris)
 	// CMeteor has distinct streak, large and small paths in the retail DLL.
 	// Keep the same visible families while retaining one safely bounded
 	// runtime entity in the clean-room implementation.
+	// Zufaellige Schweifbreite je Meteor, damit der Schwarm ungleichmaessig wirkt.
+	m_iBeamWidth = m_iMeteorType == 2 ? RANDOM_LONG(38, 72) : (m_iMeteorType == 1 ? RANDOM_LONG(24, 48) : RANDOM_LONG(16, 34));
+
 	if (m_iMeteorType == 0)
 	{
 		SET_MODEL(ENT(pev), "models/lavaball.mdl");
@@ -1167,8 +1458,12 @@ void CMeteorChunk::Configure(int iMeteorType, bool bDebris)
 	WRITE_BYTE(TE_BEAMFOLLOW);
 	WRITE_SHORT(entindex());
 	WRITE_SHORT(m_iSmokeSprite);
-	WRITE_BYTE(m_iMeteorType + 2);
-	WRITE_BYTE(m_iMeteorType * 2 + 1);
+	// Retail nutzt life = Typ+2 und Breite = type*2+1. Auf Wunsch deutlich laenger und
+	// breiter, damit der Schweif stehen bleibt statt sofort zu verschwinden.
+	// Bytes sind Zehntel-Einheiten. Lebensdauer 3 s (30), Breite bewusst zwischen Retail
+	// (0.1-0.5) und der zu breiten Zwischenfassung: 4 / 6 / 8 Welteinheiten.
+	WRITE_BYTE(30);
+	WRITE_BYTE(m_iBeamWidth);
 	WRITE_BYTE(224);
 	WRITE_BYTE(224);
 	WRITE_BYTE(255);
@@ -1178,7 +1473,14 @@ void CMeteorChunk::Configure(int iMeteorType, bool bDebris)
 	// Retail keeps StreakerThink free of Little/Big smoke. The two other
 	// types emit three independent TE_SPRITE particles per think instead
 	// of relying on the shared beam-follow trail alone.
-	if (m_iMeteorType != 0)
+	if (m_iMeteorType == 0)
+	{
+		// Retail setzt fuer den Streaker ebenfalls einen Think (StreakerThink,
+		// 0x100a6600) mit nextthink +0.1; er raucht nicht, leuchtet aber.
+		SetThink(&CMeteorChunk::StreakerThink);
+		pev->nextthink = gpGlobals->time + 0.1f;
+	}
+	else
 	{
 		SetThink(&CMeteorChunk::SmokeThink);
 		pev->nextthink = gpGlobals->time + 0.1f;
@@ -1187,6 +1489,10 @@ void CMeteorChunk::Configure(int iMeteorType, bool bDebris)
 
 void CMeteorChunk::EmitSmokeSprite(int iScale, float flHeight, int iSpread)
 {
+	// Auch die Schweifwolken zaehlen gegen das Partikelbudget der Engine.
+	if (MeteorParticleBudget(1) == 0)
+		return;
+
 	MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, pev->origin);
 	WRITE_BYTE(TE_SPRITE);
 	WRITE_COORD(pev->origin.x + RANDOM_LONG(-iSpread, iSpread));
@@ -1196,6 +1502,40 @@ void CMeteorChunk::EmitSmokeSprite(int iScale, float flHeight, int iSpread)
 	WRITE_BYTE(iScale);
 	WRITE_BYTE(20);
 	MESSAGE_END();
+}
+
+void CMeteorChunk::EmitChunkLight(int iRadius, int iLife)
+{
+	// Kleines dynamisches Licht, das den fallenden Meteor und seinen Rauch beleuchtet.
+	// Nicht aus dem Retail-Dump (dort nur renderfx GlowShell), sondern auf Wunsch fuer die
+	// Sichtbarkeit des Schwarms ergaenzt.
+	MESSAGE_BEGIN(MSG_BROADCAST, SVC_TEMPENTITY);
+	WRITE_BYTE(TE_DLIGHT);
+	WRITE_COORD(pev->origin.x);
+	WRITE_COORD(pev->origin.y);
+	WRITE_COORD(pev->origin.z);
+	WRITE_BYTE(iRadius / 10);
+	WRITE_BYTE(255);
+	WRITE_BYTE(140);
+	WRITE_BYTE(60);
+	WRITE_BYTE(iLife / 10);
+	WRITE_BYTE(20);
+	MESSAGE_END();
+}
+
+void CMeteorChunk::StreakerThink()
+{
+	constexpr float WORLD_BOUNDS = 4096.0f;
+	if (pev->origin.x < -WORLD_BOUNDS || pev->origin.x > WORLD_BOUNDS ||
+		pev->origin.y < -WORLD_BOUNDS || pev->origin.y > WORLD_BOUNDS ||
+		pev->origin.z < -WORLD_BOUNDS || pev->origin.z > WORLD_BOUNDS)
+	{
+		UTIL_Remove(this);
+		return;
+	}
+
+	EmitChunkLight(120, 2);
+	pev->nextthink = gpGlobals->time + 0.05f;
 }
 
 void CMeteorChunk::SmokeThink()
@@ -1211,25 +1551,38 @@ void CMeteorChunk::SmokeThink()
 		return;
 	}
 
+	// Retail setzt in beiden Smoking-Thinks vor den Sprites den Glut-Schein:
+	// renderfx (+0x15c) = 0x13 (kRenderFxGlowShell), renderamt (+0x14c) = 100.0,
+	// rendercolor (+0x150..+0x158) = 255.0 / 130.0 / 30.0 (0x100a6fef bzw. 0x100a72af).
+	pev->renderfx = kRenderFxGlowShell;
+	pev->renderamt = 100.0f;
+	pev->rendercolor = Vector(255.0f, 130.0f, 30.0f);
+
+	EmitChunkLight(m_iMeteorType == 2 ? 200 : 150, 2);
+
 	if (m_iMeteorType == 2)
 	{
-		// BigSmokingMeteorThink @0x100a7230: three larger smoke sprites.
-		EmitSmokeSprite(25, 32.0f, 8);
-		EmitSmokeSprite(75, 256.0f, 16);
-		EmitSmokeSprite(100, 512.0f, 32);
+		// BigSmokingMeteorThink @0x100a7230: three larger smoke sprites, plus zwei
+		// zusaetzliche dichtere Wolken fuer eine rauchigere Spur.
+		EmitSmokeSprite(32, 32.0f, 8);
+		EmitSmokeSprite(70, 256.0f, 16);
+		EmitSmokeSprite(96, 512.0f, 32);
+		EmitSmokeSprite(77, 96.0f, 12);
+		EmitSmokeSprite(96, 192.0f, 24);
 	}
 	else
 	{
-		// LittleSmokingMeteorThink @0x100a6f70: three smaller sprites.
-		EmitSmokeSprite(50, 32.0f, 8);
-		EmitSmokeSprite(30, 128.0f, 16);
-		EmitSmokeSprite(15, 256.0f, 32);
+		// LittleSmokingMeteorThink @0x100a6f70: three smaller sprites, plus zwei
+		// zusaetzliche Wolken.
+		EmitSmokeSprite(45, 32.0f, 8);
+		EmitSmokeSprite(38, 128.0f, 16);
+		EmitSmokeSprite(29, 256.0f, 32);
+		EmitSmokeSprite(70, 64.0f, 10);
+		EmitSmokeSprite(90, 160.0f, 22);
 	}
 
-	// The retail particle cadence is driven by a private constant whose
-	// exact semantic unit is not recovered; 100 ms keeps the discrete
-	// particle trail continuous alongside the shared beam-follow.
-	pev->nextthink = gpGlobals->time + 0.1f;
+	// Retail-Takt ist 100 ms; fuer eine dichtere, laenger sichtbare Rauchspur hier 50 ms.
+	pev->nextthink = gpGlobals->time + 0.05f;
 }
 
 Vector CMeteorChunk::GetImpactOrigin() const
@@ -1313,6 +1666,90 @@ void CMeteorChunk::EmitEnhancedImpactEffects(const Vector& vecImpact, float flRa
 
 }
 
+void CMeteorChunk::EmitImpactFireAndSmoke(const Vector& vecImpact, float flRadius)
+{
+	// Feuer-Animation in zwei Schichten: ein kurzer Aufflacker-Burst und darunter eine
+	// laenger brennende Glut (kleinere Framerate => die Frames laufen laenger).
+	const int iBurst = m_iMeteorType == 2 ? 4 : 3;
+	for (int i = 0; i < iBurst; ++i)
+	{
+		const Vector vecPos = vecImpact + Vector(RANDOM_FLOAT(-32.0f, 32.0f),
+												RANDOM_FLOAT(-32.0f, 32.0f),
+												RANDOM_FLOAT(0.0f, 24.0f));
+		CSprite* pFire = CSprite::SpriteCreate("sprites/fire.spr", vecPos, true);
+		if (!pFire)
+			continue;
+
+		pFire->SetTransparency(kRenderTransAdd, 255, 190, 110, 255, kRenderFxNone);
+		pFire->SetScale(RANDOM_FLOAT(0.8f, 3.2f));
+		pFire->AnimateAndDie(RANDOM_FLOAT(8.0f, 12.0f));
+	}
+
+	// Brennende Stelle: groessere, langsamer ablaufende Flammen. Bei 4-6 fps laufen die
+	// 15 Frames 2,5-3,7 s, der Brand bleibt also nach dem Einschlag sichtbar.
+	const int iBurn = m_iMeteorType == 2 ? 2 : 1;
+	for (int i = 0; i < iBurn; ++i)
+	{
+		const Vector vecPos = vecImpact + Vector(RANDOM_FLOAT(-40.0f, 40.0f),
+												RANDOM_FLOAT(-40.0f, 40.0f),
+												RANDOM_FLOAT(0.0f, 8.0f));
+		CSprite* pBurn = CSprite::SpriteCreate("sprites/fire.spr", vecPos, true);
+		if (!pBurn)
+			continue;
+
+		pBurn->SetTransparency(kRenderTransAdd, 255, 140, 60, 255, kRenderFxNone);
+		pBurn->SetScale(RANDOM_FLOAT(1.8f, 4.2f));
+		pBurn->AnimateAndDie(RANDOM_FLOAT(4.0f, 6.0f));
+	}
+
+	// Stehende, dichte Rauchfahne ueber einen eigenen Emitter (2,5 s Nachspucken).
+	{
+		CMeteorSmoke* pSmokeEmitter = static_cast<CMeteorSmoke*>(Create("meteor_smoke", vecImpact, g_vecZero));
+		if (pSmokeEmitter)
+		{
+			pSmokeEmitter->m_vecCenter = vecImpact;
+			pSmokeEmitter->m_flStartTime = gpGlobals->time;
+			pSmokeEmitter->m_flEndTime = gpGlobals->time + RANDOM_FLOAT(1.8f, 2.4f);
+		}
+	}
+
+	// Rauch: dichtere Fahne aus zwei Hoehenbaendern, groessere Wolken als zuvor.
+	const int iSmoke = MeteorParticleBudget(m_iMeteorType == 2 ? 10 : 6);
+	for (int i = 0; i < iSmoke; ++i)
+	{
+		const float flHeight = (i % 2) ? RANDOM_FLOAT(0.0f, 32.0f) : RANDOM_FLOAT(40.0f, 110.0f);
+		const Vector vecPos = vecImpact + Vector(RANDOM_FLOAT(-56.0f, 56.0f),
+												RANDOM_FLOAT(-56.0f, 56.0f), flHeight);
+		MESSAGE_BEGIN(MSG_PAS, SVC_TEMPENTITY, vecPos);
+		WRITE_BYTE(TE_SPRITE);
+		WRITE_COORD(vecPos.x);
+		WRITE_COORD(vecPos.y);
+		WRITE_COORD(vecPos.z);
+		WRITE_SHORT((i % 3) ? m_iSmokeSprite : m_iSmokePuffSprite);
+		WRITE_BYTE((i % 3) == 0 ? RANDOM_LONG(50, 110) : ((i % 3) == 1 ? RANDOM_LONG(110, 190)
+																							: RANDOM_LONG(190, 255)));
+		WRITE_BYTE(RANDOM_LONG(6, 12));
+		MESSAGE_END();
+	}
+
+	// Zusaetzlich ein paar langsam aufsteigende TE_SMOKE-Wolken fuer eine stehende Fahne.
+	const int iDrift = MeteorParticleBudget(4);
+	for (int i = 0; i < iDrift; ++i)
+	{
+		const Vector vecPos = vecImpact + Vector(RANDOM_FLOAT(-40.0f, 40.0f),
+												RANDOM_FLOAT(-40.0f, 40.0f), RANDOM_FLOAT(0.0f, 24.0f));
+		MESSAGE_BEGIN(MSG_PAS, SVC_TEMPENTITY, vecPos);
+		WRITE_BYTE(TE_SMOKE);
+		WRITE_COORD(vecPos.x);
+		WRITE_COORD(vecPos.y);
+		WRITE_COORD(vecPos.z);
+		WRITE_SHORT(m_iSmokeSprite);
+		WRITE_BYTE(RANDOM_LONG(120, 250));
+		WRITE_BYTE(RANDOM_LONG(8, 14));
+		MESSAGE_END();
+	}
+}
+
 void CMeteorChunk::ChunkTouch(CBaseEntity* pOther)
 {
 	const Vector vecImpact = GetImpactOrigin();
@@ -1329,13 +1766,156 @@ void CMeteorChunk::ChunkTouch(CBaseEntity* pOther)
 		break;
 	}
 
-	const float flDamage = m_iMeteorType == 2 ? 100.0f : 50.0f;
-	const float flRadius = m_iMeteorType == 2 ? 400.0f : 100.0f;
-	EmitRetailDebris(vecImpact);
-	EmitEnhancedImpactEffects(vecImpact, flRadius);
+	// Ausnahme: Auf der schwarzen Canyon-Textur ("black") keine Effekte abspielen.
+	// Die Textur wird ueber TRACE_TEXTURE bestimmt; Schaden, Sound und Erschuetterung bleiben.
+	// Ausnahme: Auf der schwarzen Canyon-Textur ("black") keine Effekte abspielen.
+	// Textur ueber TRACE_TEXTURE; Brush-Entities (func_wall & Co.) muessen als Tragee-Entity
+	// uebergeben werden, sonst liefert der Trace dort keinen Namen und der Einschlag wuerde
+	// faelschlich als "keine Oberflaeche" behandelt.
+	bool bSuppressEffects = false;
+	{
+		// Sonde entgegen der Flugrichtung (deckt Wand- und Deckentreffer ab), ersatzweise
+		// senkrecht nach unten.
+		Vector vecProbe = -1.0f * pev->velocity;
+		if (vecProbe.Length() < 1.0f)
+			vecProbe = Vector(0, 0, -1);
+		vecProbe.Normalize();
+
+		float rgflStart[3] = {vecImpact.x + vecProbe.x * 4.0f, vecImpact.y + vecProbe.y * 4.0f,
+			vecImpact.z + vecProbe.z * 4.0f};
+		float rgflEnd[3] = {vecImpact.x + vecProbe.x * 48.0f, vecImpact.y + vecProbe.y * 48.0f,
+			vecImpact.z + vecProbe.z * 48.0f};
+
+		const bool bBrushHit = pOther && pOther->pev->solid == SOLID_BSP;
+		// Welt-Treffer direkt gegen die Welt tracen; nur echte Brush-Entities separat.
+		const bool bWorldHit = bBrushHit && pOther->edict() == INDEXENT(0);
+		edict_t* pTraceEntity = (bBrushHit && !bWorldHit) ? ENT(pOther->pev) : INDEXENT(0);
+
+		// Mehrere Distanzen und Richtungen probieren: bei Treffern innerhalb von Brush-
+		// Geometrie liegt die Oberflaeche oft ausserhalb des kurzen 48-Einheiten-Fensters.
+		const char* szTexture = nullptr;
+		const float rgflDistances[3] = {48.0f, 128.0f, 320.0f};
+		for (int iPass = 0; iPass < 2 && !szTexture; ++iPass)
+		{
+			const Vector vecDir = iPass == 0 ? vecProbe : Vector(0, 0, -1);
+
+			for (int iDist = 0; iDist < 3 && !szTexture; ++iDist)
+			{
+				const float flDist = rgflDistances[iDist];
+				float rgflS[3] = {vecImpact.x + vecDir.x * 4.0f, vecImpact.y + vecDir.y * 4.0f,
+					vecImpact.z + vecDir.z * 4.0f};
+				float rgflE[3] = {vecImpact.x + vecDir.x * flDist, vecImpact.y + vecDir.y * flDist,
+					vecImpact.z + vecDir.z * flDist};
+
+				szTexture = TRACE_TEXTURE(pTraceEntity, rgflS, rgflE);
+				if (szTexture && szTexture[0] == '\0')
+					szTexture = nullptr;
+
+				if (!szTexture && pTraceEntity != INDEXENT(0))
+				{
+					szTexture = TRACE_TEXTURE(INDEXENT(0), rgflS, rgflE);
+					if (szTexture && szTexture[0] == '\0')
+						szTexture = nullptr;
+				}
+			}
+		}
+
+		if (szTexture)
+		{
+			const char* szName = szTexture;
+			while (*szName == '{' || *szName == '+')
+				++szName;
+			// "black" = Canyon-Grund; "sky" = Himmel-/Skybrush-Flaechen (im Canyon ist der
+			// Boden teilweise nicht als Brush vorhanden, der Meteor trifft dann die Skybox).
+			bSuppressEffects = (stricmp(szName, "black") == 0) || (strnicmp(szName, "sky", 3) == 0);
+		}
+		else
+		{
+			// Kein Texturtreffer: Treffer auf eine bewegliche Entity oder ein in der Luft
+			// zerstoerter Splitter. Brush-Treffer (func_wall u. a.) behalten die Effekte,
+			// auch wenn ihre Textur nicht ermittelbar ist.
+			bSuppressEffects = !bBrushHit;
+		}
+
+
+
+	}
+
+	// Branddecal am Einschlagspunkt: kurzer Trace von knapp ueber dem Impact nach unten.
+	// (Nutzerwunsch; im Retail-Dump nicht nachgewiesen, aber ohne Decal wirkt der Einschlag
+	//  leer.)
+	{
+		TraceResult trDecal;
+		UTIL_TraceLine(vecImpact + Vector(0, 0, 8), vecImpact - Vector(0, 0, 48), ignore_monsters,
+			ENT(pev), &trDecal);
+		if (trDecal.flFraction < 1.0f && !bSuppressEffects)
+			UTIL_DecalTrace(&trDecal, DECAL_SCORCH1 + RANDOM_LONG(0, 1));
+	}
+
+	if (!bSuppressEffects)
+		EmitChunkLight(m_iMeteorType == 2 ? 260 : 200, 3);
+
+	// Schaden/Radius reduziert (Nutzerbefund: toetet Roboter in der Station zu leicht);
+	// gesprengt wird vom Bodenpunkt aus, damit die Explosion nicht in Waenden steckt.
+	const float flDamage = m_iMeteorType == 2 ? 55.0f : 30.0f;
+	const float flRadius = m_iMeteorType == 2 ? 320.0f : 110.0f;
+	// Bodenpunkt auch fuer den Schaden ermitteln (ausserhalb des Effekt-Blocks).
+	Vector vecRockOrigin = vecImpact;
+	{
+		TraceResult trGround0;
+		UTIL_TraceLine(vecImpact, vecImpact - Vector(0, 0, 512.0f), ignore_monsters, ENT(pev), &trGround0);
+		if (trGround0.flFraction < 1.0f && !trGround0.fStartSolid)
+			vecRockOrigin = trGround0.vecEndPos + Vector(0, 0, 8.0f);
+	}
+
+	// Fluessigkeiten gleich mit ausgewertet: unter Wasser/Lava/Schleim kein Feuer und kein Rauch
+	// (Nutzerwunsch), und auch keine Steinbrocken.
+	const int iContents = UTIL_PointContents(vecRockOrigin);
+	const bool bLiquidHit = (iContents == CONTENTS_WATER) || (iContents == CONTENTS_LAVA) ||
+							(iContents == CONTENTS_SLIME);
+
+	if (!bSuppressEffects)
+	{
+		EmitRetailDebris(vecImpact);
+		EmitEnhancedImpactEffects(vecImpact, flRadius);
+
+		// Rauch und zusaetzliche Feuer-Animation am Einschlag (Nutzerwunsch) - nicht unter
+		// Wasser/Lava/Schleim.
+		if (!bLiquidHit)
+			EmitImpactFireAndSmoke(vecImpact, flRadius);
+
+		// Steinfragmente: Client erzeugt Temp-Modelle models/w_gibs_all.mdl (Skin 1 = GIB_ROCK),
+		// portiert aus hl15we EV_Wallgib.
+		// Spawnpunkt auf Bodenhoehe: vom Impact-Punkt senkrecht nach unten tasten und am
+		// Trefferpunkt (leicht darueber) spawnen; ohne Treffer bleibt der alte Versatz.
+
+		// Keine Steine bei Einschlaegen unter Wasser, Lava oder Schleim (Nutzerwunsch).
+		if (!bLiquidHit)
+		{
+		MESSAGE_BEGIN(MSG_PAS, gmsgRockGib, vecRockOrigin);
+		WRITE_COORD(vecRockOrigin.x);
+		WRITE_COORD(vecRockOrigin.y);
+		WRITE_COORD(vecRockOrigin.z);
+		WRITE_BYTE(MeteorParticleBudget(m_iMeteorType == 2 ? RANDOM_LONG(8, 12) : RANDOM_LONG(4, 8)));
+		WRITE_SHORT(m_iMeteorType == 2 ? RANDOM_LONG(600, 900) : RANDOM_LONG(350, 650));
+		WRITE_BYTE(RANDOM_LONG(120, 220)); // Scale * 50 -> 2,4 .. 4,4 (deutlich groessere Brocken)
+		WRITE_BYTE(1);                   // Skin 1 = GIB_ROCK
+		MESSAGE_END();
+		}
+
+		// Erschuetterung nur bei Einschlaegen, die auch Effekte abspielen (Nutzerwunsch).
+		// Radius deutlich groesser als der Schadensradius, damit auch weit entfernte Einschlaege
+		// noch spuerbar sind (lineare Abnahme ueber den Radius).
+		MeteorScreenShake(vecImpact, m_iMeteorType == 2 ? 6.0f : 3.0f,
+			m_iMeteorType == 2 ? 16000.0f : 10000.0f);
+	}
+
+	// Erschuetterung beim Einschlag (Nutzerwunsch). Der Radius des ScreenShake ist bewusst
+	// groesser als der Schadensradius, damit auch entfernte Einschlaege noch spuerbar sind;
+	// im Retail gibt es an dieser Stelle nur RadiusDamage.
 	// Both retail type-specific paths first move the meteor to their
 	// calculated impact point and then apply the area damage from there.
-	RadiusDamage(vecImpact, pev, pev, flDamage, flRadius, CLASS_NONE, DMG_BLAST);
+	RadiusDamage(vecRockOrigin, pev, pev, flDamage, flRadius, CLASS_NONE, DMG_BLAST);
 
 	UTIL_Remove(this);
 }
@@ -1540,8 +2120,18 @@ void CMeteorGod::Spawn()
 	pev->solid = SOLID_NOT;
 	pev->movetype = MOVETYPE_NONE;
 	UTIL_SetOrigin(pev, pev->origin);
-	UTIL_MakeAimVectors(pev->angles);
-	m_vecDropDirection = gpGlobals->v_forward;
+	// Retail (Spawn 0x100a62f0, Richtung landet in this+0x40..0x48) rechnet die Fallrichtung
+	// direkt aus pev->angles ohne die Pitch-Negation von UTIL_MakeAimVectors. Mit der
+	// Negation zeigt v_forward bei pitch -90 nach unten, und velocity = dir * RANDOM(-1600,-1200)
+	// wird dadurch nach OBEN gespiegelt - die Meteore stiegen statt zu fallen.
+	{
+		float rgflAngles[3] = {pev->angles.x, pev->angles.y, pev->angles.z};
+		float rgflForward[3] = {0, 0, 0};
+		float rgflRight[3] = {0, 0, 0};
+		float rgflUp[3] = {0, 0, 0};
+		g_engfuncs.pfnAngleVectors(rgflAngles, rgflForward, rgflRight, rgflUp);
+		m_vecDropDirection = Vector(rgflForward[0], rgflForward[1], rgflForward[2]);
+	}
 
 	// Retail Spawn starts inactive when bit 1 is set; Use toggles this
 	// state independently of the USE_TYPE argument.
@@ -1582,13 +2172,16 @@ void CMeteorGod::ShowerThink()
 	CBaseEntity* pChunk = CBaseEntity::Create("meteor_god_chunk", vecSpot, g_vecZero, edict());
 	if (pChunk)
 	{
-		const int iTotalWeight = m_iTypeStreak + m_iTypeLarge + m_iTypeSmall;
-		const int iChoice = RANDOM_LONG(1, iTotalWeight > 0 ? iTotalWeight : 1);
+		// Retail (0x100a6488-0x100a64b9): RANDOM_LONG(0, streak+small+large) und dann
+		// aufsteigend zugeordnet - <= streak -> Streaker(0), <= streak+small -> Small(1),
+		// <= streak+small+large -> Large(2).
+		const int iTotalWeight = m_iTypeStreak + m_iTypeSmall + m_iTypeLarge;
+		const int iChoice = RANDOM_LONG(0, iTotalWeight > 0 ? iTotalWeight : 1);
 		int iMeteorType = 0;
-		if (iChoice > m_iTypeStreak && iChoice <= m_iTypeStreak + m_iTypeLarge)
-			iMeteorType = 2;
-		else if (iChoice > m_iTypeStreak + m_iTypeLarge)
+		if (iChoice > m_iTypeStreak && iChoice <= m_iTypeStreak + m_iTypeSmall)
 			iMeteorType = 1;
+		else if (iChoice > m_iTypeStreak + m_iTypeSmall)
+			iMeteorType = 2;
 
 		auto pMeteor = static_cast<CMeteorChunk*>(pChunk);
 		pMeteor->Configure(iMeteorType, m_bDebris);
