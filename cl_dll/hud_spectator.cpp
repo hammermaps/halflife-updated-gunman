@@ -1214,10 +1214,15 @@ void CHudSpectator::SetModes(int iNewMainMode, int iNewInsetMode)
 
 		if ((g_iUser1 == OBS_IN_EYE) || (g_iUser1 == OBS_ROAMING))
 		{
-			m_crosshairRect.left = 24;
-			m_crosshairRect.top = 0;
-			m_crosshairRect.right = 48;
-			m_crosshairRect.bottom = 24;
+			// Retail-Gunman-Raster, nicht das Stock-HL-Raster: in
+			// sprites/crosshairs.spr (256x128) liegt das erste Kreuz bei
+			// (35,2)-(61,28), also in der Zelle 34,1 31x31. Das Stock-HL-Rect
+			// 24,0 24x24 schneidet es rechts und unten ab. Gleiche Zelle wie
+			// das Shotgun-Kreuz (weapon_shotgun.txt: "640 crosshairs 34 1 31 31").
+			m_crosshairRect.left = 34;
+			m_crosshairRect.top = 1;
+			m_crosshairRect.right = 65;
+			m_crosshairRect.bottom = 32;
 
 			SetCrosshair(m_hCrosshair, m_crosshairRect, 255, 255, 255);
 		}
@@ -1875,12 +1880,14 @@ void CHudSpectator::CheckSettings()
 	}
 
 	// HL/TFC has no oberserver corsshair, so set it client side
+	// Gunman-Raster: Kreuzzelle 34,1 31x31 (Begruendung im Kommentar in
+	// CHudSpectator::SetModes oben).
 	if ((g_iUser1 == OBS_IN_EYE) || (g_iUser1 == OBS_ROAMING))
 	{
-		m_crosshairRect.left = 24;
-		m_crosshairRect.top = 0;
-		m_crosshairRect.right = 48;
-		m_crosshairRect.bottom = 24;
+		m_crosshairRect.left = 34;
+		m_crosshairRect.top = 1;
+		m_crosshairRect.right = 65;
+		m_crosshairRect.bottom = 32;
 
 		SetCrosshair(m_hCrosshair, m_crosshairRect, 255, 255, 255);
 	}
