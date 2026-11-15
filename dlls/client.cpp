@@ -688,6 +688,9 @@ void ClientCommand(edict_t* pEntity)
 		const char* pUnderscore = strchr(pcmd, '_');
 		const char cOption = pUnderscore[1];
 		const int iValue = atoi(pUnderscore + 2);
+		if (CVAR_GET_FLOAT("gm_info") > 0.0f)
+			ALERT(at_console, "[srv] cust pcmd=%s option=%c value=%d weapon=%s\n",
+				pcmd, cOption, iValue, player->m_pActiveItem ? player->m_pActiveItem->pszName() : "none");
 		if (cOption < '1')
 			ALERT(at_console, "Illegal option number\n");
 		else if (player->m_pActiveItem)
@@ -1333,6 +1336,28 @@ void ClientCommand(edict_t* pEntity)
 			"dbg_sniper: Event %d bei (%.0f %.0f %.0f) yaw=%.0f\n",
 			g_iDbgSniperEvent, vecSrc.x, vecSrc.y, vecSrc.z, pev->v_angle.y));
 	}
+	else if (FStrEq(pcmd, "dbg_chargedimpact"))
+	{
+		// Testhilfe: spielt events/ChargedImpact.sc vom Spieler aus ab, damit
+		// das Typ-2-Fan-Band des Gauss-Einschlags reproduzierbar ist
+		// (Retail-Aufrufstelle 0x1000188a).
+		extern int g_iDbgChargedImpactEvent;
+
+		if (0 == g_psv_cheats->value || 0 == g_iDbgChargedImpactEvent)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE,
+				"dbg_chargedimpact: nicht verfuegbar (sv_cheats 1 bzw. Event-Precache)\n");
+			return;
+		}
+
+		Vector vecSrc = pev->origin + pev->view_ofs;
+		PLAYBACK_EVENT_FULL(FEV_RELIABLE, pEntity, (unsigned short)g_iDbgChargedImpactEvent, 0.0f,
+			vecSrc, pev->v_angle, 0.0f, 0.0f, 0, 0, 0, 0);
+
+		ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs(
+			"dbg_chargedimpact: Event %d bei (%.0f %.0f %.0f) yaw=%.0f\n",
+			g_iDbgChargedImpactEvent, vecSrc.x, vecSrc.y, vecSrc.z, pev->v_angle.y));
+	}
 	else if (FStrEq(pcmd, "dbg_eyemode"))
 	{
 		// Debug: Rendermodus der Gunner-Augen-Sprites in der Naehe setzen,
@@ -1364,6 +1389,68 @@ void ClientCommand(edict_t* pEntity)
 		ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs(
 			"dbg_eyemode: %d Sprite(s) auf rendermode %d gesetzt (Radius %.0f)\n",
 			iCount, iMode, flRadius));
+	}
+	else if (FStrEq(pcmd, "dbg_rauch"))
+	{
+		// Debug (Test 2026-11-09): Muendungsrauch und Wallpuff an einer
+		// sichtbaren Stelle ausloesen. Prueft den Engine-Temp-Entity-Weg
+		// (TE_SPRITE/TE_SMOKE) unabhaengig von Waffe und Projektil.
+		if (0 == g_psv_cheats->value)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "usage: dbg_rauch (needs sv_cheats 1)\n");
+			return;
+		}
+
+		UTIL_MakeVectors(pev->v_angle);
+
+		const Vector vecSrc = pev->origin + pev->view_ofs;
+		const Vector vecEnd = vecSrc + gpGlobals->v_forward * 2048.0f;
+
+		TraceResult tr;
+		UTIL_TraceLine(vecSrc, vecEnd, ignore_monsters, pEntity, &tr);
+
+		UTIL_MuzzleSmoke(vecSrc, gpGlobals->v_forward);
+
+		if (tr.flFraction < 1.0f)
+		{
+			UTIL_WallPuff(tr.vecEndPos + tr.vecPlaneNormal * 2.0f, tr.vecPlaneNormal);
+		}
+		else
+		{
+			// Kein Treffer in 2048 Einheiten (langer Gang): Puff frei in der
+			// Luft setzen, damit der Zeichenweg trotzdem pruefbar ist.
+			UTIL_WallPuff(vecSrc + gpGlobals->v_forward * 120.0f, -gpGlobals->v_forward);
+		}
+
+		// Kontroll-Sprite entfernt (Test 2026-11-09, #927-Nachtrag): explode1
+		// stand 14 Units vor dem Wandpuff und verdeckte ihn im Bild. Der
+		// Wandpuff selbst ist jetzt ohne Ueberlagerung messbar.
+
+		ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs(
+			"dbg_rauch: frac=%.2f hit=%.0f %.0f %.0f\n",
+			tr.flFraction, tr.vecEndPos.x, tr.vecEndPos.y, tr.vecEndPos.z));
+	}
+	else if (FStrEq(pcmd, "dbg_muzzle"))
+	{
+		// Debug (Test 2026-11-09): nur den Muendungsrauch senden, ohne
+		// Wandpuff und ohne Kontrollsprite.
+		if (0 == g_psv_cheats->value)
+		{
+			ClientPrint(pev, HUD_PRINTCONSOLE, "usage: dbg_muzzle (needs sv_cheats 1)\n");
+			return;
+		}
+
+		Vector vForward, vRight, vUp;
+
+		UTIL_MakeVectorsPrivate(pev->v_angle, vForward, vRight, vUp);
+
+		const Vector vecSrc = pev->origin + pev->view_ofs;
+
+		UTIL_MuzzleSmoke(vecSrc, vForward);
+
+		ClientPrint(pev, HUD_PRINTCONSOLE, UTIL_VarArgs(
+			"dbg_muzzle: Muendungsrauch gesendet dir=%.2f %.2f %.2f\n",
+			vForward.x, vForward.y, vForward.z));
 	}
 	else if (FStrEq(pcmd, "dbg_kata"))
 	{

@@ -3105,11 +3105,15 @@ void CBasePlayer::Spawn()
 
 // Event-Index fuer den Debug-Befehl `dbg_sniper` (Test der Sniper-Effektkette).
 int g_iDbgSniperEvent = 0;
+// Event-Index fuer `dbg_chargedimpact` (Test des Typ-2-Fan-Bands).
+int g_iDbgChargedImpactEvent = 0;
 
 void CBasePlayer::Precache()
 {
 	// Sniper-Schuss-Event fuer `dbg_sniper` (Testhilfe, siehe client.cpp).
 	g_iDbgSniperEvent = PRECACHE_EVENT(1, "events/snipershot.sc");
+	// Einschlag-Event der Gauss-Pistole fuer `dbg_chargedimpact`.
+	g_iDbgChargedImpactEvent = PRECACHE_EVENT(1, "events/ChargedImpact.sc");
 
 	// SOUNDS / MODELS ARE PRECACHED in ClientPrecache() (game specific)
 	// because they need to precache before any clients have connected

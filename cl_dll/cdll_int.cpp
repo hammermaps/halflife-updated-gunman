@@ -38,6 +38,7 @@
 #include "tri.h"
 #include "vgui_TeamFortressViewport.h"
 #include "filesystem_utils.h"
+#include "event_api.h"
 
 cl_enginefunc_t gEngfuncs;
 CHud gHUD;
@@ -339,7 +340,21 @@ void DLLEXPORT HUD_Frame(double time)
 			s_bCustomCvar = true;
 		}
 
-		if (gEngfuncs.pfnGetCvarFloat("gm_test_custom") > 0.0f)
+		if (gEngfuncs.pfnGetCvarFloat("gm_test_custom") >= 2.0f)
+		{
+			// Diagnosemodus: Menue offen halten, damit ein Screenshot die
+			// Darstellung belegt. Mehrfachversuche, weil +custom im ersten
+			// Frame noch vor der CurWeapon-Nachricht laufen kann (m_pWeapon
+			// dann NULL und die Auswahl bricht ab).
+			if (s_iCustomTimer < s_iTestFrame && s_iCustomStep < 20)
+			{
+				gEngfuncs.pfnClientCmd("+custom\n");
+				gEngfuncs.Con_Printf("[test] custom menu open attempt %d (frame %d)\n", s_iCustomStep + 1, s_iTestFrame);
+				s_iCustomTimer = s_iTestFrame + 30;
+				s_iCustomStep++;
+			}
+		}
+		else if (gEngfuncs.pfnGetCvarFloat("gm_test_custom") > 0.0f)
 		{
 			if (s_iCustomTimer < s_iTestFrame)
 			{
@@ -357,6 +372,159 @@ void DLLEXPORT HUD_Frame(double time)
 	}
 
 	const float flTestMode = gEngfuncs.pfnGetCvarFloat("gm_test_fire");
+
+	// Kontrollaufruf fuer den Client-Sprite-Zeichenweg (`gm_test_sprite 1`):
+	// emittiert regelmaessig vier bekannte Sprites (zwei Modelle x zwei
+	// Rendermodi) links/rechts vom Fadenkreuz und loggt Modellindex und
+	// Position. Damit ist trennbar, ob `pEfxAPI->R_TempSprite` aus der
+	// Client-DLL in diesem Xash-Build ueberhaupt zeichnet und ob ein
+	// unsichtbarer Effekt am Sprite (zu dunkel) oder am Rendermodus liegt
+	// (Arbeitsvorschlag 2026-11-09, Schritt A).
+	// Bewusst gedrosselt: bei jedem Frame plus `life` waere die Temp-Entity-
+	// Liste (Limit ~500) sofort voll und der Kontrollaufruf selbst wuerde
+	// nichts mehr zeichnen.
+	{
+		static bool s_bSpriteCvar = false;
+		static int s_iSpriteCount = 0;
+
+		if (!s_bSpriteCvar)
+		{
+			gEngfuncs.pfnRegisterVariable("gm_test_sprite", "0", FCVAR_ARCHIVE);
+			s_bSpriteCvar = true;
+		}
+
+		const float flSpriteMode = gEngfuncs.pfnGetCvarFloat("gm_test_sprite");
+
+		// Modus 2: Liste der Rauch-Kandidaten, je 36 Frames ein anderer Sprite
+		// mittig vor dem Auge. Life 0,55 s, damit sich die Fenster nicht
+		// ueberlappen (36 Frames bei 60 fps = 0,6 s). Welcher Kandidat
+		// aufhellt, ist der brauchbare; `smokepuff` bleibt als Kontrolle in
+		// der Liste. (Arbeitsvorschlag 2026-11-09_e, Punkt 1.1.)
+		if (flSpriteMode >= 2.0f && (s_iTestFrame % 36) == 0)
+		{
+			cl_entity_t *pLocal = gEngfuncs.GetLocalPlayer();
+
+			if (pLocal)
+			{
+				static const struct
+				{
+					const char *szModel;
+					float flScale;
+				} s_rgSmoke[] =
+				{
+					{"sprites/smoke.spr", 0.5f},
+					{"sprites/gausspuff.spr", 0.5f},
+					{"sprites/smoker_gray.spr", 0.75f},
+					{"sprites/wallpuff.spr", 0.75f},
+					{"sprites/smokepuff.spr", 0.5f},	// Kontrolle (bisher unsichtbar)
+				};
+
+				static int s_iSmokeIdx = 0;
+
+				float flAngles[3] = {0.0f, 0.0f, 0.0f};
+				float flForward[3] = {1.0f, 0.0f, 0.0f};
+				float flZero[3] = {0.0f, 0.0f, 0.0f};
+
+				gEngfuncs.GetViewAngles(flAngles);
+				gEngfuncs.pfnAngleVectors(flAngles, flForward, nullptr, nullptr);
+
+				Vector vecPos = pLocal->origin + Vector(0.0f, 0.0f, 28.0f)
+					+ Vector(flForward) * 100.0f;
+
+				const int iCount = (int)(sizeof(s_rgSmoke) / sizeof(s_rgSmoke[0]));
+
+				// Modus 2 = Liste (Zyklus), Modus 3..7 = genau ein Kandidat
+				// (Arbeitsvorschlag 2026-11-09_f, Punkt 1.1: ohne Zeitachsen-
+				// problem ist jeder Sprite eindeutig zuzuordnen).
+				int iSel;
+				if (flSpriteMode >= 3.0f)
+				{
+					iSel = (int)flSpriteMode - 3;
+					if (iSel < 0) iSel = 0;
+					if (iSel >= iCount) iSel = iCount - 1;
+				}
+				else
+				{
+					iSel = s_iSmokeIdx++ % iCount;
+				}
+
+				const int iModel = gEngfuncs.pEventAPI->EV_FindModelIndex(s_rgSmoke[iSel].szModel);
+
+				TEMPENTITY *pTemp = gEngfuncs.pEfxAPI->R_TempSprite((float *)&vecPos, flZero,
+					s_rgSmoke[iSel].flScale, iModel, kRenderTransAdd, kRenderFxNone, 1.0f, 0.55f,
+					FTENT_FADEOUT);
+
+				s_iSpriteCount++;
+
+				gEngfuncs.Con_Printf("[ctl] smoke n=%d mode=%.0f idx=%d sprite=%s model=%d(%p) "
+					"at %.0f/%.0f/%.0f\n",
+					s_iSpriteCount, flSpriteMode, iSel, s_rgSmoke[iSel].szModel, iModel,
+					(void *)pTemp, vecPos.x, vecPos.y, vecPos.z);
+			}
+		}
+
+		if (flSpriteMode > 0.0f && flSpriteMode < 2.0f && (s_iTestFrame % 36) == 0)
+		{
+			cl_entity_t *pLocal = gEngfuncs.GetLocalPlayer();
+
+			if (pLocal)
+			{
+				float flAngles[3] = {0.0f, 0.0f, 0.0f};
+				float flForward[3] = {1.0f, 0.0f, 0.0f};
+				float flRight[3] = {0.0f, 1.0f, 0.0f};
+				float flUp[3] = {0.0f, 0.0f, 1.0f};
+				float flZero[3] = {0.0f, 0.0f, 0.0f};
+
+				gEngfuncs.GetViewAngles(flAngles);
+				gEngfuncs.pfnAngleVectors(flAngles, flForward, flRight, flUp);
+
+				// Nah an der Kamera und dicht beieinander: so liegen alle vier
+				// Slots in freier Luft vor dem Spieler und koennen nicht von
+				// Tuerrahmen/Waenden verdeckt werden (Occlusion-Test 1 lief
+				// genau darin auf: nur der Slot im Tuerdurchgang war sichtbar).
+				const Vector vecBase = pLocal->origin + Vector(0.0f, 0.0f, 28.0f)
+					+ Vector(flForward) * 100.0f;
+
+				static const struct
+				{
+					const char *szModel;
+					int iRenderMode;
+					float flSide;
+				} s_rgCtl[] =
+				{
+					{"sprites/steam1.spr", kRenderGlow, -45.0f},
+					{"sprites/steam1.spr", kRenderTransAdd, -15.0f},
+					{"sprites/explode1.spr", kRenderGlow, 15.0f},
+					{"sprites/explode1.spr", kRenderTransAdd, 45.0f},
+					// Rauch-Sprite gegen den belegten Zeichenweg pruefen
+					// (Arbeitsvorschlag 2026-11-09 nach B, Punkt 1.1):
+					// derselbe Aufruf wie beim Server-TE_SPRITE, aber direkt
+					// aus der Client-DLL. Bleibt der Slot leer, ist der
+					// Sprite selbst (zu dunkel/transparent) die Ursache.
+					{"sprites/smokepuff.spr", kRenderTransAdd, -75.0f},
+					{"sprites/smokepuff.spr", kRenderTransAlpha, 75.0f},
+				};
+
+				s_iSpriteCount++;
+
+				for (int i = 0; i < (int)(sizeof(s_rgCtl) / sizeof(s_rgCtl[0])); i++)
+				{
+					Vector vecPos = vecBase + Vector(flRight) * s_rgCtl[i].flSide;
+					const int iModel = gEngfuncs.pEventAPI->EV_FindModelIndex(s_rgCtl[i].szModel);
+
+					TEMPENTITY *pTemp = gEngfuncs.pEfxAPI->R_TempSprite((float *)&vecPos, flZero,
+						0.2f, iModel, s_rgCtl[i].iRenderMode, kRenderFxNone, 1.0f, 4.0f,
+						FTENT_FADEOUT);
+
+					gEngfuncs.Con_Printf("[ctl] tempsprite n=%d slot=%d mode=%d model=%d(%p) "
+						"at %.0f/%.0f/%.0f\n",
+						s_iSpriteCount, i, s_rgCtl[i].iRenderMode, iModel, (void *)pTemp,
+						vecPos.x, vecPos.y, vecPos.z);
+				}
+			}
+		}
+	}
+
 	if (flTestMode <= 0.0f)
 		return;
 
