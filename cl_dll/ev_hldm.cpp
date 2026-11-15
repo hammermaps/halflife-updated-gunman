@@ -2035,36 +2035,30 @@ void EV_BallLightning(event_args_t* args)
 }
 
 // Effektlisten-Eintraege (Definitionen weiter unten).
+void EV_AddEffectTube(const Vector& vecOrigin, const Vector& vecDir, float flRate,
+	float flAlphaStart, float flAlphaRate, int iSprite);
+void EV_AddEffectFan(const Vector& vecOrigin, const Vector& vecDir, float flWidth,
+	float flRate, float flAlphaStart, float flAlphaRate, int iSprite, int iType);
 void EV_AddEffectEntityTube(int iEntIndex, const Vector& vecDir, float flRate,
 	float flAlphaStart, float flAlphaRate, int iSprite);
 
 // Retail 0x10008020 (Event "events/batbotbeam.sc").
 //
-// Belegt aus Decompilat + Disassembly + Engine-Slot-Tabelle:
-//   * Sprite: "sprites/hugeball.spr" (0x10076544) ueber pfnSPR_Load (idx 0)
-//     und GetSpritePointer (idx 62); GetClientTime (idx 54) liefert den
-//     Startzeitpunkt.
-//   * Richtung: VectorSet(this, 0, 0, -1) -> (0, 0, -1), per VectorCopy
-//     zweimal in den 18-Dword-Effektknoten kopiert.
-//   * Konstruktor 0x10002870(this, 4.0) legt +0x00 = 1.0 (Alpha), +0x1c = 4.0
-//     (Skalierung) sowie die uebrigen Felder aus dem Stack fest; der Helfer
-//     0x10002ae0 haengt den Knoten an die zyklische Effektliste (76-Byte-
-//     Knoten, Verkettung +0x48, Ringpuffer bei 64000).
-//   * Stackreste an der Aufrufstelle: 6.0, 240.0, 7, 0.1 — in Reihenfolge
-//     Lebensdauer/Geschwindigkeit/Anzahl/Alpha-Rate (Deutung, nicht belegt).
-//
-// Abweichung: Retail legt einen Eintrag in seine Effektliste und rendert ihn
-// spaeter mit dem Sprite aus dem Knoten. Diese Liste hat unser Port nicht in
-// dieser Form, deshalb wird der Ball direkt als Temp-Sprite erzeugt. Sichtbar
-// ist derselbe Sprite am selben Ort; die Wiederverwendung des Listeneintrags
-// (mehrere Baelle je Strahl) ist nicht nachgebildet.
+// Belegt aus Decompilat + Disassembly der Aufrufstelle 0x100080a8:
+//   * Sprite: "sprites/hugeball.spr" (0x10076544) ueber pfnSPR_Load +
+//     GetSpritePointer, als Feld [0xe] in den Knoten kopiert.
+//   * Konstruktor 0x10002870(this, 4.0) mit 16 Argumenten (ret 0x40):
+//     [7]=4.0, [8]=0.1, [0xa]=7 (Typ), [0xb]=240.0, [0xc]=6.0,
+//     [0xd]=GetClientTime(), [0xe]=Sprite, [0xf]=Event-Arg +0x4,
+//     [0x10]=[0x11]=0; Vektor A ([1..3]) = Event-Origin,
+//     Vektor B ([4..6]) = VectorSet(0,0,-1).
+//   * Typ 7 = FUN_10038810: additives Ringband (FUN_100379f0) am Ursprung der
+//     Entity aus [0xf] verankert, Radius 4.5, Laenge [0]+8.0 konstant,
+//     Abbaugrenze alpha < 5.0.
 void EV_BatBotBeam(event_args_t* args)
 {
 	gEngfuncs.Con_DPrintf("[ev] EV_BatBotBeam\n");
 
-	// Typ-7-Eintrag: am Ursprung der Schuetzen-Entity verankert, Richtung
-	// (0,0,-1) wie im Retail-Konstruktor, Alpha 240, Abnahme 6, Sprite
-	// sprites/hugeball.spr, Zeichenradius 4.5, Laenge 9.0 (FUN_10038810).
 	static int iHugeBall = 0;
 
 	if (!iHugeBall)
@@ -2074,7 +2068,7 @@ void EV_BatBotBeam(event_args_t* args)
 		return;
 
 	EV_AddEffectEntityTube(args->entindex, Vector(0.0f, 0.0f, -1.0f),
-		6.0f, 240.0f, 6.0f, iHugeBall);
+		0.1f, 240.0f, 6.0f, iHugeBall);
 }
 
 void EV_ChargedImpact(event_args_t* args)
@@ -2111,6 +2105,19 @@ void EV_ChargedImpact(event_args_t* args)
 		gEngfuncs.pEfxAPI->R_TempSprite((float*)&tr.endpos, vec3_origin, 0.3f, iPuff,
 			kRenderGlow, kRenderFxNone, 150.0f / 255.0f, 0.5f, FTENT_FADEOUT);
 	}
+
+	// Retail-Typ 2 (Aufrufstelle 0x1000188a): Fan-Band am Einschlag,
+	// [7]=6.0, [8]=0.4, [0xb]=200, [0xc]=20, Sprite gausspuff.
+	// Hinweis: der Temp-Sprite oben bleibt zunaechst stehen (Sichtvergleich
+	// offen, siehe findings/arbeitsvorschlag_2026_11_08_v5.md).
+	static int iChargeSprite = 0;
+
+	if (!iChargeSprite)
+		iChargeSprite = gEngfuncs.pfnSPR_Load("sprites/gausspuff.spr");
+
+	if (iChargeSprite > 0)
+		EV_AddEffectFan(Vector(tr.endpos), Vector(tr.plane.normal), 6.0f, 0.4f, 200.0f, 20.0f,
+			iChargeSprite, 2);
 
 	if (gEngfuncs.pfnGetCvarFloat("r_decals") != 0.0f)
 	{
@@ -2205,10 +2212,12 @@ void EV_Cleanup(event_args_t* args)
 
 void EV_AddClusterEffect(const Vector& vecOrigin, int iType, float flMaxRadius);
 
-// Effektliste Typ 5 (Rohr/Ringband) und Typ 6 (additives Quad). Retail:
-// Konstruktor 0x10002810, Anhang 0x10002ae0, Consumer FUN_10038ab0 bzw.
-// FUN_10038c80. Details in findings/client/client_event_table_2026-11-04.md
-// (Ergebnisse 7/16/17) und references/effect-list-layout.md.
+// Effektliste Typ 5 (Segmentband), Typ 6 (additives Quad), Typ 7 (Ringband)
+// und Typ 9 (verankertes Ringband). Retail: Konstruktor 0x10002810/0x10002870,
+// Anhang 0x10002ae0, Dispatch 0x100398c0; Consumer FUN_10038390 (5),
+// FUN_10038c80 (6), FUN_10038ab0 (7), FUN_10038810 (9). Details in
+// references/effect-list-layout.md und
+// findings/client/effektliste_dispatch_korrektur_2026_11_08.md.
 void EV_AddEffectTube(const Vector& vecOrigin, const Vector& vecDir, float flRate,
 	float flAlphaStart, float flAlphaRate, int iSprite);
 void EV_AddEffectQuad(const Vector& vecOrigin, const Vector& vecDir, float flWidth,
@@ -2275,7 +2284,11 @@ void EV_Cylinder(event_args_t* args)
 	if (iSmoke <= 0)
 		return;
 
-	EV_AddEffectTube(Vector(args->origin), forward, 2.4f, 220.0f, 4.0f, iSmoke);
+	// Retail-Typ 5 (Aufrufstelle 0x1000a839, Sprite sprites/smoke.spr):
+	// [8]=0.2 (Wachstum), [0xb]=220.0, [0xc]=8.0; Consumer FUN_10038ab0
+	// zeichnet ein Ringband (Radius 8.0, Laenge age*rate*30 + 1 + 7).
+	// Event-Zuordnung ueber den Sprite-Pfad, Name nicht separat belegt.
+	EV_AddEffectTube(Vector(args->origin), forward, 0.2f, 220.0f, 8.0f, iSmoke);
 }
 
 // Retail 0x10007940: Sprites sprites/gaussbeam2.spr (0x1007652c),
@@ -2336,6 +2349,17 @@ void EV_GaussPistol(event_args_t* args)
 		}
 
 		EV_AddClusterEffect(Vector(tr.endpos), 1, 8.0f);
+
+		// Retail-Typ 3 (Aufrufstelle 0x10007d05): Segmentband am Einschlag,
+		// [7]=8.0, [8]=0.5, [0xb]=255, [0xc]=20, Sprite gaussimpact.
+		static int iImpactFan = 0;
+
+		if (!iImpactFan)
+			iImpactFan = gEngfuncs.pfnSPR_Load("sprites/gaussimpact.spr");
+
+		if (iImpactFan > 0)
+			EV_AddEffectFan(Vector(tr.endpos), Vector(tr.plane.normal), 8.0f, 0.5f, 255.0f, 20.0f,
+				iImpactFan, 3);
 	}
 	else
 	{
@@ -2374,6 +2398,7 @@ void EV_KataImpact(event_args_t* args)
 	physent_t* pe = gEngfuncs.pEventAPI->EV_GetPhysent(tr.ent);
 
 	// Retail 0x10008810: DLight (Radius 130, RGB 0/255/255, Decay 80) am Einschlag,
+	// Lebensdauer time + 1.0 (Disassembly 0x10008ac9, Konstante 0x1005b9e0),
 	// danach Decal "{scorch1" auf Brush-Treffern.
 	dlight_t* dl = gEngfuncs.pEfxAPI->CL_AllocDlight(0);
 
@@ -2384,23 +2409,26 @@ void EV_KataImpact(event_args_t* args)
 		dl->color.r = 0;
 		dl->color.g = 255;
 		dl->color.b = 255;
-		dl->die = gEngfuncs.GetClientTime() + 0.1f;
+		dl->die = gEngfuncs.GetClientTime() + 1.0f;
 		dl->decay = 80.0f;
 	}
 
 	// Retail 0x10008bd8: Effektlisteneintrag Typ 6 (Consumer FUN_10038c80),
-	// Breite 130.0, Alpha-Abnahme 12, Sprite sprites/kataimpact.spr. Der
-	// Eintrag entsteht vor den Decal-Fruehausstiegen, damit er auch bei
-	// r_decals 0 bzw. ohne Brush-Treffer erscheint (wie im frueheren Port).
-	// Richtung = Einschlagnormale: das gepushte Richtungsargument an der
-	// Konstruktorstelle ist nicht eindeutig zugeordnet (Ergebnis 17).
+	// Breite 130.0, Alpha-Start 0, Alpha-Abnahme 3.0, Framerate 12, Frames 18,
+	// Sprite sprites/kataimpact.spr. Der Eintrag entsteht vor den
+	// Decal-Fruehausstiegen, damit er auch bei r_decals 0 bzw. ohne
+	// Brush-Treffer erscheint.
+	// Richtung = Event-Geschwindigkeit: der Handler baut die Basis aus
+	// event_args +0x20 (velocity) ueber VectorAngles/AngleVectors und pusht
+	// das Ergebnis als Feld [4..6] (Belege:
+	// findings/client/effektliste_dispatch_korrektur_2026_11_08.md).
 	static int iKataSprite = 0;
 
 	if (!iKataSprite)
 		iKataSprite = gEngfuncs.pfnSPR_Load("sprites/kataimpact.spr");
 
 	if (iKataSprite > 0)
-		EV_AddEffectQuad(Vector(tr.endpos), Vector(tr.plane.normal), 130.0f, 12.0f, iKataSprite);
+		EV_AddEffectQuad(Vector(tr.endpos), Vector(args->velocity), 130.0f, 3.0f, iKataSprite);
 
 	if (!pe || !((pe->solid == SOLID_BSP) || (pe->movetype == MOVETYPE_PUSHSTEP)))
 		return;
@@ -2621,11 +2649,12 @@ void EV_RapidImpact(event_args_t* args)
 	}
 }
 
-// Retail 0x1000a660: AngleVectors(args->angles), Sprite sprites/firebeam.spr
-// aufloesen, danach ein Effektlisteneintrag Typ 5: Rate 2.4, Alpha-Start
-// 255.0, Alpha-Abnahme 15.0, Laengsgrenze 16.0 (erstes Argument, im
-// Typ-5-Consumer ungenutzt). Consumer FUN_10038ab0 zeichnet daraus ein
-// additives Ringband (32 Segmente, Radius 8.0, Laenge 1 + age*rate*30 + 7).
+// Retail 0x1000a660 (Aufrufstelle 0x1000a709): AngleVectors(args->angles),
+// Sprite sprites/firebeam.spr, Effektlisteneintrag Typ 5 mit
+// [8]=2.4 (Wachstum), [0xb]=255.0 (Alpha-Start), [0xc]=15.0 (Alpha-Abnahme),
+// [7]=16.0 (nur Groessengrenze des Zweigs Typ 2/3/4, hier ungenutzt).
+// Consumer FUN_10038ab0 zeichnet ein additives Ringband (FUN_100379f0,
+// Radius 8.0, Laenge 1 + age*2.4*30 + 7.0).
 void EV_RocketSmoke(event_args_t* args)
 {
 	gEngfuncs.Con_DPrintf("[ev] EV_RocketSmoke\n");
@@ -2951,7 +2980,10 @@ struct gm_effect_entry_t
 	int	iSprite;
 	int	iFrameStep;
 	int	iFrameCount;
-	// Typ 7 (FUN_10038810): Eintrag haengt an einer Entity ([0xf]); deren
+	// Retail-Typ ([0xa]) des Eintrags: 5 = Segmentband (FUN_10038390),
+	// 7 = Ringband (FUN_10038ab0), 9 = verankertes Ringband (FUN_10038810).
+	int	iType;
+	// Typ 9 (FUN_10038810): Eintrag haengt an einer Entity ([0xf]); deren
 	// Ursprung wird beim Update gelesen, verschwindet sie, faellt der Eintrag weg.
 	int	iAnchorEntity;
 	float	flDrawRadius;
@@ -3112,7 +3144,11 @@ void EV_UpdateClusterExplosionEffects()
 	g_iClusterEffectCount = iAlive;
 }
 
-// ---- Typ 5: Ringband ---------------------------------------------------
+// ---- Typ 7: Ringband ---------------------------------------------------
+// HINWEIS (2026-11-08): Diese Rezeptur ist Retail-Typ 7 (FUN_10038ab0). Die
+// Aufrufer EV_RocketSmoke/EV_Cylinder legen aber Knoten mit Typ 5 an, die
+// Retail ueber FUN_10038390 (TRI_QUAD_STRIP, Versatz up*size*-6) zeichnet.
+// Beleg: findings/client/effektliste_dispatch_korrektur_2026_11_08.md.
 // Retail FUN_100379f0(start, dir, laenge, radius=8.0, segmente=32, alpha):
 // RenderMode(5) additiv, CullFace(TRI_NONE), Begin(TRI_QUAD_STRIP),
 // Color4f(1,1,1, alpha/255); je Schritt i = 0..segmente:
@@ -3157,6 +3193,86 @@ static void EV_DrawEffectTube(const Vector& vecStart, const Vector& vecDir,
 	gEngfuncs.pTriAPI->RenderMode(kRenderNormal);
 }
 
+// Retail FUN_10037bd0(start, dir, groesse, 16, alpha, typ) — Typen 2 und 3:
+// RenderMode(5), CullFace(TRI_NONE), Begin(1) (TRIANGLE_FAN),
+// Color4f(1,1,1, alpha/255); 17 Schritte i = 0..16, f = i/16:
+//   k = (typ == 2) ? 2 : 1
+//   P_outer = start + (-k*up.x, -k*up.y, +k*up.z) * groesse
+//   P_inner = start + (+fwd.x, +fwd.y, -fwd.z) * groesse
+//   ab i > 0 je drei Vertices: P_inner (Tex 0,f), P_outer_(i-1) (Tex 1,f_prev),
+//   P_outer (Tex 1,f).
+// Beleg: Decompilat 0x100392e0 (Zweige `cmp eax,2/3`) + 0x10037bd0.
+static void EV_DrawEffectFan(const Vector& vecStart, const Vector& vecDir,
+	float flSize, float flAlpha, int iType)
+{
+	gEngfuncs.pTriAPI->RenderMode(kRenderTransAdd);
+	gEngfuncs.pTriAPI->CullFace(TRI_NONE);
+	gEngfuncs.pTriAPI->Begin(TRI_TRIANGLE_FAN);
+	gEngfuncs.pTriAPI->Color4f(1.0f, 1.0f, 1.0f, flAlpha * (1.0f / 255.0f));
+
+	float vecAngles[3];
+	VectorAngles((const float*)&vecDir, vecAngles);
+
+	Vector vecForward, vecRight, vecUp;
+	AngleVectors(vecAngles, vecForward, vecRight, vecUp);
+
+	const float flScale = (iType == 2) ? 2.0f : 1.0f;
+	Vector vecPrev = vecStart;
+	float flPrevFrac = 0.0f;
+
+	for (int i = 0; i <= 16; i++)
+	{
+		const float flFrac = (float)i / 16.0f;
+
+		const Vector vecOuter = vecStart + Vector(-flScale * vecUp.x, -flScale * vecUp.y,
+			flScale * vecUp.z) * flSize;
+		const Vector vecInner = vecStart + Vector(vecForward.x, vecForward.y, -vecForward.z) * flSize;
+
+		if (i > 0)
+		{
+			gEngfuncs.pTriAPI->TexCoord2f(0.0f, flFrac);
+			gEngfuncs.pTriAPI->Vertex3fv((float*)&vecInner);
+			gEngfuncs.pTriAPI->TexCoord2f(1.0f, flPrevFrac);
+			gEngfuncs.pTriAPI->Vertex3fv((float*)&vecPrev);
+			gEngfuncs.pTriAPI->TexCoord2f(1.0f, flFrac);
+			gEngfuncs.pTriAPI->Vertex3fv((float*)&vecOuter);
+		}
+
+		vecPrev = vecOuter;
+		flPrevFrac = flFrac;
+	}
+
+	gEngfuncs.pTriAPI->End();
+	gEngfuncs.pTriAPI->RenderMode(kRenderNormal);
+}
+
+// Retail 0x100392e0, Zweige Typ 2/3. Felder: [0]=1.0 (Laengenbasis), [7] =
+// Groessengrenze, [8] = Wachstum, [0xb]/[0xc] = Alpha-Start/-Abnahme.
+// Eintrag faellt weg, sobald `[0] + age*[8]*30 > [7]`; Alpha wird auf 1.0
+// geklemmt (kein Abbau ueber Alpha).
+void EV_AddEffectFan(const Vector& vecOrigin, const Vector& vecDir, float flWidth,
+	float flRate, float flAlphaStart, float flAlphaRate, int iSprite, int iType)
+{
+	if (g_iEffectTubeCount >= GM_EFFECT_TUBE_MAX)
+		return;
+
+	gm_effect_entry_t& e = g_rgEffectTubes[g_iEffectTubeCount++];
+	e.vecOrigin = vecOrigin;
+	e.vecDir = vecDir;
+	e.flWidth = flWidth;			// [7]
+	e.flRate = flRate;				// [8]
+	e.flAlphaStart = flAlphaStart;	// [0xb]
+	e.flAlphaRate = flAlphaRate;	// [0xc]
+	e.flTimeBase = gEngfuncs.GetClientTime();
+	e.iSprite = iSprite;
+	e.iFrameStep = 0;
+	e.iFrameCount = 0;
+	e.iType = iType;
+	e.iAnchorEntity = -1;
+	e.flDrawRadius = 0.0f;
+	e.flDrawLengthBase = 1.0f;		// [0]
+}
+
 void EV_AddEffectTube(const Vector& vecOrigin, const Vector& vecDir, float flRate,
 	float flAlphaStart, float flAlphaRate, int iSprite)
 {
@@ -3174,6 +3290,7 @@ void EV_AddEffectTube(const Vector& vecOrigin, const Vector& vecDir, float flRat
 	e.iSprite = iSprite;
 	e.iFrameStep = 0;
 	e.iFrameCount = 0;
+	e.iType = 5;			// FUN_10038ab0
 	e.iAnchorEntity = -1;
 	e.flDrawRadius = 8.0f;
 	e.flDrawLengthBase = 1.0f + 7.0f;
@@ -3181,7 +3298,9 @@ void EV_AddEffectTube(const Vector& vecOrigin, const Vector& vecDir, float flRat
 
 // Retail 0x10038810 (Typ 7): Ringband wie Typ 5, aber am Ursprung der Entity
 // aus [0xf] verankert, Radius 4.5, Laenge [0] + 8.0 (konstant), Startpunkt um
-// dir * (Alter * [8] * 30) versetzt. Beleg: Decompilat FUN_10038810.
+// dir * (Alter * [8] * 30) versetzt. Beleg: Decompilat FUN_10038810
+// (Typfilter `cmp ecx,0x7` bei 0x100388bb).
+// Produzent: EV_BatBotBeam (0x100080a8), [0xf] = event_args +0x4 (entindex).
 void EV_AddEffectEntityTube(int iEntIndex, const Vector& vecDir, float flRate,
 	float flAlphaStart, float flAlphaRate, int iSprite)
 {
@@ -3199,6 +3318,7 @@ void EV_AddEffectEntityTube(int iEntIndex, const Vector& vecDir, float flRate,
 	e.iSprite = iSprite;
 	e.iFrameStep = 0;
 	e.iFrameCount = 0;
+	e.iType = 7;			// FUN_10038810
 	e.iAnchorEntity = iEntIndex;
 	e.flDrawRadius = 4.5f;
 	e.flDrawLengthBase = 1.0f + 8.0f;
@@ -3217,28 +3337,45 @@ void EV_UpdateEffectTubes()
 		gm_effect_entry_t e = g_rgEffectTubes[i];
 		const float flAge = flTime - e.flTimeBase;
 
-		// Retail: alpha = [0xb] - age*[0xc]*30 (UNK_10061248 = 30.0);
-		// Abbau, sobald alpha < 1.0 bzw. alpha < 5.0 (FUN_10038ab0/0x10038810).
-		const float flAlpha = e.flAlphaStart - flAge * e.flAlphaRate * 30.0f;
+		// Retail: alpha = [0xb] - age*[0xc]*30 (UNK_10061248 = 30.0).
+		float flAlpha = e.flAlphaStart - flAge * e.flAlphaRate * 30.0f;
 
-		if (flAlpha < 5.0f)
-			continue;
-
-		// Typ 7: Startpunkt = Ursprung der verankerten Entity + dir*age*rate*30;
-		// fehlt die Entity, wird der Eintrag entfernt (Retail prueft das Feld
-		// [0xf] ueber CL_GetEntityByIndex und baut den Eintrag sonst ab).
 		Vector vecStart = e.vecOrigin;
-		float flLength = flAge * e.flRate * 30.0f + e.flDrawLengthBase;
+		float flLength = 0.0f;
+		const bool bFan = (e.iType == 2 || e.iType == 3);
 
-		if (e.iAnchorEntity >= 0)
+		if (bFan)
 		{
-			cl_entity_t* pAnchor = gEngfuncs.GetEntityByIndex(e.iAnchorEntity);
+			// FUN_100392e0, Zweige Typ 2/3: Alpha auf 1.0 klemmen, Abbau erst,
+			// wenn die Groesse [7] ueberschreitet.
+			if (flAlpha < 1.0f)
+				flAlpha = 1.0f;
 
-			if (!pAnchor)
+			flLength = flAge * e.flRate * 30.0f + e.flDrawLengthBase;
+
+			if (flLength > e.flWidth)
+				continue;
+		}
+		else
+		{
+			// Typ 5/7 (FUN_10038ab0 / FUN_10038810): Abbau bei alpha < 5.0.
+			if (flAlpha < 5.0f)
 				continue;
 
-			vecStart = pAnchor->origin + e.vecDir * (flAge * e.flRate * 30.0f);
-			flLength = e.flDrawLengthBase;
+			flLength = flAge * e.flRate * 30.0f + e.flDrawLengthBase;
+
+			// Typ 7 (verankert, FUN_10038810): Startpunkt = Ursprung der Entity
+			// aus [0xf] + dir*age*rate*30; fehlt die Entity, faellt der Eintrag weg.
+			if (e.iAnchorEntity >= 0)
+			{
+				cl_entity_t* pAnchor = gEngfuncs.GetEntityByIndex(e.iAnchorEntity);
+
+				if (!pAnchor)
+					continue;
+
+				vecStart = pAnchor->origin + e.vecDir * (flAge * e.flRate * 30.0f);
+				flLength = e.flDrawLengthBase;
+			}
 		}
 
 		g_rgEffectTubes[iAlive++] = e;
@@ -3268,12 +3405,24 @@ void EV_UpdateEffectTubes()
 
 		if (s_iDrawLog < 8)
 		{
-			gEngfuncs.Con_DPrintf("[fx] tube draw age=%.2f alpha=%.0f len=%.1f radius=%.1f anchor=%d n=%d\n",
-				flAge, flAlpha, flLength, e.flDrawRadius, e.iAnchorEntity, g_iEffectTubeCount);
+			if (bFan)
+			{
+				gEngfuncs.Con_DPrintf("[fx] fan draw typ=%d age=%.2f alpha=%.0f size=%.1f n=%d\n",
+					e.iType, flAge, flAlpha, flLength, g_iEffectTubeCount);
+			}
+			else
+			{
+				gEngfuncs.Con_DPrintf("[fx] tube draw typ=%d age=%.2f alpha=%.0f len=%.1f radius=%.1f anchor=%d n=%d\n",
+					e.iType, flAge, flAlpha, flLength, e.flDrawRadius, e.iAnchorEntity, g_iEffectTubeCount);
+			}
+
 			s_iDrawLog++;
 		}
 
-		EV_DrawEffectTube(vecStart, e.vecDir, flLength, e.flDrawRadius, 32, flAlpha);
+		if (bFan)
+			EV_DrawEffectFan(vecStart, e.vecDir, flLength, flAlpha, e.iType);
+		else
+			EV_DrawEffectTube(vecStart, e.vecDir, flLength, e.flDrawRadius, 32, flAlpha);
 	}
 
 	g_iEffectTubeCount = iAlive;
@@ -3301,12 +3450,12 @@ void EV_AddEffectQuad(const Vector& vecOrigin, const Vector& vecDir, float flWid
 	e.vecDir = vecDir;
 	e.flWidth = flWidth;
 	e.flRate = 0.0f;		// [8] = 0: Breite bleibt [7]
-	e.flAlphaStart = 3.0f;	// [0xb], nur im Wachstumszweig relevant
+	e.flAlphaStart = 0.0f;	// [0xb] (kataimpact pusht 0), nur im Wachstumszweig relevant
 	e.flAlphaRate = flAlphaRate;
 	e.flTimeBase = gEngfuncs.GetClientTime();
 	e.iSprite = iSprite;
-	e.iFrameStep = 18;		// [0xf] (kataimpact: 18)
-	e.iFrameCount = 18;		// [0x10] (kataimpact: 18)
+	e.iFrameStep = 12;		// [0xf] = Framerate (kataimpact: 12)
+	e.iFrameCount = 18;		// [0x10] = Frameanzahl (kataimpact: 18)
 }
 
 void EV_UpdateEffectQuads()
