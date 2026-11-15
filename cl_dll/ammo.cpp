@@ -438,6 +438,8 @@ void CHudAmmo::Think()
 			char szCmd[64];
 			ServerCmd(CustomCommandForEntry(gpActiveSel->szName, szCmd, sizeof(szCmd)));
 			g_weaponselect = gpActiveSel->iId;
+			if (gEngfuncs.pfnGetCvarFloat("gm_test_custom") > 0.0f)
+				gEngfuncs.Con_Printf("[test] custom select: entry=%s cmd=%s\n", gpActiveSel->szName, szCmd);
 		}
 
 		gpLastSel = gpActiveSel;
@@ -449,25 +451,29 @@ void CHudAmmo::Think()
 }
 
 // Retail-Format des Server-Kommandos ist "cust_<Option><Wert>" (dlls/client.cpp,
-// FUN_100405b0). Die WeaponList-Eintraege tragen aber reine Anzeigenamen ohne
-// Zahl, weshalb atoi() dort immer 0 liefert. Fuer Eintraege, deren Wert sich
-// aus der Waffenlogik ableiten laesst, wird das Kommando hier numerisch
-// umgeschrieben; unbekannte Eintraege gehen unveraendert raus.
+// FUN_100405b0). Option ist das Zeichen hinter dem ersten '_' (stimmt mit dem
+// Anzeigenamen ueberein), der Wert fehlt im Namen. Frueher ging der reine
+// Anzeigename raus: atoi("ShotgunShells") == 0, und CShotgun::ApplyCustomSetting
+// setzte m_iNumShells = 0 -> die Schrotflinte feuerte danach 0 Kugeln.
+// Deshalb haelt der Client je Eintrag einen Wert 1..4 und zaehlt bei jeder
+// Bestaetigung weiter. Ein echtes Retail-Slider-Verhalten ist nicht belegt.
 static const char* CustomCommandForEntry(const char* pszName, char* pszOut, int iOutSize)
 {
-	static const struct { const char* pszEntry; const char* pszCommand; } s_Commands[] =
+	static const char* s_pEntries[] =
 	{
-		// CGaussPistol::ApplyCustomSetting: value 4 schaltet den Sniper-Modus frei
-		// (gausspistol.cpp:489), Option '2' ist der Sniper-Eintrag.
-		{ "cust_2GaussPistolSniper", "cust_24" },
-		{ "cust_1GaussPistolFireType", "cust_11" },
+		"cust_1ShotgunSpread", "cust_2ShotgunShells", "cust_1MinigunSpin",
+		"cust_2MinigunCooled", "cust_1GaussPistolFireType", "cust_2GaussPistolSniper",
+		"cust_1BeamFrequency", "cust_2BeamCurrent", "cust_3BeamVoltage",
+		"cust_1SPChemicalGunPressure", "cust_2ChemAcid", "cust_3ChemBase", "cust_4ChemNuet",
 	};
+	static int s_iValues[sizeof(s_pEntries) / sizeof(s_pEntries[0])] = { 0 };
 
-	for (size_t i = 0; i < sizeof(s_Commands) / sizeof(s_Commands[0]); i++)
+	for (size_t i = 0; i < sizeof(s_pEntries) / sizeof(s_pEntries[0]); i++)
 	{
-		if (strcmp(s_Commands[i].pszEntry, pszName) == 0)
+		if (strcmp(s_pEntries[i], pszName) == 0)
 		{
-			snprintf(pszOut, iOutSize, "%s", s_Commands[i].pszCommand);
+			s_iValues[i] = (s_iValues[i] % 4) + 1;
+			snprintf(pszOut, iOutSize, "cust_%c%d", pszName[5], s_iValues[i]);
 			return pszOut;
 		}
 	}
@@ -894,6 +900,17 @@ void CHudAmmo::OpenCustomSelection()
 	}
 
 	WEAPON* pTarget = pNext ? pNext : pFirst;
+	if (gEngfuncs.pfnGetCvarFloat("gm_test_custom") > 0.0f)
+	{
+		gEngfuncs.Con_Printf("[test] custom open: waffe=%s keyword=%s treffer=%d\n",
+			m_pWeapon->szName, pszKeyword, pFirst ? 1 : 0);
+		for (int iPos = 0; iPos < MAX_WEAPON_POSITIONS; ++iPos)
+		{
+			WEAPON* p = gWR.GetWeaponSlot(9, iPos);
+			if (p && p->iId != 0)
+				gEngfuncs.Con_Printf("[test]   slot9 pos=%d name=%s id=%d\n", iPos, p->szName, p->iId);
+		}
+	}
 	if (!pTarget)
 		return;
 
@@ -1323,6 +1340,103 @@ bool CHudAmmo::DrawWList(float flTime)
 	if (!gWR.GetFirstPos(slot))
 	{
 		gpActiveSel = (WEAPON*)1;
+		return true;
+	}
+
+	// Slot 9 ist das Customize-Menue. Retail zeigt es als zentriertes
+	// Fenster mit den eigenen cust_-Grafiken (Nutzerbefund 2026-11-14);
+	// die fruehere Darstellung als Liste am rechten Rand war falsch.
+	if (slot == 9)
+	{
+		WEAPON* rgEntries[MAX_WEAPON_POSITIONS];
+		int iCount = 0;
+		const char* pszKeyword = m_pWeapon ? CustomKeywordForWeapon(m_pWeapon->szName) : nullptr;
+
+		for (int iPos = 0; iPos < MAX_WEAPON_POSITIONS; ++iPos)
+		{
+			WEAPON* p = gWR.GetWeaponSlot(9, iPos);
+			if (!p || p->iId == 0)
+				continue;
+			if (pszKeyword && !CustomNameMatches(p->szName, pszKeyword))
+				continue;
+			rgEntries[iCount++] = p;
+		}
+
+		if (iCount <= 0)
+		{
+			gpActiveSel = (WEAPON*)1;
+			return true;
+		}
+
+		int iMaxWidth = 0;
+		int iContentHeight = 0;
+		for (int i = 0; i < iCount; ++i)
+		{
+			const Rect& rc = rgEntries[i]->hActive ? rgEntries[i]->rcActive : rgEntries[i]->rcInactive;
+			const int iWidth = rc.right - rc.left;
+			const int iHeight = rc.bottom - rc.top;
+			if (iWidth > iMaxWidth)
+				iMaxWidth = iWidth;
+			iContentHeight += iHeight + 6;
+		}
+
+		const int iPad = 14;
+		const int iPanelWidth = iMaxWidth + iPad * 2;
+		const int iPanelHeight = iContentHeight + iPad * 2;
+		const int iPanelX = (ScreenWidth - iPanelWidth) / 2;
+		const int iPanelY = (ScreenHeight - iPanelHeight) / 2;
+
+		int r, g, b;
+		UnpackRGB(r, g, b, RGB_YELLOWISH);
+
+		// Fenster: dunkler Hintergrund, heller Rahmen
+		FillRGBA(iPanelX, iPanelY, iPanelWidth, iPanelHeight, 16, 20, 16, 200);
+		FillRGBA(iPanelX, iPanelY, iPanelWidth, 2, r, g, b, 255);
+		FillRGBA(iPanelX, iPanelY + iPanelHeight - 2, iPanelWidth, 2, r, g, b, 255);
+		FillRGBA(iPanelX, iPanelY, 2, iPanelHeight, r, g, b, 255);
+		FillRGBA(iPanelX + iPanelWidth - 2, iPanelY, 2, iPanelHeight, r, g, b, 255);
+
+		int y = iPanelY + iPad;
+		for (int i = 0; i < iCount; ++i)
+		{
+			WEAPON* p = rgEntries[i];
+			const bool selected = gpActiveSel == p;
+			const bool activeSprite = selected && p->hActive != 0;
+			const Rect& rc = activeSprite ? p->rcActive : p->rcInactive;
+			const HSPRITE sprite = activeSprite ? p->hActive : p->hInactive;
+			const int iWidth = rc.right - rc.left;
+			const int iHeight = rc.bottom - rc.top;
+			const int x = iPanelX + (iPanelWidth - iWidth) / 2;
+
+			int rr, gg, bb;
+			UnpackRGB(rr, gg, bb, RGB_YELLOWISH);
+			if (!selected && !gWR.HasAmmo(p))
+			{
+				UnpackRGB(rr, gg, bb, RGB_REDISH);
+				ScaleColors(rr, gg, bb, 128);
+			}
+			else if (!selected)
+			{
+				ScaleColors(rr, gg, bb, 192);
+			}
+
+			if (sprite != 0)
+			{
+				SPR_Set(sprite, rr, gg, bb);
+				SPR_DrawAdditive(0, x, y, &rc);
+				if (selected && m_HUD_selection >= 0)
+				{
+					SPR_Set(gHUD.GetSprite(m_HUD_selection), rr, gg, bb);
+					SPR_DrawAdditive(0, x, y, &gHUD.GetSpriteRect(m_HUD_selection));
+				}
+			}
+
+			// Einstellbalken direkt unter dem Eintrag, gleiche Breite
+			DrawAmmoBar(p, x, y + iHeight + 1, iWidth, 5);
+
+			y += iHeight + 6;
+		}
+
 		return true;
 	}
 
