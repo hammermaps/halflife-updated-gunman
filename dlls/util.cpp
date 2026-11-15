@@ -27,9 +27,11 @@
 #include <string>
 #include "cbase.h"
 #include "saverestore.h"
+#include "UserMessages.h"
 #include <time.h>
 #include "shake.h"
 #include "decals.h"
+#include "effects.h"
 #include "player.h"
 #include "weapons.h"
 #include "gamerules.h"
@@ -2851,4 +2853,210 @@ bool CRestore::BufferCheckZString(const char* string)
 			return true;
 	}
 	return false;
+}
+
+// --- Rauch-Effekte (Abweichung vom Original, Nutzerwunsch 2026-11-08) --------
+// Engine-Temp-Entities statt eigener Usermessage. Begruendung: der Client-Pfad
+// (MsgFunc_WallPuff -> EV_WallPuff -> R_TempSprite mit kRenderTransAlpha)
+// zeichnete trotz gueltigem Modellindex nichts (#913/#914).
+// Gemessen 2026-11-09: TE_SMOKE (Engine-Rauch, rendercolor 20..35) zeichnet
+// zwar, ist auf dunklen Waenden aber praktisch unsichtbar (mittlere Helligkeit
+// im Sprite-Fenster 12.0 -> 14.4 von 255). Deshalb TE_SPRITE, additiv und mit
+// Helligkeit 200. Sprite: smoke.spr statt smokepuff.spr — smokepuff zeichnet
+// im Client-Pfad nachweislich nicht (#926), smoke.spr ist der hellste
+// Kandidat (mean 82,1 gegen Hintergrund 35 im Mittelfenster).
+void UTIL_WallPuff(const Vector& vecOrigin, const Vector& vecNormal)
+{
+	(void)vecNormal;
+
+	if (g_sModelIndexSmokeCloud <= 0)
+		return;
+
+	MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, vecOrigin);
+	WRITE_BYTE(TE_SPRITE);
+	WRITE_COORD(vecOrigin.x);
+	WRITE_COORD(vecOrigin.y);
+	WRITE_COORD(vecOrigin.z);
+	WRITE_SHORT(g_sModelIndexSmokeCloud);
+	WRITE_BYTE(9);		// Skalierung = Byte * 0.1 -> 0.9
+	WRITE_BYTE(255);	// Helligkeit (0..255)
+	MESSAGE_END();
+
+	static int s_iWallPuffLog = 0;
+
+	if (s_iWallPuffLog < 6)
+	{
+		ALERT(at_aiconsole, "[puff] TE_SPRITE model=%d at %.0f %.0f %.0f\n",
+			(int)g_sModelIndexSmokeCloud, vecOrigin.x, vecOrigin.y, vecOrigin.z);
+		s_iWallPuffLog++;
+	}
+}
+
+// Wandpuff am Trefferpunkt eines echten Schusses (#930): Trace entlang der
+// Schussrichtung, Puff nur bei Wandtreffer, gedrosselt auf 0,1 s. Monster
+// werden ignoriert, damit der Puff wie in dbg_rauch auf der Wandflaeche sitzt
+// (dort ist die Engine-PVS-Box nachweislich sichtbar).
+void UTIL_WallPuffAtTrace(const Vector& vecSrc, const Vector& vecDir)
+{
+	static float s_flNextWallPuff = 0.0f;
+
+	if (gpGlobals->time < s_flNextWallPuff)
+		return;
+
+	if (g_sModelIndexSmokeCloud <= 0)
+		return;
+
+	const Vector vecEnd = vecSrc + vecDir * 2048.0f;
+
+	TraceResult tr;
+	UTIL_TraceLine(vecSrc, vecEnd, ignore_monsters, nullptr, &tr);
+
+	if (tr.flFraction >= 1.0f || tr.fAllSolid)
+		return;
+
+	s_flNextWallPuff = gpGlobals->time + 0.1f;
+
+	UTIL_WallPuff(tr.vecEndPos + tr.vecPlaneNormal * 2.0f, tr.vecPlaneNormal);
+}
+
+// Muendungsrauch: kurzlebiges env_sprite mit smoke.spr, weil der Engine-Rauch
+// (TE_SMOKE) bewusst dunkelgrau ist und an der Waffe vor dunklem Hintergrund
+// kaum auffaellt. smokepuff.spr zeichnet im Client-Pfad nicht (#926).
+// TE_SPRITE schied aus: CL_TempEntAddEntity verwirft Temp-Sprites ueber
+// TriBoxInPVS(origin + model->mins/maxs), und der Mündungspunkt liegt im
+// freien Raum vor dem Auge (#930). Der Entity-Renderer cullt dagegen per
+// Frustum (R_CullBox) und zeichnet dort zuverlaessig.
+// Drosselung 0.12 s wie im alten Client-Helfer.
+void UTIL_MuzzleSmoke(const Vector& vecSrc, const Vector& vecDir)
+{
+	static float s_flNextMuzzleSmoke = 0.0f;
+
+	if (g_sModelIndexSmokeCloud <= 0)
+		return;
+
+	if (gpGlobals->time < s_flNextMuzzleSmoke)
+		return;
+
+	s_flNextMuzzleSmoke = gpGlobals->time + 0.12f;
+
+	// Muendungsposition: 26 Einheiten nach vorn, 8 unterhalb der Blickachse
+	// (die Weltwaffe sitzt unter dem Auge). "Unten" wird aus der Blickrichtung
+	// gebildet, damit es auch beim Blick nach oben/unten stimmt.
+	Vector vecRight = CrossProduct(vecDir, Vector(0.0f, 0.0f, 1.0f));
+	if (vecRight.Length() < 0.01f)
+		vecRight = Vector(1.0f, 0.0f, 0.0f);
+	vecRight = vecRight.Normalize();
+
+	const Vector vecUp = CrossProduct(vecRight, vecDir).Normalize();
+	const Vector vecPos = vecSrc + vecDir * 26.0f - vecUp * 0.0f;  // DIAGNOSE
+
+	// Kurzlebiges Sprite-Entity statt Temp-Entity: der Entity-Renderer cullt
+	// per Frustum und verwirft nicht ueber die Vorframe-PVS-Box (#930).
+	CSprite* pSmoke = CSprite::SpriteCreate("sprites/smoke.spr", vecPos, true);
+
+	if (pSmoke != nullptr)
+	{
+		// Edikt verlinken: SpriteInit setzt pev->origin direkt, ohne SET_ORIGIN.
+		// Ohne Link versendet der Server das Entity nicht an den Client.
+		UTIL_SetOrigin(pSmoke->pev, vecPos);
+
+		// Expand initialisiert m_lastTime (AnimateAndDie liesse es uninitialisiert,
+		// wodurch pev->frame negativ wird und das Sprite nicht zeichnet) und
+		// blendet das Sprite ueber renderamt aus, bis es sich selbst entfernt.
+		pSmoke->SetTransparency(kRenderTransAdd, 255, 255, 255, 255, kRenderFxNone);
+		// Skala 0.1 und Ausblenden in ~0,64 s (Expand-Framerate 400): bei 0.2
+		// deckte die Wolke die Bildmitte grossflaechig ab (Arbeitsvorschlag E, 1).
+		pSmoke->SetScale(0.1f);
+		pSmoke->pev->frame = 0;
+		pSmoke->Expand(0.15f, 400.0f);
+		pSmoke->pev->velocity = vecDir * 40.0f;
+	}
+
+	static int s_iMuzzleLog = 0;
+
+	if (s_iMuzzleLog < 4)
+	{
+		ALERT(at_aiconsole, "[muzzle] env_sprite model=%d at %.0f %.0f %.0f\n",
+			(int)g_sModelIndexSmokeCloud, vecPos.x, vecPos.y, vecPos.z);
+		s_iMuzzleLog++;
+	}
+}
+
+void UTIL_ProjectileDecal(const Vector& vecEndPos, edict_t* pHit, const char* pszDecalName)
+{
+	// Achtung: FNullEnt() liefert fuer die Welt (Index 0) true — fuer ein Decal
+	// auf Worldspawn ist Index 0 aber gueltig, deshalb nur auf nullptr pruefen.
+	if (!pHit || !pszDecalName || !pszDecalName[0])
+		return;
+
+	const int iIndex = DECAL_INDEX(pszDecalName);
+
+	if (iIndex < 0)
+		return;
+
+	static int s_iDecalLog = 0;
+
+	if (s_iDecalLog < 3)
+	{
+		ALERT(at_aiconsole, "[puff] Decal %s index=%d ent=%d\n",
+			pszDecalName, iIndex, ENTINDEX(pHit));
+		s_iDecalLog++;
+	}
+
+	MESSAGE_BEGIN(MSG_PAS, SVC_TEMPENTITY, vecEndPos);
+	WRITE_BYTE(TE_GUNSHOTDECAL);
+	WRITE_COORD(vecEndPos.x);
+	WRITE_COORD(vecEndPos.y);
+	WRITE_COORD(vecEndPos.z);
+	WRITE_SHORT((short)ENTINDEX(pHit));
+	WRITE_BYTE(iIndex);
+	MESSAGE_END();
+}
+
+void UTIL_ProjectileWallPuff(CBaseEntity* pProjectile, const char* pszDecalName)
+{
+	if (!pProjectile)
+		return;
+
+	const Vector vecVelocity = pProjectile->pev->velocity;
+	if (vecVelocity.Length() < 1.0f)
+		return;
+
+	// Der Ursprung liegt beim Touch an der Flaeche, kann aber je nach Tempo
+	// schon dahinter liegen; deshalb beidseitig ein Stueck abtasten.
+	const Vector vecDir = vecVelocity.Normalize();
+	const Vector vecEnd = pProjectile->pev->origin + vecDir * 8.0f;
+	const Vector vecStart = pProjectile->pev->origin - vecDir * 64.0f;
+
+	TraceResult tr;
+	UTIL_TraceLine(vecStart, vecEnd, ignore_monsters, pProjectile->edict(), &tr);
+
+	if (tr.flFraction >= 1.0f)
+	{
+		ALERT(at_aiconsole, "[puff] kein Trace-Treffer (frac=1.0, org=%.0f %.0f %.0f, vel=%.0f)\n",
+			pProjectile->pev->origin.x, pProjectile->pev->origin.y, pProjectile->pev->origin.z,
+			vecVelocity.Length());
+		return;
+	}
+
+	CBaseEntity* pHit = CBaseEntity::Instance(tr.pHit);
+	if (!pHit || pHit->pev->solid != SOLID_BSP)
+	{
+		ALERT(at_aiconsole, "[puff] Treffer ist kein Brush (solid=%d)\n",
+			pHit ? (int)pHit->pev->solid : -1);
+		return;
+	}
+
+	// Brandfleck am Einschlag (Nutzerwunsch 2026-11-08: die DML-Rakete
+	// hinterliess keinen Brandfleck).
+	if (pszDecalName && pszDecalName[0])
+		UTIL_ProjectileDecal(tr.vecEndPos, tr.pHit, pszDecalName);
+
+	if (tr.vecPlaneNormal.Length() < 0.5f)
+	{
+		ALERT(at_aiconsole, "[puff] keine Flaechennormale\n");
+		return;
+	}
+
+	UTIL_WallPuff(tr.vecEndPos + tr.vecPlaneNormal * 2.0f, tr.vecPlaneNormal);
 }

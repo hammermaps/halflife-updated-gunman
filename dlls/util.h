@@ -627,6 +627,33 @@ float UTIL_WeaponTimeBase();
 
 CBaseEntity* UTIL_FindEntityForward(CBaseEntity* pMe);
 
+// --- Rauch-Effekte an Trefferflaechen und Muendung (Abweichung, Nutzerwunsch)
+// Beide gehen als Engine-Temp-Entity raus (TE_SMOKE bzw. TE_SPRITE). Der
+// fruehere Client-Pfad ueber die Usermessage "WallPuff" (+ R_TempSprite)
+// zeichnete trotz gueltigem Modellindex nichts (#913/#914); der Engine-Weg
+// setzt kRenderTransAlpha selbst und animiert das Sprite
+// (engine/client/cl_tent.c, R_DefaultSprite/R_Sprite_Smoke).
+void UTIL_WallPuff(const Vector& vecOrigin, const Vector& vecNormal);
+
+// Wandpuff am Trefferpunkt eines Hitscan-Schusses (#930): Trace entlang der
+// Schussrichtung, Puff nur bei Wandtreffer, gedrosselt auf 0,1 s.
+void UTIL_WallPuffAtTrace(const Vector& vecSrc, const Vector& vecDir);
+
+// Kurzer Muendungsrauch vor der Waffe (aufwertende Ergaenzung, kein
+// Retail-Verhalten). Wird von den Feuerpfaden der Waffen aufgerufen und
+// serverseitig gedrosselt, damit Dauerfeuer keine Sprite-Wand baut.
+void UTIL_MuzzleSmoke(const Vector& vecSrc, const Vector& vecDir);
+
+// Ermittelt fuer ein fliegendes Projektil (Rakete, Granate, Kataball, Blitzkugel)
+// den Brush-Treffer samt Normale aus seiner Bewegung und sendet den Wallpuff.
+// Tut nichts bei Entity-Treffern, fehlender Geschwindigkeit oder Freiflug.
+void UTIL_ProjectileWallPuff(CBaseEntity* pProjectile, const char* pszDecalName = nullptr);
+
+// Setzt ein Decal auf die getroffene Brush-Flaeche (TE_GUNSHOTDECAL). Wird
+// fuer den Einschlag kugelbasierter Waffen benutzt (Nutzerwunsch 2026-11-08:
+// die DML-Rakete hinterliess keinen Brandfleck).
+void UTIL_ProjectileDecal(const Vector& vecEndPos, edict_t* pHit, const char* pszDecalName);
+
 constexpr bool UTIL_IsServer()
 {
 #ifdef CLIENT_DLL
