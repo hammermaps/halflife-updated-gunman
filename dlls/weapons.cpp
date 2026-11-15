@@ -309,8 +309,23 @@ void W_Precache()
 		UTIL_PrecacheOther("weaponbox"); // container for dropped deathmatch weapons
 	}
 
-	g_sModelIndexFireball = PrecacheModel("sprites/zerogxplode.spr");	// fireball
+	// 2026-11-08: Retail-/SDK-Pfad war "sprites/zerogxplode.spr"; die Datei
+	// existiert im Gunman-Bestand NICHT, der Precache schlug fehl und jede
+	// TE_EXPLOSION lief mit Modellindex 0 (unsichtbare Explosion, u. a. bei der
+	// DML-Rakete). Gunman hat "sprites/explode1.spr" (wird direkt darunter
+	// precacht) - das ist der Fireball.
+	g_sModelIndexFireball = PrecacheModel("sprites/explode1.spr"); // fireball
 	g_sModelIndexWExplosion = PrecacheModel("sprites/WXplo1.spr");		// underwater fireball
+
+	// Rauch-Sprites fuer Wallpuff und Muendungsrauch: EV_FindModelIndex im
+	// Client liefert nur Modelle, die der Server precacht (sonst Index 0).
+	g_sModelIndexWallPuff = PrecacheModel("sprites/wallpuff.spr");
+	g_sModelIndexSmokePuff = PrecacheModel("sprites/smokepuff.spr");
+	// Sichtbarer Rauch (Messung 2026-11-09, #926): wallpuff/smokepuff zeichnen
+	// nicht, smoke.spr ist der hellste Kandidat (mean 82,1 vs. Hintergrund 35).
+	g_sModelIndexSmokeCloud = PrecacheModel("sprites/smoke.spr");
+	ALERT(at_aiconsole, "[precache] fireball=%d wExplosion=%d\n",
+		(int)g_sModelIndexFireball, (int)g_sModelIndexWExplosion);
 	g_sModelIndexSmoke = PrecacheModel("sprites/steam1.spr");			// smoke
 	g_sModelIndexBubbles = PrecacheModel("sprites/bubble.spr");		//bubbles
 	g_sModelIndexBloodSpray = PrecacheModel("sprites/bloodspray.spr"); // initial blood

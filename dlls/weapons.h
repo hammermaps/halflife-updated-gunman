@@ -403,6 +403,13 @@ constexpr DLL_GLOBAL const char* g_pModelNameLaser = "sprites/laserbeam.spr";
 inline DLL_GLOBAL short g_sModelIndexLaserDot;	 // holds the index for the laser beam dot
 inline DLL_GLOBAL short g_sModelIndexFireball;	 // holds the index for the fireball
 inline DLL_GLOBAL short g_sModelIndexSmoke;		 // holds the index for the smoke cloud
+// Rauch-Sprites fuer Wallpuff/Muendungsrauch (Abweichung, Nutzerwunsch).
+// Seit 2026-11-09 als Engine-Temp-Entity (TE_SMOKE/TE_SPRITE) gesendet.
+inline DLL_GLOBAL short g_sModelIndexWallPuff;	 // sprites/wallpuff.spr
+inline DLL_GLOBAL short g_sModelIndexSmokePuff;	 // sprites/smokepuff.spr
+// Sichtbarer Rauch fuer Wallpuff/Muendungsrauch (Messung 2026-11-09:
+// wallpuff.spr und smokepuff.spr zeichnen nicht, smoke.spr zeichnet hell).
+inline DLL_GLOBAL short g_sModelIndexSmokeCloud; // sprites/smoke.spr
 inline DLL_GLOBAL short g_sModelIndexWExplosion; // holds the index for the underwater explosion
 inline DLL_GLOBAL short g_sModelIndexBubbles;	 // holds the index for the bubbles model
 inline DLL_GLOBAL short g_sModelIndexBloodDrop;	 // holds the sprite index for blood drops
