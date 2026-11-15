@@ -292,6 +292,10 @@ void CMinigun::PrimaryAttack()
 	Vector vecSrc = m_pPlayer->GetGunPosition();
 	Vector vecAiming = m_pPlayer->GetAutoaimVector(AUTOAIM_5DEGREES);
 
+	// Abweichung (Nutzerwunsch 2026-11-08): Muendungsrauch als
+	// Engine-Temp-Entity, serverseitig gedrosselt (Dauerfeuer).
+	UTIL_MuzzleSmoke(vecSrc, vecAiming);
+
 	// Retail (0x100953df-0x10095455): FireBullets bekommt Streuung 0x3db27eb6 = 0.08716
 	// (+-5 Grad, VECTOR_CONE_10DEGREES) und Distanz 0x46000000 = 8192. Kugeltyp ist dort 2
 	// (Enum-Wert, Zuordnung zu BULLET_PLAYER_9MM nicht belegt -> unveraendert).

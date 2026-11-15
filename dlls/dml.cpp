@@ -393,6 +393,10 @@ void CDmlRocket::TrackTarget()
 
 void CDmlRocket::RocketTouch(CBaseEntity* pOther)
 {
+	// Abweichung vom Original (Nutzerwunsch 2026-11-08): Rauchwolke an der
+	// Wandtrefferstelle.
+	UTIL_ProjectileWallPuff(this, "{scorch1");
+
 	if (m_iPayloadType == DML_PAYLOAD_CLUSTER)
 	{
 		ShootClusterGrenades();
@@ -426,6 +430,11 @@ void CDmlRocket::RocketTouch(CBaseEntity* pOther)
 // cooldown between plays - see file header.
 void CDmlRocket::BounceSoundTouch(CBaseEntity* pOther)
 {
+	// Abweichung vom Original (Nutzerwunsch 2026-11-08): auch im getakteten
+	// Modus (Bounce statt Direkttreffer) Rauchwolke + Brandfleck an der Wand.
+	if (pOther && FClassnameIs(pOther->pev, "worldspawn"))
+		UTIL_ProjectileWallPuff(this, "{scorch1");
+
 	CGrenade::BounceTouch(pOther);
 
 	if (!pOther || !FClassnameIs(pOther->pev, "worldspawn"))

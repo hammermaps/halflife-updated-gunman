@@ -147,6 +147,10 @@ CDmlHandGrenade* CDmlHandGrenade::Shoot(entvars_t* pevOwner, const Vector& vecSt
 
 void CDmlHandGrenade::DmlGrenExplodeTouch(CBaseEntity* pOther)
 {
+	// Abweichung vom Original (Nutzerwunsch 2026-11-08): Rauchwolke an der
+	// Wandtrefferstelle.
+	UTIL_ProjectileWallPuff(this, "{scorch1");
+
 	// Retail contact and fuse paths share the same DML detonation helper.
 	CGrenade::ExplodeTouch(pOther);
 }

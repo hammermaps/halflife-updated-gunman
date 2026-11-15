@@ -364,6 +364,10 @@ void CEndBossKataball::Precache()
 // Der Event laeuft also nur im Zweig "Getroffenes lebt nicht".
 void CEndBossKataball::KataTouch(CBaseEntity* pOther)
 {
+	// Abweichung vom Original (Nutzerwunsch 2026-11-08): Rauchwolke an der
+	// Wandtrefferstelle.
+	UTIL_ProjectileWallPuff(this, "{scorch1");
+
 	const char* impacts[] = {"endboss/imp1_gs.wav", "endboss/imp2_gs.wav", "endboss/imp3_gs.wav"};
 
 	// `katahitplayer` usw. sind KEINE Sounds, sondern Targetnames: Retail ruft

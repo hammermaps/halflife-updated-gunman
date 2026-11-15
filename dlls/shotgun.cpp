@@ -97,6 +97,12 @@ bool CShotgun::Deploy()
 
 void CShotgun::ApplyCustomSetting(char option, int value)
 {
+	// Wert 0 ist kein gueltiger Modus: m_iNumShells = 0 liess die Waffe ohne
+	// Schrotkugeln feuern (iPellets = 0 im default-Zweig). Ungueltige Werte
+	// werden verworfen, statt den aktuellen Modus zu zerstoeren.
+	if (value < 1 || value > 4)
+		return;
+
 	if (option == '1')
 	{
 		m_iSlidePos.x = (float)value;
@@ -222,6 +228,14 @@ void CShotgun::PrimaryAttack()
 
 	PLAYBACK_EVENT_FULL(flags, m_pPlayer->edict(), m_usFire, 0.0,
 		g_vecZero, g_vecZero, 0, 0, (int)m_iSlidePos.x, m_iNumShells, 0, 0);
+
+	// Abweichung (Nutzerwunsch 2026-11-08): Muendungsrauch, seit 2026-11-09
+	// als Engine-Temp-Entity (TE_SPRITE) statt Client-R_TempSprite.
+	UTIL_MuzzleSmoke(vecSrc, vecAiming);
+
+	// Wandpuff am Trefferpunkt (#930): gleiche Darstellung wie dbg_rauch,
+	// jetzt auch im echten Schuss, serverseitig auf 0,1 s gedrosselt.
+	UTIL_WallPuffAtTrace(vecSrc, vecAiming);
 
 	if (m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType] <= 0)
 		// HEV suit - indicate out of ammo condition

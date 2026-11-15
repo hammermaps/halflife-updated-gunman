@@ -161,6 +161,10 @@ void CLightningTracer::TrackTarget()
 
 void CLightningTracer::TrackTouch(CBaseEntity* pOther)
 {
+	// Abweichung vom Original (Nutzerwunsch 2026-11-08): Rauchwolke an der
+	// Wandtrefferstelle der Blitzkugel.
+	UTIL_ProjectileWallPuff(this, "{scorch1");
+
 	if (pOther && pOther->pev->takedamage != DAMAGE_NO)
 		pOther->TakeDamage(pev, pev, pev->dmg, DMG_SHOCK);
 

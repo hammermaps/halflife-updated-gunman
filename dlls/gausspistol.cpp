@@ -588,6 +588,13 @@ void CGaussPistol::FireRapid()
 	const Vector vecSrc = m_pPlayer->GetGunPosition();
 	const Vector vecEnd = vecSrc + gpGlobals->v_forward * 8192;
 
+	// Abweichung (Nutzerwunsch 2026-11-08): Muendungsrauch als
+	// Engine-Temp-Entity statt Client-R_TempSprite.
+	UTIL_MuzzleSmoke(vecSrc, gpGlobals->v_forward);
+
+	// Wandpuff am Trefferpunkt (#930), gedrosselt.
+	UTIL_WallPuffAtTrace(vecSrc, gpGlobals->v_forward);
+
 	TraceResult tr;
 	UTIL_TraceLine(vecSrc, vecEnd, dont_ignore_monsters, m_pPlayer->edict(), &tr);
 	if (tr.fAllSolid == 0)
@@ -711,6 +718,13 @@ void CGaussPistol::SniperShot()
 	UTIL_MakeVectors(m_pPlayer->pev->v_angle + m_pPlayer->pev->punchangle);
 	const Vector vecSrc = m_pPlayer->GetGunPosition();
 	const Vector vecEnd = vecSrc + gpGlobals->v_forward * 8192;
+
+	// Abweichung (Nutzerwunsch 2026-11-08): Muendungsrauch als
+	// Engine-Temp-Entity statt Client-R_TempSprite.
+	UTIL_MuzzleSmoke(vecSrc, gpGlobals->v_forward);
+
+	// Wandpuff am Trefferpunkt (#930), gedrosselt.
+	UTIL_WallPuffAtTrace(vecSrc, gpGlobals->v_forward);
 
 	SendWeaponAnim(GP_SNIPER_FIRE, pev->body);
 	m_pPlayer->SetAnimation(PLAYER_ATTACK1);
